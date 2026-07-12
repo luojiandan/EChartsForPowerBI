@@ -1,2 +1,2 @@
-# EChartsForPowerBIVisual
-ECharts for Power BI Visual
+# ECharts For Power BI Visual
+
