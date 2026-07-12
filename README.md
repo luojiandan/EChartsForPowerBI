@@ -6,9 +6,9 @@
 
 ## 相关入口
 
-- 产品官网：[https://xiangeotime.cn/echartsforpowerbi/index.html]
+- 产品官网：[产品官网](https://xiangeotime.cn/echartsforpowerbi/index.html)
 - 教学视频：[视频制作中...]
-- 问题反馈：[GitHub Issues](https://chatgpt.com/g/issues)
+- 问题反馈：[GitHub Issues](https://github.com/luojiandan/EChartsForPowerBIVisual/issues)
 - 版本记录：[ChangeLog.md](https://chatgpt.com/g/g-p-6a3e4598ea348191a00e3355f9270923-echartsforpowerbijiao-xue-an-li/c/01视觉对象/ChangeLog.md)
 
 ## 仓库目录
