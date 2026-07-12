@@ -18,7 +18,8 @@ ECharts for Power BI 第一个正式发布版本。
 | ------------------------- | ----- |
 | ECharts                   | 6.0.0 |
 | echarts-china-counties-js | 1.0.1 |
-| echarts-gl                | 1.1.2 |
+| china                     | 0.0.1 |
+| echarts-gl                | 2.0.9 |
 | echarts-liquidfill        | 3.1.0 |
 | echarts-stat              | 1.2.0 |
 | jQuery                    | 3.5.1 |
