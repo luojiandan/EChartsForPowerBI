@@ -4,6 +4,13 @@
 
 用户可以通过本仓库获取最新版本的视觉对象、查阅使用说明、下载案例文件，并浏览已发布的可视化成果。
 
+## 相关入口
+
+- 产品官网：[https://xiangeotime.cn/echartsforpowerbi/index.html]
+- 教学视频：[视频制作中...]
+- 问题反馈：[GitHub Issues](https://chatgpt.com/g/issues)
+- 版本记录：[ChangeLog.md](https://chatgpt.com/g/g-p-6a3e4598ea348191a00e3355f9270923-echartsforpowerbijiao-xue-an-li/c/01视觉对象/ChangeLog.md)
+
 ## 仓库目录
 
 ```text
@@ -208,13 +215,6 @@ v2.0
 - 未经许可，不得对视觉对象、案例资源或图册进行二次销售、重新打包发布或冒充原创。
 - 案例中涉及的第三方图片、地图、字体及数据，其版权归原权利人所有。
 - 使用第三方资源时，请自行确认对应的使用许可和版权要求。
-
-## 相关入口
-
-- 产品官网：[https://xiangeotime.cn/echartsforpowerbi/index.html]
-- 教学视频：[视频制作中...]
-- 问题反馈：[GitHub Issues](https://chatgpt.com/g/issues)
-- 版本记录：[ChangeLog.md](https://chatgpt.com/g/g-p-6a3e4598ea348191a00e3355f9270923-echartsforpowerbijiao-xue-an-li/c/01视觉对象/ChangeLog.md)
 
 ------
 
