@@ -7,7 +7,7 @@
 ## 相关入口
 
 - 产品官网：[产品官网](https://xiangeotime.cn/echartsforpowerbi/index.html)
-- 教学视频：[视频制作中...]
+- 教学视频：[B站视频](https://space.bilibili.com/419477385/lists)
 - 问题反馈：[GitHub Issues](https://github.com/luojiandan/EChartsForPowerBIVisual/issues)
 - 版本记录：[ChangeLog.md](https://github.com/luojiandan/EChartsForPowerBIVisual/blob/main/01%E8%A7%86%E8%A7%89%E5%AF%B9%E8%B1%A1/ChangeLog.md)
 
