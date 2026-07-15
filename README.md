@@ -9,7 +9,7 @@
 - 产品官网：[产品官网](https://xiangeotime.cn/echartsforpowerbi/index.html)、[推广伙伴计划](https://github.com/luojiandan/EChartsForPowerBIVisual/blob/main/02%E4%BD%BF%E7%94%A8%E6%89%8B%E5%86%8C/01%E6%8E%A8%E5%B9%BF%E4%BC%99%E4%BC%B4%E8%AE%A1%E5%88%92.md)
 - 教学视频：[B站视频](https://space.bilibili.com/419477385/lists)
 - 案例文件：[图册](https://github.com/luojiandan/EChartsForPowerBIVisual/tree/main/03%E6%A1%88%E4%BE%8B%E8%B5%84%E6%BA%90)、[案例资源](https://github.com/luojiandan/EChartsForPowerBIVisual/tree/main/03%E6%A1%88%E4%BE%8B%E8%B5%84%E6%BA%90)、[知识星球](https://wx.zsxq.com/group/88884558242242)
-- 问题反馈：[GitHub Issues](https://github.com/luojiandan/EChartsForPowerBIVisual/issues)、[知识星球](https://wx.zsxq.com/group/88884558242242)
+- 问题反馈：[GitHub Issues](https://github.com/luojiandan/EChartsForPowerBIVisual/issues)、[知识星球](https://wx.zsxq.com/group/88884558242242)、[提问前先阅读](https://github.com/luojiandan/EChartsForPowerBI/issues/1)
 - 版本记录：[ChangeLog.md](https://github.com/luojiandan/EChartsForPowerBIVisual/blob/main/01%E8%A7%86%E8%A7%89%E5%AF%B9%E8%B1%A1/ChangeLog.md)
 
 ## 仓库目录
