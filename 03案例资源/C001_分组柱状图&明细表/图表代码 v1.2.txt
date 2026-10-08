@@ -1,0 +1,1035 @@
+// ======================================================
+// 1. 示例数据
+// ======================================================
+
+const 区域 = [
+  '华东', '华东', '华东', '华东',
+  '华北', '华北', '华北', '华北',
+  '华南', '华南', '华南', '华南',
+  '西南', '西南', '西南', '西南'
+];
+
+const 产品类别 = [
+  '产品A', '产品B', '产品C', '产品D',
+  '产品A', '产品B', '产品C', '产品D',
+  '产品A', '产品B', '产品C', '产品D',
+  '产品A', '产品B', '产品C', '产品D'
+];
+
+const 销量 = [
+  128, 96, 82, 114, 91, 118, 136, 104, 109, 76, 101, 122, 84, 112, 94, 130,
+];
+
+const 销额 = [
+  1360, 1020, 810, 1190, 880, 1260, 1480, 1080, 1120, 730, 1010, 1290, 790,
+  1210, 930, 1410,
+];
+
+const 利润 = [
+  228, 164, 126, 198, 142, 204, 258, 176, 186, 108, 168, 216, 118, 196, 148,
+  244,
+];
+
+// ======================================================
+// 2. 布局参数
+// ======================================================
+
+const layout = {
+  titleLeft: "3%",
+  titleTop: 20,
+
+  markLeft: "3%",
+
+  chartGridLeft: "6%",
+  chartGridRight: "3%",
+  chartGridTop:110,
+
+  tableGridLeft: "6%",
+  tableGridRight: "3%",
+};
+
+// ======================================================
+// 3. 固定纵向关系
+//
+// 明细表固定在底部
+// 明细表高度固定
+// 两层X轴到表格之间的空间固定
+// 柱状图只固定 top / bottom，不固定 height
+// ======================================================
+
+// 明细表距离画布底部
+const tableBottom = 18;
+
+// 明细表高度
+const tableHeight = 72;
+
+// 柱状图绘图区底部到明细表顶部的总空间
+// 其中包含：
+// 产品类别标签
+// 区域标签
+// 区域标签到表格的留白
+const chartTableGap = 50;
+
+// 柱状图 grid.bottom
+const chartGridBottom = tableBottom + tableHeight + chartTableGap;
+
+// ======================================================
+// 4. X轴固定像素间距
+// ======================================================
+
+// 第一层产品类别距离轴线
+const productLabelMargin = 8;
+
+// 第二层区域轴向下偏移
+const regionAxisOffset = 10;
+
+// 区域文字距离第二层轴
+const regionLabelMargin = 15;
+
+// ======================================================
+// 5. 数据重组
+// ======================================================
+
+const rawData = 区域.map((region, i) => ({
+  region,
+  product: 产品类别[i],
+  productShort: 产品类别[i].replace("产品", ""),
+  qty: 销量[i],
+  sales: 销额[i],
+  profit: 利润[i],
+}));
+
+const regions = [...new Set(rawData.map((d) => d.region))];
+
+const barData = [];
+
+regions.forEach((region) => {
+  const rows = rawData.filter((d) => d.region === region);
+
+  rows.forEach((d, idx) => {
+    barData.push({
+      value: d.sales,
+
+      region: d.region,
+      product: d.product,
+      productShort: d.productShort,
+
+      qty: d.qty,
+      sales: d.sales,
+      profit: d.profit,
+
+      regionOrder: idx,
+      regionCount: rows.length,
+    });
+  });
+});
+
+const categories = barData.map((d) => d.productShort);
+
+const colCount = barData.length;
+
+// ======================================================
+// 6. 动态计算区域范围
+// ======================================================
+
+const regionRanges = [];
+
+let startIndex = 0;
+
+regions.forEach((region) => {
+  const rows = barData.filter((d) => d.region === region);
+
+  const count = rows.length;
+
+  regionRanges.push({
+    region,
+    start: startIndex,
+    end: startIndex + count - 1,
+    count,
+  });
+
+  startIndex += count;
+});
+
+// ======================================================
+// 7. 区域主色
+// ======================================================
+
+const regionPalette = [
+  "#4E79A7",
+  "#7A7D91",
+  "#6F9E3D",
+  "#C98252",
+  "#5C8FA8",
+  "#8D6E96",
+  "#5E9B8A",
+  "#B28B45",
+];
+
+const barColors = {};
+
+regions.forEach((region, i) => {
+  barColors[region] = regionPalette[i % regionPalette.length];
+});
+
+// ======================================================
+// 8. 颜色辅助函数
+// ======================================================
+
+function hexToRgb(hex) {
+  const value = hex.replace("#", "");
+
+  return {
+    r: parseInt(value.substring(0, 2), 16),
+
+    g: parseInt(value.substring(2, 4), 16),
+
+    b: parseInt(value.substring(4, 6), 16),
+  };
+}
+
+function rgbToHex(r, g, b) {
+  const toHex = (n) => {
+    const h = n.toString(16);
+
+    return h.length === 1 ? "0" + h : h;
+  };
+
+  return "#" + toHex(r) + toHex(g) + toHex(b);
+}
+
+function mixColor(color1, color2, t) {
+  const c1 = hexToRgb(color1);
+
+  const c2 = hexToRgb(color2);
+
+  const r = Math.round(c1.r + (c2.r - c1.r) * t);
+
+  const g = Math.round(c1.g + (c2.g - c1.g) * t);
+
+  const b = Math.round(c1.b + (c2.b - c1.b) * t);
+
+  return rgbToHex(r, g, b);
+}
+
+// ======================================================
+// 9. 区域浅背景
+// ======================================================
+
+function getAreaColor(region) {
+  return mixColor("#FFFFFF", barColors[region], 0.07);
+}
+
+// ======================================================
+// 10. 柱体渐变色
+// ======================================================
+
+function getBarShadeColor(region, order, count) {
+  const baseColor = barColors[region];
+
+  if (count <= 1) {
+    return baseColor;
+  }
+
+  const t = order / (count - 1);
+
+  const topColor = mixColor(baseColor, "#FFFFFF", 0.03 + t * 0.18);
+
+  const bottomColor = mixColor(baseColor, "#FFFFFF", 0.16 + t * 0.3);
+
+  return new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+    {
+      offset: 0,
+      color: topColor,
+    },
+    {
+      offset: 1,
+      color: bottomColor,
+    },
+  ]);
+}
+
+// ======================================================
+// 11. 表格单元格颜色
+// ======================================================
+
+function getCellColor(value, min, max, region) {
+  const baseColor = barColors[region];
+
+  if (max === min) {
+    return mixColor("#FFFFFF", baseColor, 0.42);
+  }
+
+  const t = (value - min) / (max - min);
+
+  const strength = 0.18 + t * 0.54;
+
+  return mixColor("#FFFFFF", baseColor, strength);
+}
+
+function getTextColor(bgColor) {
+  const c = hexToRgb(bgColor);
+
+  const luminance = (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) / 255;
+
+  return luminance > 0.62 ? "#36404A" : "#FFFFFF";
+}
+
+// ======================================================
+// 12. 三个指标范围
+// ======================================================
+
+const qtyValues = barData.map((d) => d.qty);
+
+const salesValues = barData.map((d) => d.sales);
+
+const profitValues = barData.map((d) => d.profit);
+
+const qtyMin = Math.min(...qtyValues);
+
+const qtyMax = Math.max(...qtyValues);
+
+const salesMin = Math.min(...salesValues);
+
+const salesMax = Math.max(...salesValues);
+
+const profitMin = Math.min(...profitValues);
+
+const profitMax = Math.max(...profitValues);
+
+// ======================================================
+// 13. Heatmap 表格数据
+// ======================================================
+
+function createHeatData(metric, rowIndex, min, max) {
+  return barData.map((d, i) => {
+    const value = d[metric];
+
+    const bgColor = getCellColor(value, min, max, d.region);
+
+    return {
+      value: [i, rowIndex, value],
+
+      region: d.region,
+
+      product: d.product,
+
+      itemStyle: {
+        color: bgColor,
+        borderColor: "#FFFFFF",
+        borderWidth: 1,
+      },
+
+      label: {
+        color: getTextColor(bgColor),
+      },
+    };
+  });
+}
+
+const qtyHeatData = createHeatData("qty", 0, qtyMin, qtyMax);
+
+const salesHeatData = createHeatData("sales", 1, salesMin, salesMax);
+
+const profitHeatData = createHeatData("profit", 2, profitMin, profitMax);
+
+// ======================================================
+// 14. 顶部区域浅背景
+// ======================================================
+
+const markAreaData = regionRanges.map((item) => [
+  {
+    xAxis: item.start - 0.49,
+
+    itemStyle: {
+      color: getAreaColor(item.region),
+    },
+  },
+
+  {
+    xAxis: item.end + 0.49,
+  },
+]);
+
+// ======================================================
+// 15. 第二层X轴：区域中心
+//
+// 用 value 轴，使偶数个产品时也能真正居中
+// ======================================================
+
+const regionCenterMap = {};
+
+regionRanges.forEach((item) => {
+  const center = (item.start + item.end) / 2;
+
+  regionCenterMap[center.toFixed(1)] = item.region;
+});
+
+function getRegionAxisLabel(value) {
+  const key = Number(value).toFixed(1);
+
+  return regionCenterMap[key] || "";
+}
+
+// ======================================================
+// 16. 表格区域分隔线位置
+// ======================================================
+
+function pctToNum(value) {
+  return parseFloat(String(value).replace("%", ""));
+}
+
+const tableLeftPercent = pctToNum(layout.tableGridLeft);
+
+const tableRightPercent = pctToNum(layout.tableGridRight);
+
+const tableWidthPercent = 100 - tableLeftPercent - tableRightPercent;
+
+function getRegionDividerPercent(index) {
+  const beforeCount = regionRanges
+    .slice(0, index)
+    .reduce((sum, d) => sum + d.count, 0);
+
+  return tableLeftPercent + (beforeCount / colCount) * tableWidthPercent;
+}
+
+// ======================================================
+// 17. Option
+// ======================================================
+
+option = {
+  backgroundColor: "#FFFFFF",
+
+  // ====================================================
+  // 标题
+  // ====================================================
+
+  title: {
+    text: "产品在各区域的销售情况",
+
+    subtext: "按区域分组展示产品销额，下方同步展示各区域销量、销额与利润明细表",
+
+    left: layout.titleLeft,
+
+    top: layout.titleTop,
+
+    itemGap: 3,
+
+    textStyle: {
+      color: "#111111",
+      fontSize: 24,
+      fontWeight: 700,
+    },
+
+    subtextStyle: {
+      color: "#666666",
+      fontSize: 12,
+      lineHeight: 18,
+    },
+  },
+
+  // ====================================================
+  // Tooltip
+  // ====================================================
+
+  tooltip: {
+    trigger: "item",
+
+    backgroundColor: "#FFFFFF",
+
+    borderColor: "#D8D8D8",
+
+    borderWidth: 1,
+
+    padding: [10, 12],
+
+    textStyle: {
+      color: "#222222",
+      fontSize: 12,
+    },
+
+    extraCssText: "box-shadow:0 3px 12px rgba(0,0,0,.08);",
+
+    formatter: function (params) {
+      if (params.seriesType === "bar") {
+        const d = params.data;
+
+        return [
+          `<b>${d.region} · ${d.product}</b>`,
+          `销量：${d.qty.toLocaleString()} 件`,
+          `销额：${d.sales.toLocaleString()} 万元`,
+          `利润：${d.profit.toLocaleString()} 万元`,
+        ].join("<br/>");
+      }
+
+      const d = params.data;
+
+      const rowIndex = d.value[1];
+
+      const value = d.value[2];
+
+      const metricNames = ["销量", "销额", "利润"];
+
+      const units = ["件", "万元", "万元"];
+
+      return [
+        `<b>${d.region} · ${d.product}</b>`,
+        `${metricNames[rowIndex]}：${value.toLocaleString()} ${
+          units[rowIndex]
+        }`,
+      ].join("<br/>");
+    },
+  },
+
+  // ====================================================
+  // Grid
+  // ====================================================
+
+  grid: [
+    // --------------------------------------------------
+    // 上方柱状图
+    //
+    // 只设置 top 和 bottom。
+    // 不设置 height。
+    // 画布尺寸变化时，高度自动伸缩。
+    // --------------------------------------------------
+
+    {
+      left: layout.chartGridLeft,
+
+      right: layout.chartGridRight,
+
+      top: layout.chartGridTop,
+
+      bottom: chartGridBottom,
+    },
+
+    // --------------------------------------------------
+    // 下方明细表
+    //
+    // 固定高度
+    // 固定底部位置
+    // --------------------------------------------------
+
+    {
+      left: layout.tableGridLeft,
+
+      right: layout.tableGridRight,
+
+      bottom: tableBottom,
+
+      height: tableHeight,
+    },
+  ],
+
+  // ====================================================
+  // X轴
+  // ====================================================
+
+  xAxis: [
+    // --------------------------------------------------
+    // 第一层：产品类别
+    // --------------------------------------------------
+
+    {
+      type: "category",
+
+      gridIndex: 0,
+
+      data: categories,
+
+      boundaryGap: true,
+
+      axisTick: {
+        show: false,
+      },
+
+      axisLine: {
+        lineStyle: {
+          color: "#333333",
+        },
+      },
+
+      axisLabel: {
+        interval: 0,
+
+        margin: productLabelMargin,
+
+        color: "#333333",
+
+        fontSize: 12,
+      },
+    },
+
+    // --------------------------------------------------
+    // 第二层：区域
+    // --------------------------------------------------
+
+    {
+      type: "value",
+
+      gridIndex: 0,
+
+      position: "bottom",
+
+      min: -0.5,
+
+      max: colCount - 0.5,
+
+      interval: 0.5,
+
+      offset: regionAxisOffset,
+
+      axisTick: {
+        show: false,
+      },
+
+      axisLine: {
+        show: false,
+      },
+
+      splitLine: {
+        show: false,
+      },
+
+      axisLabel: {
+        show: true,
+
+        margin: regionLabelMargin,
+
+        color: "#D62828",
+
+        fontSize: 13,
+
+        fontWeight: 600,
+
+        formatter: function (value) {
+          return getRegionAxisLabel(value);
+        },
+      },
+    },
+
+    // --------------------------------------------------
+    // 下方明细表 X轴
+    // --------------------------------------------------
+
+    {
+      type: "category",
+
+      gridIndex: 1,
+
+      data: categories,
+
+      boundaryGap: true,
+
+      axisTick: {
+        show: false,
+      },
+
+      axisLine: {
+        show: false,
+      },
+
+      axisLabel: {
+        show: false,
+      },
+    },
+  ],
+
+  // ====================================================
+  // Y轴
+  // ====================================================
+
+  yAxis: [
+    // --------------------------------------------------
+    // 柱状图 Y轴
+    // --------------------------------------------------
+
+    {
+      type: "value",
+
+      gridIndex: 0,
+
+      name: "销额（万元）",
+
+      nameTextStyle: {
+        color: "#555555",
+        fontSize: 12,
+      },
+
+      axisLine: {
+        show: false,
+      },
+
+      axisTick: {
+        show: false,
+      },
+
+      axisLabel: {
+        color: "#777777",
+
+        fontSize: 11,
+
+        formatter: function (value) {
+          return value.toLocaleString();
+        },
+      },
+
+      splitLine: {
+        lineStyle: {
+          color: "#E8E8E8",
+        },
+      },
+    },
+
+    // --------------------------------------------------
+    // 明细表 Y轴
+    // --------------------------------------------------
+
+    {
+      type: "category",
+
+      gridIndex: 1,
+
+      data: ["销量", "销额", "利润"],
+
+      inverse: true,
+
+      axisLine: {
+        show: false,
+      },
+
+      axisTick: {
+        show: false,
+      },
+
+      axisLabel: {
+        color: "#555555",
+
+        fontSize: 12,
+
+        margin: 15,
+      },
+
+      splitLine: {
+        show: true,
+
+        lineStyle: {
+          color: "#FFFFFF",
+        },
+      },
+    },
+  ],
+
+  // ====================================================
+  // Series
+  // ====================================================
+
+  series: [
+    // --------------------------------------------------
+    // 柱状图
+    // --------------------------------------------------
+    {
+      name: "销额",
+
+      type: "bar",
+
+      xAxisIndex: 0,
+
+      yAxisIndex: 0,
+
+      data: barData,
+
+      barWidth: "52%",
+
+      itemStyle: {
+        color: function (params) {
+          const d = params.data;
+
+          return getBarShadeColor(d.region, d.regionOrder, d.regionCount);
+        },
+      },
+
+      label: {
+        show: true,
+
+        position: "top",
+
+        color: "#444444",
+        
+        fontWeight:'bold',
+        
+        fontSize: 11,
+
+        formatter: function (params) {
+          return params.value.toLocaleString();
+        },
+      },
+
+      markArea: {
+        silent: true,
+
+        label: {
+          show: false,
+        },
+
+        data: markAreaData,
+      },
+    },
+
+    // --------------------------------------------------
+    // 明细表：销量
+    // --------------------------------------------------
+    {
+      name: "销量",
+
+      type: "heatmap",
+
+      xAxisIndex: 2,
+
+      yAxisIndex: 1,
+
+      data: qtyHeatData,
+
+      progressive: 0,
+
+      label: {
+        show: true,
+
+        fontSize: 11,
+
+        fontWeight: 600,
+
+        formatter: function (params) {
+          return params.data.value[2].toLocaleString();
+        },
+
+        color: function (params) {
+          return params.data.label.color;
+        },
+      },
+
+      emphasis: {
+        disabled: true,
+      },
+    },
+
+    // --------------------------------------------------
+    // 明细表：销额
+    // --------------------------------------------------
+    {
+      name: "销额表格",
+
+      type: "heatmap",
+
+      xAxisIndex: 2,
+
+      yAxisIndex: 1,
+
+      data: salesHeatData,
+
+      progressive: 0,
+
+      label: {
+        show: true,
+
+        fontSize: 11,
+
+        fontWeight: 600,
+
+        formatter: function (params) {
+          return params.data.value[2].toLocaleString();
+        },
+
+        color: function (params) {
+          return params.data.label.color;
+        },
+      },
+
+      emphasis: {
+        disabled: true,
+      },
+    },
+
+    // --------------------------------------------------
+    // 明细表：利润
+    // --------------------------------------------------
+    {
+      name: "利润",
+
+      type: "heatmap",
+
+      xAxisIndex: 2,
+
+      yAxisIndex: 1,
+
+      data: profitHeatData,
+
+      progressive: 0,
+
+      label: {
+        show: true,
+
+        fontSize: 11,
+
+        fontWeight: 600,
+
+        formatter: function (params) {
+          return params.data.value[2].toLocaleString();
+        },
+
+        color: function (params) {
+          return params.data.label.color;
+        },
+      },
+
+      emphasis: {
+        disabled: true,
+      },
+    },
+  ],
+
+  // ====================================================
+  // Graphic
+  // ====================================================
+  graphic: [
+    // --------------------------------------------------
+    // 左上角红色识别条
+    // --------------------------------------------------
+
+    {
+      type: "rect",
+
+      left: layout.markLeft,
+
+      top: layout.markTop,
+
+      shape: {
+        width: 38,
+        height: 8,
+      },
+
+      style: {
+        fill: "#D62828",
+      },
+
+      silent: true,
+    },
+
+    // --------------------------------------------------
+    // 明细表区域分隔线
+    // --------------------------------------------------
+
+    ...regionRanges.slice(1).map((_, i) => {
+      const dividerIndex = i + 1;
+
+      return {
+        type: "line",
+
+        left: `${getRegionDividerPercent(dividerIndex)}%`,
+
+        bottom: tableBottom,
+
+        shape: {
+          x1: 0,
+          y1: 0,
+          x2: 0,
+          y2: tableHeight,
+        },
+
+        style: {
+          stroke: "#FFFFFF",
+          lineWidth: 2,
+        },
+
+        silent: true,
+      };
+    }),
+  ],
+};
+
+
+// ======================================================
+// 18. 根据 product 更新视觉状态
+// ======================================================
+
+function setHighlight(product) {
+
+  const getOpacity = d =>
+    !product || d.product === product ? 1 : 0.03;
+
+
+  function updateHeatData(sourceData) {
+    return sourceData.map(d => ({
+      ...d,
+
+      itemStyle: {
+        ...d.itemStyle,
+        opacity: getOpacity(d)
+      },
+
+      label: {
+        ...d.label,
+        opacity: getOpacity(d)
+      }
+    }));
+  }
+
+
+  myChart.setOption({
+    series: [
+      {
+        name: "销额",
+
+        data: barData.map(d => ({
+          ...d,
+
+          itemStyle: {
+            opacity: getOpacity(d)
+          },
+
+          label: {
+            opacity: getOpacity(d)
+          }
+        }))
+      },
+
+      {
+        name: "销量",
+        data: updateHeatData(qtyHeatData)
+      },
+
+      {
+        name: "销额表格",
+        data: updateHeatData(salesHeatData)
+      },
+
+      {
+        name: "利润",
+        data: updateHeatData(profitHeatData)
+      }
+    ]
+  });
+}
+
+
+// ======================================================
+// 6. 鼠标事件
+// 先清掉旧的事件，再绑定当前这一版事件，防止重复注册。
+// ======================================================
+myChart.off('mouseover');
+myChart.off('globalout');
+
+myChart.on('mouseover', params => {
+  if (
+    params.seriesType === 'bar' &&
+    params.data &&
+    params.data.product
+  ) {
+    setHighlight(params.data.product);
+  }
+});
+
+myChart.on('globalout', function () {
+  setHighlight(null);
+});
