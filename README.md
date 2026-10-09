@@ -10,7 +10,7 @@
 - 教学视频：[概述篇](https://www.bilibili.com/video/BV1wENq6WEYr)、[使用篇](https://www.bilibili.com/video/BV1vuHD6RE43)、案例篇(制作中...)
 - 案例文件：[案例图册](https://github.com/luojiandan/EChartsForPowerBI/tree/main/04%E6%A1%88%E4%BE%8B%E5%9B%BE%E5%86%8C)、[案例资源](https://github.com/luojiandan/EChartsForPowerBI/tree/main/03%E6%A1%88%E4%BE%8B%E8%B5%84%E6%BA%90)、[知识星球](https://wx.zsxq.com/group/88884558242242)
 - 问题反馈：[GitHub Issues](https://github.com/luojiandan/EChartsForPowerBIVisual/issues)、[知识星球](https://wx.zsxq.com/group/88884558242242)、[提问前先阅读](https://github.com/luojiandan/EChartsForPowerBI/issues/1)
-- 版本记录：[ChangeLog.md](https://github.com/luojiandan/EChartsForPowerBIVisual/blob/main/01%E8%A7%86%E8%A7%89%E5%AF%B9%E8%B1%A1/ChangeLog.md)
+- 版本记录：[ChangeLog.md](https://github.com/luojiandan/EChartsForPowerBI/blob/main/01%E8%A7%86%E8%A7%89%E5%AF%B9%E8%B1%A1/ChangeLog.md)
 
 ## 仓库目录
 
