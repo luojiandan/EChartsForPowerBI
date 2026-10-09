@@ -29,12 +29,13 @@ const 出货量 = [
 
 // ECharts 官方编辑器：自动使用上述三列示例数据。
 // ECharts for Power BI：如视觉对象提供 dataArr，则自动读取真实字段。
+// Power BI 字段顺序：年份(0)、品牌(1)、出货量(2)。
 // 注意：实际取数属性是 dataArr.dataObjects[i].values。
 const chartSource = typeof dataArr !== 'undefined' && dataArr?.dataObjects
   ? dataArr
   : { dataObjects: [
-      { values: 年份},
-      { values: 品牌},
+      { values: 年份 },
+      { values: 品牌 },
       { values: 出货量 }
     ] };
 
@@ -54,6 +55,8 @@ const settings = {
   // 未指定年份时，自动取数据中最新的两个年份；如有需要可填写 [2023, 2025]
   compareYears: null,
   sort: 'current-desc', // current-desc | previous-desc | name | input
+  showDifference: true,  // 是否显示同比增减量（默认显示）
+  showGrowthRate: true,  // 是否显示同比增长率（默认显示）
   colors: {
     previous: '#20384F', current: '#4A9DD9',
     positive: '#239263', negative: '#D9544D', neutral: '#999999',
@@ -66,12 +69,10 @@ const settings = {
     titleLeft: '4%', titleTop: '4%',
     markerLeft: '4%', markerTop: '1.5%', markerWidth: 24, markerHeight: 5,
     footerLeft: '4%', footerBottom: 10, footerFontSize: 10,
-    bubblesTop: '21%', bubblesHeight: '12%',
-    differencesTop: '43%', differencesHeight: '15%',
-    valuesTop: '68%', valuesBottom: '12%',
     bubbleMaxDiameter: 66, bubbleMinDiameter: 8,
     differenceBarWidth: 25, valueBarWidth: 32,
-    categoryLabelSize: 12, valueLabelSize: 11, rateLabelSize: 12
+    categoryLabelSize: 12, valueLabelSize: 11, rateLabelSize: 12,
+    gridBottom: 70, // 底部柱状图 Grid 距离画布底边（像素）
   }
 };
 
@@ -142,20 +143,45 @@ function buildOption(model, config) {
   const format = (value, count = 0) => value === null ? '—' : Number(value).toLocaleString('zh-CN', { minimumFractionDigits: count, maximumFractionDigits: count });
   const signed = (value, count) => value === null ? '—' : `${value > 0 ? '+' : ''}${format(value, count)}`;
   const colorFor = value => value === null || value === 0 ? c.neutral : value > 0 ? c.positive : c.negative;
-  const sectionTitle = (text, top) => ({ text, left: l.left, top, textStyle: { color: c.muted, fontSize: 12, fontWeight: 'normal' } });
-  const xAxis = gridIndex => ({
+  // 依据开关动态分配区域。仅启用的坐标系参与布局、索引及联动。
+  // 布局始终从上到下：增长率（可选）→增减量（可选）→年度出货量（必选）。
+  const sections = [
+    ...(config.showGrowthRate ? ['rate'] : []),
+    ...(config.showDifference ? ['difference'] : []),
+    'value'
+  ];
+  const positions = {
+    rate:       { top: 21, height: 12 },
+    difference: { top: 43, height: 15 },
+    value:      { top: 68 }
+  };
+  if (sections.length === 2) {
+    positions[sections[0]] = { top: 26, height: 22 };
+    positions.value = { top: 59 };
+  } else if (sections.length === 1) {
+    positions.value = { top: 28 };
+  }
+  const indexOf = type => sections.indexOf(type);
+  const sectionTitle = (text, type) => ({
+    text, left: l.left, top: `${positions[type].top - 5}%`,
+    textStyle: { color: c.muted, fontSize: 12, fontWeight: 'normal' }
+  });
+  const xAxis = (type, gridIndex) => ({
     type: 'category', gridIndex, data: categories, boundaryGap: true,
-    axisLine: { show: gridIndex === 2, lineStyle: { color: c.axis } },
+    axisLine: { show: type === 'value', lineStyle: { color: c.axis } },
     axisTick: { show: false },
-    axisLabel: { show: gridIndex === 2, interval: 0, margin: 13, color: c.muted, fontSize: l.categoryLabelSize }
+    axisLabel: { show: type === 'value', interval: 0, margin: 13,
+      color: c.muted, fontSize: l.categoryLabelSize }
   });
-  const yAxis = (gridIndex, min, max) => ({
-    type: 'value', gridIndex, min, max,
-    axisLine: { show: false }, axisTick: { show: false },
-    axisLabel: { show: false }, splitLine: { show: false }
-  });
+  const yAxis = (type, gridIndex) => {
+    const bounds = type === 'rate' ? [0, 1] :
+      type === 'difference' ? [-maxDelta * 1.5, maxDelta * 1.5] : [0, maxValue * 1.22];
+    return { type: 'value', gridIndex, min: bounds[0], max: bounds[1],
+      axisLine: { show: false }, axisTick: { show: false },
+      axisLabel: { show: false }, splitLine: { show: false } };
+  };
   const yearlyBar = (year, key, color) => ({
-    name: `${year}年`, type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
+    name: `${year}年`, type: 'bar', xAxisIndex: indexOf('value'), yAxisIndex: indexOf('value'),
     data: records.map(row => row[key]), barWidth: l.valueBarWidth, barGap: '24%',
     itemStyle: { color },
     label: { show: true, position: 'top', distance: 5, fontSize: l.valueLabelSize, color: c.title,
@@ -163,6 +189,41 @@ function buildOption(model, config) {
     emphasis: { disabled: true }
   });
 
+  const series = [];
+  if (config.showGrowthRate) series.push({
+    name: '同比增长率', type: 'scatter', xAxisIndex: indexOf('rate'), yAxisIndex: indexOf('rate'),
+    symbol: 'circle',
+    // 直径随增长率绝对值的平方根变化，让气泡面积体现同比幅度。
+    symbolSize: value => value[2] === null ? 0 :
+      Math.max(l.bubbleMinDiameter, Math.sqrt(Math.abs(value[2]) / maxRate) * l.bubbleMaxDiameter),
+    data: records.map((row, i) => ({
+      value: [i, 0.5, row.rate], itemStyle: { color: colorFor(row.rate), opacity: 0.9 }
+    })),
+    label: { show: true, position: 'bottom', distance: 8, color: c.text,
+      fontSize: l.rateLabelSize, fontWeight: 'bold',
+      formatter: params => params.value[2] === null ? '—' : `${signed(params.value[2], digits.rate)}%` },
+    emphasis: { disabled: true }
+  });
+  if (config.showDifference) series.push({
+    name: '同比增减量', type: 'bar', xAxisIndex: indexOf('difference'), yAxisIndex: indexOf('difference'),
+    barWidth: l.differenceBarWidth,
+    data: records.map(row => ({
+      value: row.difference,
+      itemStyle: { color: colorFor(row.difference), borderRadius: (row.difference ?? 0) >= 0 ? [3,3,0,0] : [0,0,3,3] },
+      label: { position: (row.difference ?? 0) >= 0 ? 'top' : 'bottom', color: colorFor(row.difference) }
+    })),
+    label: { show: true, distance: 6, fontWeight: 'bold',
+      formatter: params => signed(params.value, digits.difference) },
+    markLine: { silent: true, symbol: ['none','none'], label: { show: false },
+      lineStyle: { color: c.baseline, type: 'dashed' }, data: [{ yAxis: 0 }] },
+    emphasis: { disabled: true }
+  });
+  series.push(yearlyBar(previousYear, 'previous', c.previous), yearlyBar(currentYear, 'current', c.current));
+  const headings = {
+    rate: '同比增长率（%） · 圆面积表示变化幅度',
+    difference: `同比增减量（${config.unit}） · ${currentYear} − ${previousYear}`,
+    value: `${config.metricName}（${config.unit}）`
+  };
   return {
     backgroundColor: c.background,
     animation: false,
@@ -171,9 +232,7 @@ function buildOption(model, config) {
         left: l.titleLeft, top: l.titleTop,
         textStyle: { color: c.title, fontSize: 21, fontWeight: 'bold' },
         subtextStyle: { color: c.muted, fontSize: 12 } },
-      sectionTitle('同比增长率（%） · 圆面积表示增长幅度', '16%'),
-      sectionTitle(`同比增减量（${config.unit}） · ${currentYear} − ${previousYear}`, '38%'),
-      sectionTitle(`${config.metricName}（${config.unit}）`, '63%')
+      ...sections.map(type => sectionTitle(headings[type], type))
     ],
     // graphic 用于不依赖数据坐标的装饰与图表来源说明。
     graphic: [
@@ -204,55 +263,23 @@ function buildOption(model, config) {
           `<strong>${row.category}</strong>`,
           `${previousYear}年：${format(row.previous, digits.metric)} ${config.unit}`,
           `${currentYear}年：${format(row.current, digits.metric)} ${config.unit}`,
-          `同比增减量：${signed(row.difference, digits.difference)} ${config.unit}`,
-          `同比增长率：${row.rate === null ? '—（上年为0或数据缺失）' : signed(row.rate, digits.rate) + '%'}`
+          ...(config.showDifference ? [`同比增减量：${signed(row.difference, digits.difference)} ${config.unit}`] : []),
+          ...(config.showGrowthRate ? [`同比增长率：${row.rate === null ? '—（上年为0或数据缺失）' : signed(row.rate, digits.rate) + '%'}`] : [])
         ].join('<br>');
       }
     },
-    axisPointer: { link: [{ xAxisIndex: [0, 1, 2] }] },
-    grid: [
-      { left: l.left, right: l.right, top: l.bubblesTop, height: l.bubblesHeight },
-      { left: l.left, right: l.right, top: l.differencesTop, height: l.differencesHeight },
-      { left: l.left, right: l.right, top: l.valuesTop, bottom: l.valuesBottom }
-    ],
-    xAxis: [xAxis(0), xAxis(1), xAxis(2)],
-    yAxis: [
-      yAxis(0, 0, 1),
-      yAxis(1, -maxDelta * 1.5, maxDelta * 1.5),
-      yAxis(2, 0, maxValue * 1.22)
-    ],
-    series: [
-      {
-        name: '同比增长率', type: 'scatter', xAxisIndex: 0, yAxisIndex: 0,
-        symbol: 'circle',
-        // 半径与变化率平方根成正比，因此圆面积与变化率绝对值成正比。
-        symbolSize: value => value[2] === null ? 0 :
-          Math.max(l.bubbleMinDiameter, Math.sqrt(Math.abs(value[2]) / maxRate) * l.bubbleMaxDiameter),
-        data: records.map((row, i) => ({
-          value: [i, 0.5, row.rate], itemStyle: { color: colorFor(row.rate), opacity: 0.9 }
-        })),
-        label: { show: true, position: 'bottom', distance: 8, color: c.text,
-          fontSize: l.rateLabelSize, fontWeight: 'bold',
-          formatter: params => params.value[2] === null ? '—' : `${signed(params.value[2], digits.rate)}%` },
-        emphasis: { disabled: true }
-      },
-      {
-        name: '同比增减量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1,
-        barWidth: l.differenceBarWidth,
-        data: records.map(row => ({
-          value: row.difference,
-          itemStyle: { color: colorFor(row.difference), borderRadius: (row.difference ?? 0) >= 0 ? [3,3,0,0] : [0,0,3,3] },
-          label: { position: (row.difference ?? 0) >= 0 ? 'top' : 'bottom', color: colorFor(row.difference) }
-        })),
-        label: { show: true, distance: 6, fontWeight: 'bold',
-          formatter: params => signed(params.value, digits.difference) },
-        markLine: { silent: true, symbol: ['none','none'], label: { show: false },
-          lineStyle: { color: c.baseline, type: 'dashed' }, data: [{ yAxis: 0 }] },
-        emphasis: { disabled: true }
-      },
-      yearlyBar(previousYear, 'previous', c.previous),
-      yearlyBar(currentYear, 'current', c.current)
-    ]
+    axisPointer: { link: [{ xAxisIndex: sections.map((_, i) => i) }] },
+    // 可选模块保持百分比高度；底部年度柱状图使用 gridBottom 像素边距。
+    grid: sections.map(type => ({
+      left: l.left, right: l.right,
+      top: `${positions[type].top}%`,
+      ...(positions[type].height != null
+        ? { height: `${positions[type].height}%` }
+        : { bottom: l.gridBottom })
+    })),
+    xAxis: sections.map((type, i) => xAxis(type, i)),
+    yAxis: sections.map((type, i) => yAxis(type, i)),
+    series
   };
 }
 
