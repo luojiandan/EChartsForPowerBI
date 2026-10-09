@@ -1,0 +1,261 @@
+﻿/**
+ * ECharts for Power BI | 三层 Grid 通用同比对比图
+ * 数据入口：三个独立数组（年份、品牌、出货量）；同比指标自动计算。
+ * 粘贴整个文件到 ECharts 官方编辑器即可预览；Power BI 中自动读取 dataArr。
+ * 示例来源：Omdia 2025 中国大陆手机出货量（万台），公开数值为四舍五入值。
+ * https://www.businesswirechina.com/zh/news/61872.html
+ */
+
+// ======================================================
+// 1. 示例数据（按列组织，只需替换以下三个数组）
+// ======================================================
+// 中国大陆市场五大手机厂商，2024 / 2025 年出货量，单位：万台。
+// 来源：Omdia 年度市场数据；原始发布数据经过四舍五入。
+// 每个下标表示同一行：年份[i]、品牌[i]、出货量[i]。
+const 年份 = [
+  2024, 2024, 2024, 2024, 2024,
+  2025, 2025, 2025, 2025, 2025
+];
+
+const 品牌 = [
+  '华为', 'vivo', '苹果', '小米', 'OPPO',
+  '华为', 'vivo', '苹果', '小米', 'OPPO'
+];
+
+const 出货量 = [
+  4600, 4930, 4290, 4190, 4270,
+  4680, 4600, 4590, 4370, 4280
+];
+
+// ECharts 官方编辑器：自动使用上述三列示例数据。
+// ECharts for Power BI：如视觉对象提供 dataArr，则自动读取真实字段。
+// 注意：实际取数属性是 dataArr.dataObjects[i].values。
+const chartSource = typeof dataArr !== 'undefined' && dataArr?.dataObjects
+  ? dataArr
+  : { dataObjects: [
+      { values: 年份},
+      { values: 品牌},
+      { values: 出货量 }
+    ] };
+
+// ─────────────────────────────────────────────────────────────
+// 02 可修改的参数：不必进入下面的绘图代码
+// ─────────────────────────────────────────────────────────────
+const settings = {
+  fields: { year: 0, category: 1, value: 2 }, // dataObjects 字段索引（从 0 开始）
+  title: '你用的手机品牌，增长了吗？',
+  subtitle: '中国大陆主要手机厂商出货量对比',
+  categoryName: '品牌',
+  metricName: '出货量',
+  unit: '万台',
+  source: 'Omdia｜2025年中国大陆智能手机市场报告',
+  sourceNote: '出货量为公开报告的四舍五入值；同比由展示数值计算。',
+  decimals: { metric: 0, difference: 0, rate: 1 },
+  // 未指定年份时，自动取数据中最新的两个年份；如有需要可填写 [2023, 2025]
+  compareYears: null,
+  sort: 'current-desc', // current-desc | previous-desc | name | input
+  colors: {
+    previous: '#20384F', current: '#4A9DD9',
+    positive: '#239263', negative: '#D9544D', neutral: '#999999',
+    title: '#18212B', text: '#4B5563', muted: '#687684',
+    axis: '#C6CDD4', baseline: '#B8C1CC', background: '#FFFFFF',
+    titleMarker: '#E53935', footer: '#88929D'
+  },
+  layout: {
+    left: '7%', right: '5%',
+    titleLeft: '4%', titleTop: '4%',
+    markerLeft: '4%', markerTop: '1.5%', markerWidth: 24, markerHeight: 5,
+    footerLeft: '4%', footerBottom: 10, footerFontSize: 10,
+    bubblesTop: '21%', bubblesHeight: '12%',
+    differencesTop: '43%', differencesHeight: '15%',
+    valuesTop: '68%', valuesBottom: '12%',
+    bubbleMaxDiameter: 66, bubbleMinDiameter: 8,
+    differenceBarWidth: 25, valueBarWidth: 32,
+    categoryLabelSize: 12, valueLabelSize: 11, rateLabelSize: 12
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
+// 03 数据整理：按年份和品牌汇总，动态计算同比
+// ─────────────────────────────────────────────────────────────
+function readFields(source, fields) {
+  const objects = source && source.dataObjects;
+  if (!Array.isArray(objects)) throw new Error('缺少 dataArr.dataObjects，请检查数据源。');
+  const years = objects[fields.year]?.values;
+  const categories = objects[fields.category]?.values;
+  const values = objects[fields.value]?.values;
+  if (![years, categories, values].every(Array.isArray)) {
+    throw new Error('年份、分类、度量的字段索引不正确，或 values 不是数组。');
+  }
+  if (years.length !== categories.length || years.length !== values.length) {
+    throw new Error('三个字段的 values 行数不同，请检查 Power BI 数据组织。');
+  }
+  return years.map((year, i) => ({
+    year: String(year ?? '').trim(),
+    category: String(categories[i] ?? '').trim(),
+    value: values[i] === null || values[i] === '' || values[i] === undefined ? null : Number(values[i])
+  })).filter(row => row.year && row.category && row.value !== null && Number.isFinite(row.value));
+}
+
+function prepareData(rows, config) {
+  const allYears = [...new Set(rows.map(row => row.year))]
+    .sort((a, b) => Number(a) - Number(b) || a.localeCompare(b, 'zh-CN'));
+  const selected = config.compareYears ? config.compareYears.map(String) : allYears.slice(-2);
+  if (selected.length !== 2 || selected[0] === selected[1]) {
+    throw new Error('图表必须有两个不同的比较年份，请在 Power BI 中筛选或修改 compareYears。');
+  }
+  const [previousYear, currentYear] = selected;
+  // 汇总相同（年份、分类）的多行记录；缺失某年份不自动按 0 处理。
+  const totals = new Map();
+  const inputOrder = [];
+  rows.filter(row => selected.includes(row.year)).forEach(row => {
+    if (!inputOrder.includes(row.category)) inputOrder.push(row.category);
+    const key = JSON.stringify([row.year, row.category]);
+    totals.set(key, (totals.get(key) ?? 0) + row.value);
+  });
+  const valueAt = (year, category) => totals.get(JSON.stringify([year, category])) ?? null;
+  const result = inputOrder.map(category => {
+    const previous = valueAt(previousYear, category);
+    const current = valueAt(currentYear, category);
+    const difference = previous === null || current === null ? null : current - previous;
+    const rate = difference === null || previous === 0 ? null : difference / previous * 100;
+    return { category, previous, current, difference, rate };
+  });
+  if (config.sort === 'current-desc') result.sort((a,b) => (b.current ?? -Infinity) - (a.current ?? -Infinity));
+  if (config.sort === 'previous-desc') result.sort((a,b) => (b.previous ?? -Infinity) - (a.previous ?? -Infinity));
+  if (config.sort === 'name') result.sort((a,b) => a.category.localeCompare(b.category,'zh-CN'));
+  return { previousYear, currentYear, records: result };
+}
+
+// ─────────────────────────────────────────────────────────────
+// 04 绘图配置：三个 Grid 共用类别顺序和左右边界
+// ─────────────────────────────────────────────────────────────
+function buildOption(model, config) {
+  const { previousYear, currentYear, records } = model;
+  const { colors: c, layout: l } = config;
+  const categories = records.map(row => row.category);
+  const absoluteRates = records.map(row => Math.abs(row.rate ?? 0));
+  const maxRate = Math.max(1, ...absoluteRates);
+  const maxDelta = Math.max(1, ...records.map(row => Math.abs(row.difference ?? 0)));
+  const maxValue = Math.max(1, ...records.flatMap(row => [row.previous ?? 0, row.current ?? 0]));
+  const digits = config.decimals;
+  const format = (value, count = 0) => value === null ? '—' : Number(value).toLocaleString('zh-CN', { minimumFractionDigits: count, maximumFractionDigits: count });
+  const signed = (value, count) => value === null ? '—' : `${value > 0 ? '+' : ''}${format(value, count)}`;
+  const colorFor = value => value === null || value === 0 ? c.neutral : value > 0 ? c.positive : c.negative;
+  const sectionTitle = (text, top) => ({ text, left: l.left, top, textStyle: { color: c.muted, fontSize: 12, fontWeight: 'normal' } });
+  const xAxis = gridIndex => ({
+    type: 'category', gridIndex, data: categories, boundaryGap: true,
+    axisLine: { show: gridIndex === 2, lineStyle: { color: c.axis } },
+    axisTick: { show: false },
+    axisLabel: { show: gridIndex === 2, interval: 0, margin: 13, color: c.muted, fontSize: l.categoryLabelSize }
+  });
+  const yAxis = (gridIndex, min, max) => ({
+    type: 'value', gridIndex, min, max,
+    axisLine: { show: false }, axisTick: { show: false },
+    axisLabel: { show: false }, splitLine: { show: false }
+  });
+  const yearlyBar = (year, key, color) => ({
+    name: `${year}年`, type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
+    data: records.map(row => row[key]), barWidth: l.valueBarWidth, barGap: '24%',
+    itemStyle: { color },
+    label: { show: true, position: 'top', distance: 5, fontSize: l.valueLabelSize, color: c.title,
+      formatter: params => format(params.value, digits.metric) },
+    emphasis: { disabled: true }
+  });
+
+  return {
+    backgroundColor: c.background,
+    animation: false,
+    title: [
+      { text: config.title, subtext: `${config.subtitle} · ${previousYear} vs ${currentYear}`,
+        left: l.titleLeft, top: l.titleTop,
+        textStyle: { color: c.title, fontSize: 21, fontWeight: 'bold' },
+        subtextStyle: { color: c.muted, fontSize: 12 } },
+      sectionTitle('同比增长率（%） · 圆面积表示增长幅度', '16%'),
+      sectionTitle(`同比增减量（${config.unit}） · ${currentYear} − ${previousYear}`, '38%'),
+      sectionTitle(`${config.metricName}（${config.unit}）`, '63%')
+    ],
+    // graphic 用于不依赖数据坐标的装饰与图表来源说明。
+    graphic: [
+      {
+        type: 'rect', silent: true, z: 100,
+        left: l.markerLeft, top: l.markerTop,
+        shape: { width: l.markerWidth, height: l.markerHeight },
+        style: { fill: c.titleMarker }
+      },
+      {
+        type: 'text', silent: true, z: 100,
+        left: l.footerLeft, bottom: l.footerBottom,
+        style: {
+          text: `数据来源：${config.source}\n说明：${config.sourceNote}`,
+          fill: c.footer, font: `${l.footerFontSize}px sans-serif`,
+          lineHeight: l.footerFontSize + 5, textAlign: 'left'
+        }
+      }
+    ],
+    legend: { data: [`${previousYear}年`, `${currentYear}年`], right: '5%', top: '12%',
+      itemWidth: 12, itemHeight: 10, textStyle: { color: c.muted, fontSize: 11 } },
+    tooltip: {
+      trigger: 'axis', confine: true, axisPointer: { type: 'shadow' },
+      formatter(params) {
+        if (!params.length) return '';
+        const row = records[params[0].dataIndex];
+        return [
+          `<strong>${row.category}</strong>`,
+          `${previousYear}年：${format(row.previous, digits.metric)} ${config.unit}`,
+          `${currentYear}年：${format(row.current, digits.metric)} ${config.unit}`,
+          `同比增减量：${signed(row.difference, digits.difference)} ${config.unit}`,
+          `同比增长率：${row.rate === null ? '—（上年为0或数据缺失）' : signed(row.rate, digits.rate) + '%'}`
+        ].join('<br>');
+      }
+    },
+    axisPointer: { link: [{ xAxisIndex: [0, 1, 2] }] },
+    grid: [
+      { left: l.left, right: l.right, top: l.bubblesTop, height: l.bubblesHeight },
+      { left: l.left, right: l.right, top: l.differencesTop, height: l.differencesHeight },
+      { left: l.left, right: l.right, top: l.valuesTop, bottom: l.valuesBottom }
+    ],
+    xAxis: [xAxis(0), xAxis(1), xAxis(2)],
+    yAxis: [
+      yAxis(0, 0, 1),
+      yAxis(1, -maxDelta * 1.5, maxDelta * 1.5),
+      yAxis(2, 0, maxValue * 1.22)
+    ],
+    series: [
+      {
+        name: '同比增长率', type: 'scatter', xAxisIndex: 0, yAxisIndex: 0,
+        symbol: 'circle',
+        // 半径与变化率平方根成正比，因此圆面积与变化率绝对值成正比。
+        symbolSize: value => value[2] === null ? 0 :
+          Math.max(l.bubbleMinDiameter, Math.sqrt(Math.abs(value[2]) / maxRate) * l.bubbleMaxDiameter),
+        data: records.map((row, i) => ({
+          value: [i, 0.5, row.rate], itemStyle: { color: colorFor(row.rate), opacity: 0.9 }
+        })),
+        label: { show: true, position: 'bottom', distance: 8, color: c.text,
+          fontSize: l.rateLabelSize, fontWeight: 'bold',
+          formatter: params => params.value[2] === null ? '—' : `${signed(params.value[2], digits.rate)}%` },
+        emphasis: { disabled: true }
+      },
+      {
+        name: '同比增减量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1,
+        barWidth: l.differenceBarWidth,
+        data: records.map(row => ({
+          value: row.difference,
+          itemStyle: { color: colorFor(row.difference), borderRadius: (row.difference ?? 0) >= 0 ? [3,3,0,0] : [0,0,3,3] },
+          label: { position: (row.difference ?? 0) >= 0 ? 'top' : 'bottom', color: colorFor(row.difference) }
+        })),
+        label: { show: true, distance: 6, fontWeight: 'bold',
+          formatter: params => signed(params.value, digits.difference) },
+        markLine: { silent: true, symbol: ['none','none'], label: { show: false },
+          lineStyle: { color: c.baseline, type: 'dashed' }, data: [{ yAxis: 0 }] },
+        emphasis: { disabled: true }
+      },
+      yearlyBar(previousYear, 'previous', c.previous),
+      yearlyBar(currentYear, 'current', c.current)
+    ]
+  };
+}
+
+// ECharts 官方编辑器识别全局 option；Power BI 同样使用此配置。
+const chartData = prepareData(readFields(chartSource, settings.fields), settings);
+option = buildOption(chartData, settings);
