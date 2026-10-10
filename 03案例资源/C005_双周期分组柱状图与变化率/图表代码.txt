@@ -1,0 +1,248 @@
+// ECharts for Power BI：双周期分组柱状图与变化率标注通用模板。
+
+// ==================== 一、数据与业务配置（只修改本区） ====================
+// 原始数据采用长表结构：周期、类别、数值；三个数组的相同位置对应同一条记录。
+const periods = [2024, 2025, 2024, 2025, 2024, 2025, 2024, 2025, 2024, 2025];
+const categories = ['广东', '广东', '上海', '上海', '浙江', '浙江', '江苏', '江苏', '山东', '山东'];
+const values = [3041.5, 3001.8, 2519.2, 2713.3, 1483.1, 1543.0, 1017.1, 1083.9, 635.6, 695.6];
+
+// Power BI 字段接入示例（按实际绑定顺序替换上面的三个数组）：
+// const periods = dataArr.dataObjects[0].values;
+// const categories = dataArr.dataObjects[1].values;
+// const values = dataArr.dataObjects[2].values.map(Number);
+
+const CONFIG = {
+  title: '快递越寄越多，收入却不一定增长',
+  subject: '五省市快递业务收入对比',
+  unit: '亿元',
+  periodSuffix: '年',
+  source: '国家邮政局，2024 年及 2025 年邮政行业运行情况',
+  note: '同比＝（当期数值－上期数值）／上期数值；▲增长，▼下降；业务收入非利润',
+  decimals: 1,
+  // 不填则自动取原始数据中的两个周期，按升序排列；也可填写两个周期进行指定。
+  comparePeriods: null,
+  // 是否所有标注水平对齐：true＝对齐；false＝随各组柱高自适应。
+  alignAnnotations: true,
+  // 自适应模式下的顶部横线位置＝该组最高柱顶Y－偏移像素。
+  annotationOffset: 80
+};
+
+// 配色：前期深蓝，当期亮蓝；变化率严格按照增减方向使用绿、红、灰。
+const COLORS = {
+  positive: '#239263', negative: '#D9544D',
+  previous: '#0D2333', current: '#3F98E0',
+  background: 'transparent', text: '#263238',
+  secondary: '#8493A2', grid: '#E5E9ED'
+};
+
+// ==================== 二、通用数据整理（无需修改） ====================
+if (periods.length !== categories.length || periods.length !== values.length || !periods.length) {
+  throw new Error('周期、类别、数值字段必须非空且长度一致。');
+}
+
+// 将数字周期按数值排序，其他周期按本地化字符串排序；避免在后续出现写死的年份。
+const availablePeriods = [...new Set(periods.map(v => String(v).trim()))];
+const comparePeriods = CONFIG.comparePeriods == null
+  ? availablePeriods.sort((a, b) => {
+      const x = Number(a), y = Number(b);
+      return Number.isFinite(x) && Number.isFinite(y)
+        ? x - y : a.localeCompare(b, 'zh-CN', { numeric: true });
+    })
+  : CONFIG.comparePeriods.map(v => String(v).trim());
+if (comparePeriods.length !== 2 || new Set(comparePeriods).size !== 2) {
+  throw new Error('本模板仅支持两个对比周期；请提供恰好两个周期。');
+}
+if (comparePeriods.some(p => !availablePeriods.includes(p))) {
+  throw new Error('指定的对比周期在原始数据中不存在。');
+}
+
+const categoryNames = [...new Set(categories.map(v => String(v).trim()))];
+if (categoryNames.some(v => !v)) throw new Error('类别名称不能为空。');
+const rowMap = new Map();
+for (let i = 0; i < periods.length; i++) {
+  const period = String(periods[i]).trim();
+  const category = String(categories[i]).trim();
+  const value = Number(values[i]);
+  if (!comparePeriods.includes(period)) continue;
+  if (values[i] == null || String(values[i]).trim() === '' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`第 ${i + 1} 行数值无效，本模板要求非负数值。`);
+  }
+  if (!category) throw new Error(`第 ${i + 1} 行类别为空。`);
+  if (!rowMap.has(category)) rowMap.set(category, new Map());
+  if (rowMap.get(category).has(period)) {
+    throw new Error(`类别「${category}」的周期「${period}」重复，请先聚合为唯一记录。`);
+  }
+  rowMap.get(category).set(period, value);
+}
+
+const groupedValues = comparePeriods.map(period => categoryNames.map(category => {
+  const item = rowMap.get(category);
+  if (!item || !item.has(period)) {
+    throw new Error(`类别「${category}」缺少周期「${period}」的数据。`);
+  }
+  return item.get(period);
+}));
+const previousValues = groupedValues[0];
+const currentValues = groupedValues[1];
+const changeRates = previousValues.map((base, i) =>
+  base === 0 ? null : (currentValues[i] - base) / base * 100
+);
+const formatRate = rate => rate == null ? '—' :
+  `${rate > 0 ? '▲ ' : rate < 0 ? '▼ ' : ''}${Math.abs(rate).toFixed(1)}%`;
+const rateColor = rate => rate > 0 ? COLORS.positive : rate < 0 ? COLORS.negative : COLORS.secondary;
+const formatNumber = value => Number(value).toFixed(CONFIG.decimals);
+const seriesNames = comparePeriods.map(period => `${period}${CONFIG.periodSuffix}`);
+const subtitle = `${CONFIG.subject} · ${seriesNames.join('—')} · 单位：${CONFIG.unit}`;
+
+// Y 轴留出标注空间；不使用特定案例的最大值。
+const maxValue = Math.max(0, ...previousValues, ...currentValues);
+const yMax = maxValue > 0 ? maxValue * 1.42 : 1;
+const BAR_WIDTH = 26;
+const BAR_GAP_RATIO = 0.25;
+const CENTER_OFFSET = BAR_WIDTH * (1 + BAR_GAP_RATIO) / 2;
+const GRID = { left: 52, right: 28, top: 205, bottom: 96 };
+
+// ==================== 三、标注图形（无需修改） ====================
+function makeLine(x1, y1, x2, y2) {
+  return {
+    type: 'line', shape: { x1, y1, x2, y2 },
+    style: { stroke: COLORS.secondary, lineWidth: 1.15 }
+  };
+}
+
+function renderCompareAnnotation(params, api) {
+  const index = Number(api.value(0));
+  const leftValue = Number(api.value(1));
+  const rightValue = Number(api.value(2));
+  const rate = changeRates[index];
+  const categoryX = api.coord([index, 0])[0];
+  const leftX = categoryX - CENTER_OFFSET;
+  const rightX = categoryX + CENTER_OFFSET;
+  const leftTopY = api.coord([index, leftValue])[1];
+  const rightTopY = api.coord([index, rightValue])[1];
+  const highestTopY = Math.min(leftTopY, rightTopY);
+  const plotTopY = api.coord([index, yMax])[1];
+  const safeGap = 23;
+  const arrowHeight = 7;
+  const arrowHalfWidth = 3.5;
+  const leftEndY = leftTopY - safeGap;
+  const arrowTipY = rightTopY - safeGap;
+  const arrowBaseY = arrowTipY - arrowHeight;
+  const adaptiveTopY = highestTopY - CONFIG.annotationOffset;
+  const topY = CONFIG.alignAnnotations ? plotTopY + 28 : adaptiveTopY;
+  const centerX = (leftX + rightX) / 2;
+  const badgeHalfWidth = 27;
+  const badgeHalfHeight = 12;
+
+  return {
+    type: 'group', silent: true,
+    children: [
+      makeLine(leftX, topY, leftX, leftEndY),
+      makeLine(leftX, topY, centerX - badgeHalfWidth, topY),
+      makeLine(centerX + badgeHalfWidth, topY, rightX, topY),
+      makeLine(rightX, topY, rightX, arrowBaseY),
+      {
+        type: 'polygon',
+        shape: { points: [
+          [rightX - arrowHalfWidth, arrowBaseY],
+          [rightX + arrowHalfWidth, arrowBaseY],
+          [rightX, arrowTipY]
+        ] },
+        style: { fill: COLORS.secondary }
+      },
+      {
+        type: 'rect',
+        shape: { x: centerX - badgeHalfWidth, y: topY - badgeHalfHeight,
+          width: badgeHalfWidth * 2, height: badgeHalfHeight * 2, r: badgeHalfHeight },
+        style: { fill: '#FFFFFF', stroke: COLORS.grid, lineWidth: 1 }
+      },
+      {
+        type: 'text',
+        style: {
+          text: formatRate(rate), x: centerX, y: topY,
+          textAlign: 'center', textVerticalAlign: 'middle',
+          font: '600 11px Arial, Microsoft YaHei, sans-serif',
+          fill: rateColor(rate)
+        }
+      }
+    ]
+  };
+}
+
+// ==================== 四、通用图表配置（无需修改） ====================
+option = {
+  backgroundColor: COLORS.background,
+  animation: true,
+  animationDuration: 650,
+  animationEasing: 'cubicOut',
+  title: {
+    left: 25, top: 24, text: CONFIG.title, subtext: subtitle,
+    textStyle: { color: COLORS.text, fontSize: 21, fontWeight: 700 },
+    subtextStyle: { color: COLORS.secondary, fontSize: 12, lineHeight: 18 },
+    itemGap: 10
+  },
+  graphic: [
+    {
+      type: 'rect', left: 26, top: 13, silent: true,
+      shape: { width: 20, height: 4 }, style: { fill: COLORS.negative }
+    },
+    {
+      type: 'text', left: 26, bottom: 43, silent: true,
+      style: { text: `数据来源：${CONFIG.source}`, fill: COLORS.secondary,
+        font: '10px Microsoft YaHei, sans-serif' }
+    },
+    {
+      type: 'text', left: 26, bottom: 25, silent: true,
+      style: { text: `图表说明：${CONFIG.note}`, fill: COLORS.secondary,
+        font: '10px Microsoft YaHei, sans-serif' }
+    }
+  ],
+  legend: {
+    top: 103, left: 27, itemWidth: 12, itemHeight: 10, itemGap: 26,
+    textStyle: { color: COLORS.text, fontSize: 12 }, data: seriesNames
+  },
+  tooltip: {
+    trigger: 'axis',
+    // 不使用整组阴影，避免悬停时遮挡两根柱体。
+    axisPointer: { type: 'line', lineStyle: { color: COLORS.grid, width: 1 } },
+    backgroundColor: '#FFFFFF', borderColor: COLORS.grid, borderWidth: 1,
+    textStyle: { color: COLORS.text },
+    formatter: items => {
+      const first = items.find(item => item.componentSubType === 'bar');
+      if (!first) return '';
+      const index = first.dataIndex;
+      return [
+        `<b>${categoryNames[index]}</b>`,
+        ...seriesNames.map((name, i) => `${name}：${formatNumber(groupedValues[i][index])} ${CONFIG.unit}`),
+        `同比：<span style="color:${rateColor(changeRates[index])};font-weight:600;">${formatRate(changeRates[index])}</span>`
+      ].join('<br/>');
+    }
+  },
+  grid: GRID,
+  xAxis: {
+    type: 'category', data: categoryNames,
+    axisTick: { show: false },
+    axisLine: { lineStyle: { color: COLORS.grid } },
+    axisLabel: { color: COLORS.text, fontSize: 13, fontWeight: 600, margin: 14, interval: 0 }
+  },
+  yAxis: { type: 'value', show: false, min: 0, max: yMax },
+  series: [
+    ...groupedValues.map((data, index) => ({
+      name: seriesNames[index], type: 'bar', data,
+      barWidth: BAR_WIDTH, barGap: `${BAR_GAP_RATIO * 100}%`,
+      itemStyle: { color: index === 0 ? COLORS.previous : COLORS.current },
+      label: {
+        show: true, position: 'top', distance: 4, color: COLORS.text,
+        fontSize: 11, formatter: item => formatNumber(item.value)
+      },
+      emphasis: { disabled: true }, z: 2
+    })),
+    {
+      name: '同比标注', type: 'custom', coordinateSystem: 'cartesian2d',
+      renderItem: renderCompareAnnotation,
+      data: categoryNames.map((_, index) => [index, previousValues[index], currentValues[index]]),
+      encode: { x: 0, y: [1, 2] },
+      silent: true, tooltip: { show: false }, animation: false, z: 10
+    }
+  ]
+};
