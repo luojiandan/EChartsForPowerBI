@@ -1,0 +1,296 @@
+/**
+ * ECharts for Power BI | Annual China Box Office: YoY Step Comparison
+ * Paste directly into the ECharts official editor (JavaScript pane).
+ * Annual total box office, CNY 100 million (亿元), 2016–2025.
+ */
+
+const colors = {
+  positive: '#239263',
+  negative: '#D9544D',
+  bar: '#BFC6CE',
+  title: '#1F2937',
+  text: '#374151',
+  muted: '#6B7280',
+  axis: '#D1D5DB',
+  border: '#E5E7EB',
+  boxBg: '#FFFFFF'
+};
+
+// One independent array for each Power BI field. Keep indices aligned.
+const years = ['2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'];
+const boxOffice = [492.83, 559.11, 609.76, 642.66, 204.17, 472.58, 300.67, 549.15, 425.02, 518.32];
+
+// ===== 商业事件注释配置：数组可添加任意多个条目 =====
+// 这里的对象数组仅用于注释配置，不属于 Power BI 原始数据。
+// enabled=false 隐藏单条注释；总开关 false 隐藏所有注释。
+const showAnnotations = true;
+const annotations = [
+  {
+    enabled: true,
+    year: '2020',
+    title: '疫情冲击',
+    reason: '新冠疫情影响影院营业和影片上映，\n全年票房同比大幅下降。'
+  },
+  {
+    enabled: true,
+    year: '2023',
+    title: '市场恢复',
+    reason: '影院经营及影片供给逐步恢复，\n全年票房较上年显著回升。'
+  }
+];
+
+const chartData = years.map((year, i) => {
+  const value = Number(boxOffice[i]);
+  const previous = i ? Number(boxOffice[i - 1]) : null;
+  const change = previous === null ? null : +(value - previous).toFixed(2);
+  const rate = previous === null || previous === 0 ? null : change / previous * 100;
+  return { year, value, previous, change, rate };
+});
+
+const fmt = (v, n = 2) => Number(v).toFixed(n);
+const signed = (v, n = 2) => `${v > 0 ? '+' : ''}${fmt(v, n)}`;
+const rect = (x, y, width, height, color) => ({
+  type: 'rect',
+  shape: { x, y, width, height },
+  style: { fill: color }
+});
+
+function renderStepBar(params, api) {
+  const i = params.dataIndex;
+  const d = chartData[i];
+  const centerX = api.coord([i, 0])[0];
+  const bottomY = api.coord([i, 0])[1];
+  const currentY = api.coord([i, d.value])[1];
+  const categoryWidth = api.size([1, 0])[0];
+  const width = Math.max(12, Math.min(categoryWidth * 0.68, 75));
+  const leftX = centerX - width / 2;
+  const barHeight = bottomY - currentY;
+  const children = [];
+
+  children.push(rect(leftX, currentY, width, barHeight, colors.bar));
+
+  let labelTopY = currentY;
+  if (d.previous !== null) {
+    const previousY = api.coord([i, d.previous])[1];
+    const changeTop = Math.min(previousY, currentY);
+    const changeHeight = Math.abs(previousY - currentY);
+    const stripWidth = Math.max(6, Math.min(11, width * 0.18));
+    const changeColor = d.change >= 0 ? colors.positive : colors.negative;
+    children.push(rect(leftX, changeTop, stripWidth, changeHeight, changeColor));
+    labelTopY = changeTop;
+  }
+
+  const changeColor = d.change === null ? colors.muted :
+    (d.change >= 0 ? colors.positive : colors.negative);
+  const labelText = d.change === null
+    ? `{value|${fmt(d.value)}}`
+    : `{rate|${d.change >= 0 ? '▲' : '▼'} ${fmt(Math.abs(d.rate), 1)}%}\n{delta|${signed(d.change)}}\n{value|${fmt(d.value)}}`;
+
+  children.push({
+    type: 'text',
+    style: {
+      x: centerX,
+      y: labelTopY - 8,
+      text: labelText,
+      textAlign: 'center',
+      textVerticalAlign: 'bottom',
+      rich: {
+        value: { fill: colors.text, fontSize: 12, fontWeight: 700, lineHeight: 20 },
+        delta: { fill: changeColor, fontSize: 12, fontWeight: 700, lineHeight: 18 },
+        rate: { fill: changeColor, fontSize: 11, fontWeight: 500, lineHeight: 17 }
+      }
+    },
+    silent: true
+  });
+
+  return { type: 'group', children };
+}
+
+
+// Responsive annotation layout. Cards live in a dedicated band ABOVE the grid.
+// The chart redraws this band when its canvas size changes.
+const BASE_GRID = { left: 80, right: 38, bottom: 112 };
+const CHART_Y_MAX = 880;
+
+function getAnnotationLayout(width, height) {
+  const available = annotations.filter(note =>
+    showAnnotations && note.enabled !== false && years.includes(String(note.year))
+  );
+  const pad = 28, gap = 14;
+  const usable = Math.max(160, width - pad * 2);
+  const cols = Math.min(available.length || 1,
+    Math.max(1, Math.floor((usable + gap) / (260 + gap))));
+  const cardW = Math.min(270, Math.max(160, (usable - (cols - 1) * gap) / cols));
+  const measureRows = text => String(text || '').split('\n').reduce((n, line) =>
+    n + Math.max(1, Math.ceil(line.length / Math.max(14, Math.floor((cardW - 28) / 12)))), 0);
+  const rowH = 100 + Math.max(0, ...available.map(n => (measureRows(n.reason) - 2) * 17));
+  const rows = Math.ceil(available.length / cols);
+  const bandTop = 108;
+  const gridTop = available.length ? bandTop + rows * rowH + 24 : 137;
+  return { active: available, cols, cardW, gap, pad, rowH, bandTop, gridTop,
+    grid: { ...BASE_GRID, top: gridTop, containLabel: false } };
+}
+
+function buildBusinessAnnotations(width, height, layout) {
+  if (!layout.active.length) return [];
+  const plotWidth = width - BASE_GRID.left - BASE_GRID.right;
+  const plotHeight = height - layout.gridTop - BASE_GRID.bottom;
+  if (plotWidth <= 0 || plotHeight <= 20) return [];
+  const toY = v => layout.gridTop + (CHART_Y_MAX - v) / CHART_Y_MAX * plotHeight;
+  const band = plotWidth / years.length;
+  const elements = [];
+  layout.active.forEach((note, index) => {
+    const yearIndex = years.indexOf(String(note.year));
+    const datum = chartData[yearIndex];
+    const row = Math.floor(index / layout.cols);
+    const col = index % layout.cols;
+    const countInRow = Math.min(layout.cols, layout.active.length - row * layout.cols);
+    const rowWidth = countInRow * layout.cardW + (countInRow - 1) * layout.gap;
+    const startX = (width - rowWidth) / 2;
+    const cardX = startX + col * (layout.cardW + layout.gap);
+    const cardY = layout.bandTop + row * layout.rowH;
+    const cardH = layout.rowH - 12;
+    const centerX = BASE_GRID.left + band * (yearIndex + 0.5);
+    const barW = Math.max(12, Math.min(band * 0.68, 75));
+    const stripW = Math.max(6, Math.min(11, barW * 0.18));
+    const targetX = centerX - barW / 2 + stripW / 2;
+    const targetY = datum.previous === null ? toY(datum.value) :
+      (toY(datum.previous) + toY(datum.value)) / 2;
+    const color = datum.change === null ? colors.muted :
+      datum.change >= 0 ? colors.positive : colors.negative;
+    const sourceX = cardX + layout.cardW / 2;
+    const sourceY = cardY + cardH;
+    const elbowY = layout.gridTop - 10;
+    // Connection lines stay behind chart columns and labels.
+    elements.push({
+      id: `event-line-${index}`, type: 'polyline', silent: true, z: 1,
+      shape: { points: [[sourceX, sourceY], [sourceX, elbowY],
+        [targetX, elbowY], [targetX, targetY]] },
+      style: { stroke: color, lineWidth: 1.1, lineDash: [3, 4], opacity: 0.7, fill: null }
+    });
+    elements.push({
+      id: `event-dot-${index}`, type: 'circle', silent: true, z: 6,
+      shape: { cx: targetX, cy: targetY, r: 3 },
+      style: { fill: color, stroke: '#FFFFFF', lineWidth: 1 }
+    });
+    elements.push({
+      id: `event-card-${index}`, type: 'group', x: cardX, y: cardY, silent: true, z: 15,
+      children: [
+        { type: 'rect', shape: { x: 0, y: 0, width: layout.cardW, height: cardH, r: 4 },
+          style: { fill: '#FFFFFF', stroke: colors.border, lineWidth: 1 } },
+        { type: 'rect', shape: { x: 0, y: 0, width: 3, height: cardH },
+          style: { fill: color } },
+        { type: 'text', style: { x: 13, y: 11, text: `${note.year} 年 · ${note.title || '关键事件'}`,
+          font: 'bold 12px sans-serif', fill: color } },
+        { type: 'line', shape: { x1: 13, y1: 31, x2: layout.cardW - 13, y2: 31 },
+          style: { stroke: '#E5E9ED', lineWidth: 1 } },
+        { type: 'text', style: { x: 13, y: 42, width: layout.cardW - 26,
+          text: String(note.reason || ''), overflow: 'break',
+          font: '11px sans-serif', lineHeight: 17, fill: colors.text } }
+      ]
+    });
+  });
+  return elements;
+}
+
+function buildResponsiveGraphics(width, height) {
+  const layout = getAnnotationLayout(width, height);
+  return [
+    { id: 'title-accent', type: 'rect', left: 36, top: 9, silent: true,
+      shape: { width: 20, height: 4 }, style: { fill: colors.negative } },
+    ...buildBusinessAnnotations(width, height, layout),
+    { id: 'data-source', type: 'text', left: 36, bottom: 35, silent: true,
+      style: { text: '数据来源：国家电影局年度全国电影票房统计；历史公开数据整理（2016—2025）',
+        width: Math.max(200, width - 60), overflow: 'break', fill: colors.muted, fontSize: 10 } },
+    { id: 'chart-note', type: 'text', left: 36, bottom: 17, silent: true,
+      style: { text: '图表说明：灰色柱体为年度总票房；绿色 / 红色阶梯为较上年增加 / 减少的票房，年度顶部依次标注增长率、增减额、票房（▲增长，▼下降）。',
+        width: Math.max(200, width - 60), overflow: 'truncate', fill: colors.muted, fontSize: 10 } }
+  ];
+}
+
+// In the official editor, myChart is the current ECharts instance.
+let layoutWidth = myChart.getWidth();
+let layoutHeight = myChart.getHeight();
+const initialLayout = getAnnotationLayout(layoutWidth, layoutHeight);
+
+option = {
+  backgroundColor: 'transparent',
+  animation: true,
+  animationDuration: 650,
+  title: {
+    text: '中国电影票房十年沉浮',
+    subtext: '阶梯差值对比图 · 2016—2025 年 · 单位：亿元',
+    left: 36,
+    top: 23,
+    textStyle: { color: colors.title, fontSize: 22, fontWeight: 700 },
+    subtextStyle: { color: colors.muted, fontSize: 12, lineHeight: 23 }
+  },
+  grid: initialLayout.grid,
+  xAxis: {
+    type: 'category',
+    data: chartData.map(d => d.year),
+    boundaryGap: true,
+    axisLine: { lineStyle: { color: colors.axis, width: 1 } },
+    axisTick: { show: false },
+    axisLabel: { color: colors.text, fontSize: 12, margin: 14, interval: 0 },
+    splitLine: { show: false }
+  },
+  yAxis: {
+    type: 'value',
+    name: '票房（亿元）',
+    nameLocation: 'end',
+    nameGap: 16,
+    nameTextStyle: { color: colors.muted, fontSize: 12, padding: [0, 0, 0, 4] },
+    min: 0,
+    max: 880,
+    interval: 100,
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: { color: colors.muted, fontSize: 11 },
+    splitLine: { show: true, lineStyle: { color: '#EDF0F2', type: 'dashed', width: 1 } }
+  },
+  tooltip: {
+    trigger: 'item',
+    confine: true,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E5E7EB',
+    textStyle: { color: colors.text, fontSize: 12 },
+    formatter: (p) => {
+      const d = chartData[p.dataIndex];
+      if (!d) return '';
+      const changeColor = d.change >= 0 ? colors.positive : colors.negative;
+      return `<div style="font-weight:700;margin-bottom:5px">${d.year} 年</div>` +
+        `<div>电影票房：<b>${fmt(d.value)} 亿元</b></div>` +
+        (d.change === null ? '<div style="color:#6B7280">起始年度，无同比数据</div>' :
+        `<div style="color:${changeColor}">同比增减额：<b>${signed(d.change)} 亿元</b></div>` +
+        `<div style="color:${changeColor}">同比增长率：<b>${signed(d.rate, 1)}%</b></div>`);
+    }
+  },
+  series: [{
+    name: '中国电影票房',
+    type: 'custom',
+    coordinateSystem: 'cartesian2d',
+    renderItem: renderStepBar,
+    data: chartData.map((d, i) => [i, d.value]),
+    encode: { x: 0, y: 1 },
+    z: 3,
+    clip: false
+  }],
+  graphic: buildResponsiveGraphics(layoutWidth, layoutHeight)
+};
+
+// ECharts emits "finished" following resize-triggered render too.
+// Only refresh if the canvas dimensions actually changed: no render loop.
+const responsiveUpdate = () => {
+  const width = myChart.getWidth();
+  const height = myChart.getHeight();
+  if (width === layoutWidth && height === layoutHeight) return;
+  layoutWidth = width;
+  layoutHeight = height;
+  const next = getAnnotationLayout(width, height);
+  myChart.setOption({
+    grid: next.grid,
+    graphic: { $action: 'replace', elements: buildResponsiveGraphics(width, height) }
+  });
+};
+myChart.on('finished', responsiveUpdate);

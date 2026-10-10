@@ -1,0 +1,190 @@
+﻿/**
+ * ECharts for Power BI | Annual China Box Office: YoY Step Comparison
+ * Paste directly into the ECharts official editor (JavaScript pane).
+ * Annual total box office, CNY 100 million (亿元), 2016–2025.
+ * Selected sources:
+ * https://www.chinafilm.gov.cn/xwzx/gzdt/202601/t20260105_944809.html
+ * https://www.chinafilm.gov.cn/xwzx/gzdt/202501/t20250102_879736.html
+ * https://www.chinafilm.gov.cn/xwzx/gzdt/202401/t20240102_825148.html
+ * https://zh.wikipedia.org/wiki/中国大陸電影 (historical annual series)
+ * Notes: historical published figures may differ by ticketing-service-fee
+ * inclusion/rounding. The series here uses a consistent widely cited set.
+ */
+
+const colors = {
+  positive: '#239263',
+  negative: '#D9544D',
+  bar: '#BFC6CE',
+  title: '#1F2937',
+  text: '#374151',
+  muted: '#6B7280',
+  axis: '#D1D5DB'
+};
+
+// One independent array for each Power BI field. Keep indices aligned.
+const years = ['2016', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'];
+const boxOffice = [492.83, 559.11, 609.76, 642.66, 204.17, 472.58, 300.67, 549.15, 425.02, 518.32];
+
+if (years.length !== boxOffice.length) {
+  throw new Error('年份和票房数组的长度必须一致');
+}
+
+// Calculated fields are derived from two input arrays, not object-array inputs.
+const chartData = years.map((year, i) => {
+  const value = Number(boxOffice[i]);
+  const previous = i ? Number(boxOffice[i - 1]) : null;
+  const change = previous === null ? null : +(value - previous).toFixed(2);
+  const rate = previous === null || previous === 0 ? null : change / previous * 100;
+  return { year, value, previous, change, rate };
+});
+
+const fmt = (v, n = 2) => Number(v).toFixed(n);
+const signed = (v, n = 2) => `${v > 0 ? '+' : ''}${fmt(v, n)}`;
+const rect = (x, y, width, height, color) => ({
+  type: 'rect',
+  shape: { x, y, width, height },
+  style: { fill: color }
+});
+
+function renderStepBar(params, api) {
+  const i = params.dataIndex;
+  const d = chartData[i];
+  const centerX = api.coord([i, 0])[0];
+  const bottomY = api.coord([i, 0])[1];
+  const currentY = api.coord([i, d.value])[1];
+  const categoryWidth = api.size([1, 0])[0];
+  const width = Math.max(12, Math.min(categoryWidth * 0.68, 75));
+  const leftX = centerX - width / 2;
+  const barHeight = bottomY - currentY;
+  const children = [];
+
+  // Grey annual total (not a traditional running-total waterfall).
+  children.push(rect(leftX, currentY, width, barHeight, colors.bar));
+
+  // Display the three metrics as one label block above the step bar:
+  // YoY growth rate (top), YoY change amount (middle), annual box office (bottom).
+  let labelTopY = currentY;
+  if (d.previous !== null) {
+    const previousY = api.coord([i, d.previous])[1];
+    const changeTop = Math.min(previousY, currentY);
+    const changeHeight = Math.abs(previousY - currentY);
+    const stripWidth = Math.max(6, Math.min(11, width * 0.18));
+    const changeColor = d.change >= 0 ? colors.positive : colors.negative;
+    children.push(rect(leftX, changeTop, stripWidth, changeHeight, changeColor));
+    labelTopY = changeTop;
+  }
+
+  const changeColor = d.change === null ? colors.muted :
+    (d.change >= 0 ? colors.positive : colors.negative);
+  const labelText = d.change === null
+    ? `{value|${fmt(d.value)}}`
+    : `{rate|${d.change >= 0 ? '▲' : '▼'} ${fmt(Math.abs(d.rate), 1)}%}\n{delta|${signed(d.change)}}\n{value|${fmt(d.value)}}`;
+
+  children.push({
+    type: 'text',
+    style: {
+      x: centerX,
+      y: labelTopY - 8,
+      text: labelText,
+      textAlign: 'center',
+      textVerticalAlign: 'bottom',
+      rich: {
+        value: { fill: colors.text, fontSize: 12, fontWeight: 700, lineHeight: 20 },
+        delta: { fill: changeColor, fontSize: 12, fontWeight: 700, lineHeight: 18 },
+        rate: { fill: changeColor, fontSize: 11, fontWeight: 500, lineHeight: 17 }
+      }
+    },
+    silent: true
+  });
+
+  return { type: 'group', children };
+}
+
+option = {
+  backgroundColor: 'transparent',
+  animation: true,
+  animationDuration: 650,
+  title: {
+    text: '中国电影票房十年沉浮',
+    subtext: '阶梯差值对比图 · 2016—2025 年 · 单位：亿元',
+    left: 36,
+    top: 23,
+    textStyle: { color: colors.title, fontSize: 22, fontWeight: 700 },
+    subtextStyle: { color: colors.muted, fontSize: 12, lineHeight: 23 }
+  },
+  // All four margins are pixel numbers, not percentages.
+  grid: { left: 80, right: 38, top: 137, bottom: 112, containLabel: false },
+  xAxis: {
+    type: 'category',
+    data: chartData.map(d => d.year),
+    boundaryGap: true,
+    axisLine: { lineStyle: { color: colors.axis, width: 1 } },
+    axisTick: { show: false },
+    axisLabel: { color: colors.text, fontSize: 12, margin: 14, interval: 0 },
+    splitLine: { show: false }
+  },
+  yAxis: {
+    type: 'value',
+    name: '票房（亿元）',
+    nameLocation: 'end',
+    nameGap: 16,
+    nameTextStyle: { color: colors.muted, fontSize: 12, padding: [0, 0, 0, 4] },
+    min: 0,
+    max: 880,
+    interval: 100,
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: { color: colors.muted, fontSize: 11 },
+    splitLine: { show: true, lineStyle: { color: '#EDF0F2', type: 'dashed', width: 1 } }
+  },
+  tooltip: {
+    trigger: 'item',
+    confine: true,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E5E7EB',
+    textStyle: { color: colors.text, fontSize: 12 },
+    formatter: (p) => {
+      const d = chartData[p.dataIndex];
+      if (!d) return '';
+      const changeColor = d.change >= 0 ? colors.positive : colors.negative;
+      return `<div style="font-weight:700;margin-bottom:5px">${d.year} 年</div>` +
+        `<div>电影票房：<b>${fmt(d.value)} 亿元</b></div>` +
+        (d.change === null ? '<div style="color:#6B7280">起始年度，无同比数据</div>' :
+        `<div style="color:${changeColor}">同比增减额：<b>${signed(d.change)} 亿元</b></div>` +
+        `<div style="color:${changeColor}">同比增长率：<b>${signed(d.rate, 1)}%</b></div>`);
+    }
+  },
+  series: [{
+    name: '中国电影票房',
+    type: 'custom',
+    coordinateSystem: 'cartesian2d',
+    renderItem: renderStepBar,
+    data: chartData.map((d, i) => [i, d.value]),
+    encode: { x: 0, y: 1 },
+    z: 3,
+    clip: false
+  }],
+  graphic: [
+    // Short editorial-style red bar, aligned with the title.
+    {
+      type: 'rect', left: 36, top: 9, silent: true,
+      shape: { width: 20, height: 4 },
+      style: { fill: '#D9544D' }
+    },
+    // Two-line data attribution and chart reading guide.
+    {
+      type: 'text', left: 36, bottom: 35, silent: true,
+      style: {
+        text: '数据来源：国家电影局年度全国电影票房统计；历史公开数据整理（2016—2025）',
+        fill: colors.muted, fontSize: 10
+      }
+    },
+    {
+      type: 'text', left: 36, bottom: 17, silent: true,
+      style: {
+        text: '图表说明：灰色柱体为年度总票房；绿色 / 红色阶梯为较上年增加 / 减少的票房，每个年度的顶部由上至下依次标注同比增长率、同比增减额、年度票房（▲增长，▼下降）。',
+        fill: colors.muted, fontSize: 10
+      }
+    }
+  ]
+};

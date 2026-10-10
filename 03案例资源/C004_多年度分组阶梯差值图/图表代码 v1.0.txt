@@ -1,0 +1,150 @@
+﻿// C004 | 全球手机品牌市场份额：三年阶梯差值对比
+// Source: Counterpoint Research, Global Smartphone Shipments Share - Last Eight Years of Winners & Losers
+// https://counterpointresearch.com/insights/global-smartphone-shipments-share-last-eight-years
+// Data: 2023-2025, percent share of global smartphone sell-in shipments.
+// 原始输入：一个字段一维数组，按相同索引对应；适合替换 Power BI 字段。
+const brands = [
+  '苹果', '苹果', '苹果',
+  '三星', '三星', '三星',
+  '小米', '小米', '小米',
+  'OPPO', 'OPPO', 'OPPO',
+  'vivo', 'vivo', 'vivo'
+];
+const years = [
+  '2023', '2024', '2025',
+  '2023', '2024', '2025',
+  '2023', '2024', '2025',
+  '2023', '2024', '2025',
+  '2023', '2024', '2025'
+];
+const marketShare = [
+  19.3, 18.2, 19.7,
+  19.3, 18.4, 19.2,
+  12.5, 13.9, 13.2,
+  13.2, 12.5, 11.5,
+  7.5, 8.3, 8.5
+];
+const COLORS = {
+  positive: '#239263',
+  negative: '#D9544D',
+  bar: '#BFC6CE',
+  barSecondary: '#D9DEE3',
+  barReference: '#AEB7C1',
+  background: 'transparent',
+  text: '#263238',
+  textSecondary: '#8493A2',
+  gridLine: '#E5E9ED'
+};
+
+const products = [...new Set(brands)];
+const periods = ['2023', '2024', '2025'];
+const byBrand = products.map((brand) => periods.map((year) => {
+  const i = brands.findIndex((b, index) => b === brand && years[index] === year);
+  return i < 0 ? null : Number(marketShare[i]);
+}));
+const fmtDiff = (diff) => (diff > 0 ? '▲ +' : diff < 0 ? '▼ ' : '') + diff.toFixed(1) + 'pp';
+const diffColor = (diff) => diff > 0 ? COLORS.positive : diff < 0 ? COLORS.negative : COLORS.textSecondary;
+
+// 每个品牌绘制三根柱、阶梯连接线与相邻年度差值标签。
+// 可视化内生成的 children 对象不属于原始输入数组。
+function drawGroup(params, api) {
+  const idx = api.value(0);
+  const nums = byBrand[idx];
+  const center = api.coord([idx, 0])[0];
+  const baseY = api.coord([idx, 0])[1];
+  const groupWidth = api.size([1, 0])[0];
+  const barWidth = Math.min(23, groupWidth * 0.17);
+  const gap = Math.min(12, groupWidth * 0.09);
+  const stride = barWidth + gap;
+  const centers = [center - stride, center, center + stride];
+  const barColors = [COLORS.barReference, COLORS.bar, '#768895'];
+  const children = [];
+  nums.forEach((v, i) => {
+    if (v == null) return;
+    const y = api.coord([idx, v])[1];
+    const rect = echarts.graphic.clipRectByRect({
+      x: centers[i] - barWidth / 2, y, width: barWidth, height: Math.max(0, baseY - y)
+    }, {x: params.coordSys.x, y: params.coordSys.y, width: params.coordSys.width, height: params.coordSys.height});
+    if (rect) children.push({type: 'rect', shape: rect, style: {fill: barColors[i]}});
+    children.push({
+      type: 'text', x: centers[i], y: y - 9,
+      style: {text: v.toFixed(1), textAlign: 'center', textVerticalAlign: 'bottom', font: '12px sans-serif', fill: COLORS.text}
+    });
+    children.push({
+      type: 'text', x: centers[i], y: baseY + 10,
+      style: {text: periods[i].slice(2), textAlign: 'center', textVerticalAlign: 'top', font: '11px sans-serif', fill: COLORS.textSecondary}
+    });
+  });
+  // 以相邻两年柱顶的高度构造阶梯连接，用颜色显示上升或下降。
+  // 在连接线的垂直段附近放置差值标签。
+  for (let j = 0; j < 2; j++) {
+    if (nums[j] == null || nums[j + 1] == null) continue;
+    const prevY = api.coord([idx, nums[j]])[1];
+    const nextY = api.coord([idx, nums[j + 1]])[1];
+    const delta = +(nums[j + 1] - nums[j]).toFixed(1);
+    const joinX = (centers[j] + centers[j + 1]) / 2;
+    const color = diffColor(delta);
+    // 连接线贴近柱顶，减少与数值标签重叠；竖线表达高度差。
+    children.push({type: 'polyline', shape: {points: [
+      [centers[j] + barWidth/2 + 2, prevY], [joinX, prevY], [joinX, nextY], [centers[j+1] - barWidth/2 - 2, nextY]
+    ]}, style: {stroke: color, lineWidth: 1.6, fill: 'none', lineDash: [3, 2]}});
+    // 差值较小时标签错开放在各品牌上方两条固定行，避免跨组遮挡。
+    const maxVal = Math.max(...nums.filter(v => v != null));
+    const topY = api.coord([idx, maxVal])[1];
+    children.push({type:'text',x:center + (j === 0 ? -stride * 0.6 : stride * 0.6),
+      y:topY - (j === 0 ? 62 : 43),
+      style:{text:fmtDiff(delta),textAlign:'center',textVerticalAlign:'middle',font:'bold 11px sans-serif',fill:color}});
+  }
+  return {type:'group',children};
+}
+
+option = {
+  backgroundColor: COLORS.background,
+  animation: false,
+  title: {
+    text: '苹果、三星、小米：谁在抢占全球手机市场？',
+    subtext: '全球主要品牌智能手机出货量市场份额  |  2023—2025 年  |  单位：%',
+    left: 38, top: 30,
+    textStyle: {color: COLORS.text, fontSize: 21, fontWeight: 700},
+    subtextStyle: {color: COLORS.textSecondary, fontSize: 12, lineHeight: 22},
+    itemGap: 8
+  },
+  grid: {left: 58, right: 38, top: '18%', bottom: 118, containLabel: false},
+  xAxis: {
+    type: 'category', data: products,
+    axisTick: {show: false},
+    axisLine: {lineStyle: {color: COLORS.gridLine}},
+    axisLabel: {color: COLORS.text, fontWeight: 600, fontSize: 13, margin: 29},
+    splitLine: {show: false}
+  },
+  yAxis: {
+    type: 'value', min: 0, max: 25, interval: 5,
+    name: '市场份额（%）', nameLocation: 'end', nameGap: 12,
+    nameTextStyle: {color: COLORS.textSecondary, align: 'left', fontSize: 11},
+    axisLine: {show: false}, axisTick: {show: false},
+    axisLabel: {color: COLORS.textSecondary, fontSize: 11},
+    splitLine: {show: true, lineStyle: {color: COLORS.gridLine}}
+  },
+  tooltip: {
+    trigger: 'item', backgroundColor: '#FFFFFF', borderColor: COLORS.gridLine,
+    borderWidth: 1, textStyle: {color: COLORS.text, fontSize: 12},
+    formatter: (p) => {
+      const i = Number(p.value[0]);
+      const vals = byBrand[i];
+      return '<b>' + products[i] + '</b><br/>' +
+        periods.map((yr,j)=>yr + '：' + (vals[j]==null?'—':vals[j].toFixed(1)+'%')).join('<br/>') +
+        '<br/><span style="color:' + diffColor(vals[1]-vals[0]) + '">2024 较 2023：' + fmtDiff(+(vals[1]-vals[0]).toFixed(1)) + '</span>' +
+        '<br/><span style="color:' + diffColor(vals[2]-vals[1]) + '">2025 较 2024：' + fmtDiff(+(vals[2]-vals[1]).toFixed(1)) + '</span>';
+    }
+  },
+  graphic: [
+    {type:'rect',left:38,top:18,shape:{width:20,height:4},style:{fill:COLORS.negative}},
+    {type:'text',left:38,bottom:47,style:{text:'数据来源：Counterpoint Research · Market Monitor（2023—2025 年全球智能手机出货量份额）',font:'11px sans-serif',fill:COLORS.textSecondary}},
+    {type:'text',left:38,bottom:27,style:{text:'图表说明：灰色柱为年度份额；绿色 ▲ 为份额增加、红色 ▼ 为份额减少；差值单位 pp = 百分点。OPPO 含 OnePlus。',font:'11px sans-serif',fill:COLORS.textSecondary}}
+  ],
+  series: [{
+    type: 'custom', name:'年度份额与阶梯差值', renderItem: drawGroup,
+    data: products.map((_,i)=>[i]), encode: {x:0},
+    tooltip: {show:true}, z: 5
+  }]
+};
