@@ -1,0 +1,230 @@
+// C006 横向哑铃对比图 V1｜不带目标
+// 在 ECharts 官方编辑器直接运行；仅需替换三个平行一维数组即可对接 Power BI。
+
+// ============================================================
+// 01. 原始数据（一个字段对应一个一维数组）
+// ============================================================
+const years = ['2024','2025','2024','2025','2024','2025','2024','2025'];
+const brands = ['零跑','零跑','小鹏','小鹏','理想','理想','蔚来','蔚来'];
+const deliveries = [293724,596555,190068,429445,500508,406343,221970,326028];
+
+// 第2版目标数据可再新增独立的 targets 数组。第1版完全不使用目标字段。
+// Power BI 中按实际字段顺序替换上面三个数组，例如：
+// const years = dataArr.dataObjects[0].values;
+// const brands = dataArr.dataObjects[1].values;
+// const deliveries = dataArr.dataObjects[2].values;
+
+
+// ============================================================
+// 02. 所有用户可修改的设置（集中放在最前面）
+// ============================================================
+const COLORS = {
+  positive: '#239263',
+  negative: '#D9544D',
+  zero: '#AEB7C1',
+  previous: '#AEB7C1',
+  current: '#3187ED',
+  background: 'transparent',
+  text: '#263238',
+  textSecondary: '#8493A2',
+  gridLine: '#E5E9ED',
+  axis: '#CBD3DC'
+};
+
+const CONFIG = {
+  title: '谁增长最快，谁增加最多？',
+  subtitle: '',                    // 留空则自动组合两个年份和计量单位
+  metricName: '交付量',
+  unit: '万辆',
+  valueDivisor: 10000,              // 原始数据为“辆”，图中显示“万辆”
+  valueDecimals: 1,
+  rateDecimals: 1,
+  sortBy: 'current',                // current：本期降序；deltaAbs：变化量绝对值降序；none：输入顺序
+  grid: { left: 100, right: 65, top: 166, bottom: 116 }, // 全部是 px
+  axisMax: null,                   // null：自动求上界；也可以填写显示单位下的固定数值，如 70
+  axisInterval: null,              // null：自动；也可以填写 10
+  pointSize: 19,
+  lineWidth: 3,
+  changeLabelFontSize: 14,
+  valueLabelFontSize: 12,
+  categoryFontSize: 14,
+  legendTop: 110,
+  showDirectionSymbol: false,      // true：添加 ▲/▼；false：仅显示 +/-
+  showChangeAmount: true,
+  showGrowthRate: true,
+  animation: true,
+  source: '零跑、小鹏、理想、蔚来官方披露的2024—2025年全年交付量',
+  note: '图表说明：两端圆点表示双期规模；连线长度表示增减额；文字表示增减额与增长率。'
+};
+
+// ============================================================
+// 03. 通用数据整理与校验（无需因品牌、年份改变而修改）
+// ============================================================
+if (!years.length || years.length !== brands.length || years.length !== deliveries.length) {
+  throw new Error('年份、品牌、交付量必须为非空且长度一致的三个一维数组');
+}
+if (!(CONFIG.valueDivisor > 0)) throw new Error('valueDivisor 必须大于 0');
+
+const periods = [...new Set(years.map(v => String(v).trim()))].sort((a, b) =>
+  a.localeCompare(b, 'zh-CN', { numeric: true })
+);
+if (periods.length !== 2 || periods.some(p => !p)) {
+  throw new Error('V1 双期哑铃图要求年份字段恰好包含两个不同年份');
+}
+const [previousPeriod, currentPeriod] = periods;
+const groups = new Map();
+for (let i = 0; i < years.length; i++) {
+  const period = String(years[i]).trim();
+  const brand = String(brands[i] == null ? '' : brands[i]).trim();
+  const raw = deliveries[i];
+  const value = raw === null || raw === undefined || String(raw).trim() === ''
+    ? NaN : Number(String(raw).replace(/,/g, ''));
+  if (!brand || !Number.isFinite(value) || value < 0) {
+    throw new Error(`第 ${i + 1} 行品牌或交付量无效`);
+  }
+  if (!groups.has(brand)) groups.set(brand, new Map());
+  const group = groups.get(brand);
+  group.set(period, (group.get(period) || 0) + value);
+}
+
+const rows = [...groups].map(([name, values], index) => {
+  if (!values.has(previousPeriod) || !values.has(currentPeriod)) {
+    throw new Error(`“${name}”缺少 ${previousPeriod} 或 ${currentPeriod} 的交付量`);
+  }
+  const previous = values.get(previousPeriod);
+  const current = values.get(currentPeriod);
+  const delta = current - previous;
+  return { name, previous, current, delta, rate: previous === 0 ? null : delta / previous * 100, index };
+});
+if (CONFIG.sortBy === 'current') rows.sort((a, b) => b.current - a.current);
+else if (CONFIG.sortBy === 'deltaAbs') rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+const scaled = v => v / CONFIG.valueDivisor;
+const numberText = v => scaled(v).toFixed(CONFIG.valueDecimals);
+const signedText = (v, decimals) => `${v > 0 ? '+' : ''}${v.toFixed(decimals)}`;
+const deltaText = d => `${signedText(scaled(d.delta), CONFIG.valueDecimals)}${CONFIG.unit}`;
+const rateText = d => d.rate === null ? '—' : `${signedText(d.rate, CONFIG.rateDecimals)}%`;
+const colorFor = d => d.delta > 0 ? COLORS.positive : d.delta < 0 ? COLORS.negative : COLORS.zero;
+const arrowFor = d => d.delta > 0 ? '▲ ' : d.delta < 0 ? '▼ ' : '';
+const maxRaw = Math.max(1, ...rows.flatMap(d => [d.previous, d.current]));
+const maxScaled = scaled(maxRaw);
+const niceStep = v => {
+  const base = Math.pow(10, Math.floor(Math.log10(Math.max(v, 0.000001))));
+  const ratio = v / base;
+  return (ratio <= 1 ? 1 : ratio <= 2 ? 2 : ratio <= 5 ? 5 : 10) * base;
+};
+const autoStep = niceStep(maxScaled / 7);
+const xMax = CONFIG.axisMax == null ? Math.ceil(maxScaled * 1.12 / autoStep) * autoStep : CONFIG.axisMax;
+const subtitle = CONFIG.subtitle || `${previousPeriod}—${currentPeriod}｜${CONFIG.metricName}（${CONFIG.unit}）｜横向哑铃图`;
+const escapeHtml = value => String(value).replace(/[&<>"']/g, c => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+})[c]);
+
+// ============================================================
+// 04. 富文本 Tooltip
+// ============================================================
+function tooltipFormatter(params) {
+  const d = rows[params.dataIndex];
+  if (!d) return '';
+  const color = colorFor(d);
+  const line = (label, value, highlight) => `<div style="display:flex;justify-content:space-between;gap:28px;margin-top:8px;align-items:center;">
+    <span style="color:${COLORS.textSecondary};">${escapeHtml(label)}</span>
+    <strong style="color:${highlight ? color : COLORS.text};">${escapeHtml(value)}</strong>
+  </div>`;
+  return `<div style="min-width:220px;padding:12px 14px;font:12px Arial,'Microsoft YaHei',sans-serif;color:${COLORS.text};line-height:1.5;">
+    <div style="font-weight:700;font-size:15px;padding-bottom:8px;border-bottom:1px solid ${COLORS.gridLine};">${escapeHtml(d.name)}</div>
+    ${line(previousPeriod + '（同期）', numberText(d.previous) + ' ' + CONFIG.unit, false)}
+    ${line(currentPeriod + '（本期）', numberText(d.current) + ' ' + CONFIG.unit, false)}
+    <div style="border-top:1px dashed ${COLORS.gridLine};margin-top:10px;padding-top:2px;">
+      ${line('同比增减额', deltaText(d), true)}
+      ${line('同比增长率', rateText(d), true)}
+    </div>
+  </div>`;
+}
+
+// ============================================================
+// 05. 单 Grid 自定义哑铃绘制
+// ============================================================
+function renderDumbbell(params, api) {
+  const i = Math.round(api.value(0));
+  const d = rows[i];
+  if (!d) return null;
+  const p0 = api.coord([scaled(d.previous), i]);
+  const p1 = api.coord([scaled(d.current), i]);
+  const xMin = Math.min(p0[0], p1[0]);
+  const xMaxPixel = Math.max(p0[0], p1[0]);
+  const y = p0[1];
+  const color = colorFor(d);
+  const markerRadius = CONFIG.pointSize / 2;
+  const changeParts = [];
+  if (CONFIG.showChangeAmount) changeParts.push(deltaText(d));
+  if (CONFIG.showGrowthRate) changeParts.push(rateText(d));
+  const changeLabel = (CONFIG.showDirectionSymbol ? arrowFor(d) : '') + changeParts.join('  |  ');
+  const shortDistance = xMaxPixel - xMin < 105;
+  const endpointLabelY = y + markerRadius + 8;
+  return {
+    type: 'group',
+    children: [
+      // 透明触发区域，提高鼠标悬停在连线附近时的 Tooltip 可用性
+      { type: 'rect', shape: { x: xMin - markerRadius, y: y - 18, width: Math.max(2 * markerRadius, xMaxPixel - xMin + 2 * markerRadius), height: 55 }, style: { fill: 'rgba(0,0,0,0.001)' } },
+      { type: 'line', silent: true, shape: { x1: p0[0], y1: y, x2: p1[0], y2: y }, style: { stroke: color, lineWidth: CONFIG.lineWidth } },
+      { type: 'circle', silent: true, shape: { cx: p0[0], cy: y, r: markerRadius }, style: { fill: COLORS.previous, stroke: '#FFFFFF', lineWidth: 1.5 } },
+      { type: 'circle', silent: true, shape: { cx: p1[0], cy: y, r: markerRadius }, style: { fill: COLORS.current, stroke: '#FFFFFF', lineWidth: 1.5 } },
+      { type: 'text', silent: true, style: { x: p0[0], y: endpointLabelY, text: numberText(d.previous), align: 'center', verticalAlign: 'top', font: `500 ${CONFIG.valueLabelFontSize}px sans-serif`, fill: COLORS.text } },
+      { type: 'text', silent: true, style: { x: p1[0], y: endpointLabelY + (shortDistance ? 14 : 0), text: numberText(d.current), align: 'center', verticalAlign: 'top', font: `500 ${CONFIG.valueLabelFontSize}px sans-serif`, fill: COLORS.text } },
+      { type: 'text', silent: true, style: { x: (p0[0] + p1[0]) / 2, y: y - markerRadius - 9, text: changeLabel, align: 'center', verticalAlign: 'bottom', font: `700 ${CONFIG.changeLabelFontSize}px sans-serif`, fill: color } }
+    ]
+  };
+}
+
+// ============================================================
+// 06. ECharts option
+// ============================================================
+option = {
+  backgroundColor: COLORS.background,
+  animation: CONFIG.animation,
+  title: {
+    text: CONFIG.title, subtext: subtitle, left: 36, top: 29, itemGap: 10,
+    textStyle: { color: COLORS.text, fontSize: 21, fontWeight: 700 },
+    subtextStyle: { color: COLORS.textSecondary, fontSize: 12 }
+  },
+  legend: {
+    left: 40, top: CONFIG.legendTop, icon: 'circle', itemWidth: 12, itemHeight: 12,
+    textStyle: { color: COLORS.text, fontSize: 12 }, data: [previousPeriod, currentPeriod]
+  },
+  grid: CONFIG.grid,
+  xAxis: {
+    type: 'value', min: 0, max: xMax,
+    ...(CONFIG.axisInterval == null ? { splitNumber: 7 } : { interval: CONFIG.axisInterval }),
+    axisLine: { show: true, lineStyle: { color: COLORS.axis } }, axisTick: { show: false },
+    axisLabel: { color: COLORS.textSecondary, fontSize: 11 },
+    splitLine: { show: true, lineStyle: { color: COLORS.gridLine, type: 'dashed' } }
+  },
+  yAxis: {
+    type: 'category', inverse: true, data: rows.map(d => d.name),
+    axisLine: { show: false }, axisTick: { show: false },
+    axisLabel: { color: COLORS.text, fontSize: CONFIG.categoryFontSize, fontWeight: 600, margin: 16 },
+    splitLine: { show: false }
+  },
+  tooltip: {
+    trigger: 'item', renderMode: 'html', confine: true,
+    backgroundColor: '#FFFFFF', borderColor: COLORS.gridLine, borderWidth: 1, padding: 0,
+    extraCssText: 'border-radius:8px;box-shadow:0 6px 20px rgba(38,50,56,.12);',
+    formatter: tooltipFormatter
+  },
+  graphic: [
+    { type: 'rect', left: 37, top: 18, shape: { width: 19, height: 4 }, style: { fill: COLORS.negative }, silent: true },
+    { type: 'text', left: 36, bottom: 41, style: { text: `数据来源：${CONFIG.source}`, fill: COLORS.textSecondary, font: '11px sans-serif' }, silent: true },
+    { type: 'text', left: 36, bottom: 22, style: { text: CONFIG.note, fill: COLORS.textSecondary, font: '11px sans-serif' }, silent: true }
+  ],
+  series: [
+    // 用于显示图例；实际点和线全部由 custom series 一次绘制
+    { name: previousPeriod, type: 'scatter', data: [], itemStyle: { color: COLORS.previous } },
+    { name: currentPeriod, type: 'scatter', data: [], itemStyle: { color: COLORS.current } },
+    {
+      name: '双期哑铃', type: 'custom', coordinateSystem: 'cartesian2d',
+      renderItem: renderDumbbell, data: rows.map((d, i) => [i, scaled(d.previous), scaled(d.current)]),
+      encode: { y: 0, x: [1, 2] }, z: 3
+    }
+  ]
+};
