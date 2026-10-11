@@ -1,0 +1,238 @@
+﻿// C006_双期规模与增幅组合图
+// 通用模板：年份、品牌、出货量（长表形式）；示例采用 IDC 2024—2025 年国内数据
+// 直接粘贴到 ECharts 官方在线编辑器 JS 面板即可运行。
+// 将前面三个平行数组替换成 Power BI 字段数据即可迁移；不要调整为对象数组。
+
+const COLORS = {
+  positive: '#239263',
+  negative: '#D9544D',
+  bar: '#BFC6CE',
+  barSecondary: '#D9DEE3',
+  barReference: '#AEB7C1',
+  background: 'transparent',
+  text: '#263238',
+  textSecondary: '#8493A2',
+  gridLine: '#E5E9ED'
+};
+
+// ====== 原始输入：与 Power BI 三列字段一一对应（平行一维数组） ======
+// 示例按年份、品牌、出货量三列组织；可替换成任意两个年份和任意品牌。
+const years = ['2024', '2024', '2024', '2024', '2024', '2025', '2025', '2025', '2025', '2025'];
+const brands = ['华为', '苹果', 'vivo', '小米', 'OPPO', '华为', '苹果', 'vivo', '小米', 'OPPO'];
+const shipments = [4760, 4440, 4930, 4200, 4250, 4670, 4620, 4610, 4380, 4340];
+
+// Power BI 接入：按照实际绑定顺序替换上面三个数组，例如：
+// const years = dataArr.dataObjects[0].values;
+// const brands = dataArr.dataObjects[1].values;
+// const shipments = dataArr.dataObjects[2].values;
+
+// ====== 可复用的图表文本配置（换主题时按需修改） ======
+const CONFIG = {
+  metricName: '出货量',
+  unit: '万台',
+  subject: '中国主要手机品牌',
+  source: 'IDC 中国智能手机市场年度跟踪报告（示例数据，公开数字四舍五入）'
+};
+
+if (!years.length || years.length !== brands.length || years.length !== shipments.length) {
+  throw new Error('年份、品牌、出货量必须为非空且长度一致的三个一维数组');
+}
+
+const periods = [...new Set(years.map(v => String(v).trim()))].sort((a, b) => {
+  const an = Number(a), bn = Number(b);
+  return Number.isFinite(an) && Number.isFinite(bn) ? an - bn : a.localeCompare(b, 'zh-CN', { numeric: true });
+});
+if (periods.length !== 2 || periods.some(v => !v)) {
+  throw new Error('双期模板要求年份字段恰好有两个不同的年份');
+}
+const [previousYear, currentYear] = periods;
+const totals = new Map();
+const categoryNames = [];
+for (let i = 0; i < years.length; i++) {
+  const year = String(years[i]).trim();
+  const brand = String(brands[i]).trim();
+  const raw = shipments[i];
+  const amount = typeof raw === 'string' && raw.trim() === '' ? NaN : Number(raw);
+  if (!brand || !Number.isFinite(amount) || amount < 0) {
+    throw new Error(`第 ${i + 1} 行的品牌或出货量无效`);
+  }
+  if (!totals.has(brand)) {
+    totals.set(brand, new Map());
+    categoryNames.push(brand);
+  }
+  const byYear = totals.get(brand);
+  byYear.set(year, (byYear.get(year) || 0) + amount);
+}
+
+// 同一品牌、同一年出现多行时自动求和；缺少某年记录则报错，不擅自填 0。
+const internalRows = categoryNames.map((brand, i) => {
+  const byYear = totals.get(brand);
+  if (!byYear.has(previousYear) || !byYear.has(currentYear)) {
+    throw new Error(`品牌“${brand}”缺少 ${previousYear} 或 ${currentYear} 年数据`);
+  }
+  const previous = byYear.get(previousYear);
+  const current = byYear.get(currentYear);
+  const delta = current - previous;
+  const rate = previous === 0 ? null : delta / previous * 100;
+  return { brand, previous, current, delta, rate, i };
+});
+
+const fmt = n => Number(n).toLocaleString('zh-CN', { maximumFractionDigits: 1 });
+const signed = n => (n > 0 ? '+' : '') + fmt(n);
+const groupGap = 3;
+const pairGap = 1.36;
+const xLeft = i => i * groupGap;
+const xRight = i => i * groupGap + pairGap;
+const maxValue = Math.max(1, ...internalRows.flatMap(d => [d.previous, d.current]));
+const tickStep = Math.pow(10, Math.floor(Math.log10(maxValue))) / 5;
+const yMax = Math.ceil(maxValue * 1.19 / tickStep) * tickStep;
+const displayUnit = CONFIG.unit ? ` ${CONFIG.unit}` : '';
+
+const textShape = (x, y, content, font, fill, align = 'center', verticalAlign = 'middle') => ({
+  type: 'text',
+  silent: true,
+  style: { x, y, text: content, font, fill, align, verticalAlign }
+});
+
+function renderPair(params, api) {
+  const index = Math.round(Number(api.value(0)));
+  const d = internalRows[index];
+  if (!d) return null;
+  const x0 = api.coord([xLeft(index), 0])[0];
+  const x1 = api.coord([xRight(index), 0])[0];
+  const y0 = api.coord([0, d.previous])[1];
+  const y1 = api.coord([0, d.current])[1];
+  const yBase = api.coord([0, 0])[1];
+  const yTop = api.coord([0, yMax])[1];
+  const center = (x0 + x1) / 2;
+  const color = d.delta > 0 ? COLORS.positive : d.delta < 0 ? COLORS.negative : COLORS.barReference;
+  const pct = d.rate == null ? '基期为0' : (d.rate > 0 ? '▲ ' : d.rate < 0 ? '▼ ' : '') + Math.abs(d.rate).toFixed(1) + '%';
+  const deltaText = signed(d.delta) + displayUnit;
+  const topOfPair = Math.min(y0, y1);
+  const itemFont = '600 14px sans-serif';
+  const amountY = yBase - Math.min(88, Math.max(48, (yBase - Math.max(y0, y1)) * 0.38));
+  const tagY = Math.max(yTop + 16, topOfPair - 53);
+
+  return {
+    type: 'group',
+    children: [
+      // 将规模显示为以0为基线的梯形面积；双端点在同一 yAxis 上。
+      {
+        type: 'polygon',
+        // 面积区域响应鼠标事件；自定义图形若全部 silent:true，Tooltip 无法可靠触发。
+        silent: false,
+        shape: { points: [[x0, y0], [x1, y1], [x1, yBase], [x0, yBase]] },
+        style: { fill: color, opacity: 0.105 }
+      },
+      { type: 'line', silent: true, shape: { x1: x0, y1: y0, x2: x1, y2: y1 }, style: { stroke: color, lineWidth: 2.4 } },
+      { type: 'circle', silent: true, shape: { cx: x0, cy: y0, r: 4.5 }, style: { fill: COLORS.text, stroke: '#FFFFFF', lineWidth: 1.3 } },
+      { type: 'circle', silent: true, shape: { cx: x1, cy: y1, r: 4.5 }, style: { fill: COLORS.text, stroke: '#FFFFFF', lineWidth: 1.3 } },
+      textShape(x0, y0 - 17, fmt(d.previous), itemFont, COLORS.text),
+      textShape(x1, y1 - 17, fmt(d.current), itemFont, COLORS.text),
+      textShape(center, tagY, pct, '700 16px sans-serif', color),
+      textShape(center, amountY, deltaText, '600 15px sans-serif', color),
+      textShape(center, yTop - 37, d.brand, '700 16px sans-serif', COLORS.text),
+      textShape(x0, yBase + 19, previousYear, '12px sans-serif', COLORS.textSecondary),
+      textShape(x1, yBase + 19, currentYear, '12px sans-serif', COLORS.textSecondary)
+    ]
+  };
+}
+
+option = {
+  backgroundColor: COLORS.background,
+  animationDuration: 650,
+  animationEasing: 'cubicOut',
+  title: {
+    text: `${CONFIG.subject}：${previousYear}—${currentYear}年规模与增幅`,
+    subtext: `${CONFIG.metricName}｜${previousYear} vs ${currentYear}｜单位：${CONFIG.unit || '无'}`, 
+    left: 56,
+    top: 27,
+    textStyle: { color: COLORS.text, fontSize: 21, fontWeight: 700 },
+    subtextStyle: { color: COLORS.textSecondary, fontSize: 12, lineHeight: 20 },
+    itemGap: 9
+  },
+  graphic: [
+    { type: 'rect', left: 57, top: 16, shape: { width: 20, height: 4 }, style: { fill: COLORS.negative }, silent: true },
+    {
+      type: 'text', left: 58, bottom: 44,
+      style: { text: `数据来源：${CONFIG.source}`, fill: COLORS.textSecondary, font: '11px sans-serif' },
+      silent: true
+    },
+    {
+      type: 'text', left: 58, bottom: 25,
+      style: { text: `图表说明：面积表示${CONFIG.metricName}；▲/▼表示增减方向；增减额=本期−同期，增长率=增减额÷同期。单位：${CONFIG.unit || '无'}。`, fill: COLORS.textSecondary, font: '11px sans-serif' },
+      silent: true
+    }
+  ],
+  grid: { left: 60, right: 38, top: 173, bottom: 113, containLabel: false },
+  xAxis: {
+    type: 'value', min: -0.77, max: (internalRows.length - 1) * groupGap + pairGap + 0.77,
+    axisTick: { show: false }, axisLabel: { show: false },
+    axisLine: { show: true, lineStyle: { color: COLORS.barReference, width: 1 } },
+    splitLine: { show: false }
+  },
+  yAxis: {
+    type: 'value', min: 0, max: yMax, splitNumber: 5,
+    axisTick: { show: false },
+    axisLine: { show: false },
+    axisLabel: { color: COLORS.textSecondary, fontSize: 11, formatter: value => fmt(value) },
+    splitLine: { show: true, lineStyle: { color: COLORS.gridLine, width: 1 } }
+  },
+  // HTML 富文本 Tooltip：鼠标悬停在每组半透明面积区域时显示完整指标。
+  tooltip: {
+    show: true,
+    trigger: 'item',
+    triggerOn: 'mousemove|click',
+    renderMode: 'html',
+    confine: true,
+    enterable: false,
+    backgroundColor: '#FFFFFF',
+    borderColor: COLORS.gridLine,
+    borderWidth: 1,
+    padding: 0,
+    extraCssText: 'border-radius:10px;box-shadow:0 7px 24px rgba(38,50,56,.13);overflow:hidden;',
+    formatter: params => {
+      const index = Number(params.data && params.data[0]);
+      const d = internalRows[index];
+      if (!d) return '';
+      const color = d.delta > 0 ? COLORS.positive : d.delta < 0 ? COLORS.negative : COLORS.textSecondary;
+      const symbol = d.delta > 0 ? '▲' : d.delta < 0 ? '▼' : '—';
+      const rateText = d.rate == null ? '基期为 0，无法计算' : `${symbol} ${Math.abs(d.rate).toFixed(1)}%`;
+      const changeText = d.delta === 0 ? '0' : signed(d.delta);
+      const escapeHtml = value => String(value).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[c]);
+      const row = (label, value, highlight = false) => `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:28px;margin-top:10px;">
+          <span style="color:${COLORS.textSecondary};font-size:12px;white-space:nowrap;">${label}</span>
+          <span style="color:${highlight ? color : COLORS.text};font-size:${highlight ? 15 : 13}px;font-weight:${highlight ? 700 : 600};white-space:nowrap;">${value}</span>
+        </div>`;
+      return `
+        <div style="font-family:Arial,'Microsoft YaHei',sans-serif;min-width:225px;padding:15px 17px 16px;line-height:1.35;">
+          <div style="display:flex;align-items:center;gap:8px;padding-bottom:11px;border-bottom:1px solid ${COLORS.gridLine};">
+            <span style="display:inline-block;width:4px;height:17px;border-radius:2px;background:${color};"></span>
+            <span style="color:${COLORS.text};font-size:16px;font-weight:700;">${escapeHtml(d.brand)}</span>
+            <span style="margin-left:auto;color:${COLORS.textSecondary};font-size:11px;">${escapeHtml(CONFIG.metricName)} · ${escapeHtml(CONFIG.unit)}</span>
+          </div>
+          ${row(`${escapeHtml(previousYear)} 年（同期）`, fmt(d.previous))}
+          ${row(`${escapeHtml(currentYear)} 年（本期）`, fmt(d.current))}
+          <div style="margin-top:12px;padding-top:2px;border-top:1px dashed ${COLORS.gridLine};">
+            ${row('同比增减额', `${escapeHtml(changeText)} ${escapeHtml(CONFIG.unit)}`, true)}
+            ${row('同比增长率', rateText, true)}
+          </div>
+        </div>`;
+    }
+  },
+  series: [
+    {
+      name: `${CONFIG.metricName}双期对比`,
+      type: 'custom',
+      coordinateSystem: 'cartesian2d',
+      renderItem: renderPair,
+      dimensions: ['brandIndex', 'previous', 'current'],
+      encode: { x: 0, tooltip: [1, 2] },
+      data: internalRows.map(d => [d.i, d.previous, d.current]),
+      z: 3
+    }
+  ]
+};
