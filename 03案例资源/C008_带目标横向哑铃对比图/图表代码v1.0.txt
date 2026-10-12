@@ -1,0 +1,358 @@
+// C006 横向哑铃对比图 V2｜带单目标值
+// 在 ECharts 官方编辑器直接运行；仅需替换四个平行一维数组即可对接 Power BI。
+
+// ============================================================
+// 01. 原始数据（一个字段对应一个一维数组）
+// ============================================================
+const years = ['2024','2025','2024','2025','2024','2025','2024','2025'];
+const brands = ['零跑','零跑','小鹏','小鹏','理想','理想','蔚来','蔚来'];
+const deliveries = [293724,596555,190068,429445,500508,406343,221970,326028];
+const targets = [null,550000,null,380000,null,640000,null,440000];
+
+// Power BI 按实际字段绑定顺序替换四个数组：
+// const years = dataArr.dataObjects[0].values;
+// const brands = dataArr.dataObjects[1].values;
+// const deliveries = dataArr.dataObjects[2].values;
+// const targets = dataArr.dataObjects[3].values;
+
+// ============================================================
+// 02. 所有用户可修改的设置（集中放在最前面）
+// ============================================================
+const COLORS = {
+  positive: '#239263',
+  negative: '#D9544D',
+  zero: '#AEB7C1',
+  previous: '#AEB7C1',
+  current: '#3187ED',
+  target: '#40505E',
+  background: 'transparent',
+  text: '#263238',
+  textSecondary: '#8493A2',
+  gridLine: '#E5E9ED',
+  axis: '#CBD3DC'
+};
+
+const CONFIG = {
+  title: '谁增长最快，谁更接近目标？',
+  subtitle: '',                    // 留空则自动组合两个年份和计量单位
+  metricName: '交付量',
+  unit: '万辆',
+  valueDivisor: 10000,              // 原始数据为“辆”，图中显示“万辆”
+  valueDecimals: 1,
+  rateDecimals: 1,
+  sortBy: 'current',                // current：本期降序；deltaAbs：变化量绝对值降序；none：输入顺序
+  grid: { left: 100, right: 65, top: 166, bottom: 116 }, // 全部是 px
+  axisMax: null,                   // null：自动求上界；也可以填写显示单位下的固定数值，如 70
+  axisInterval: null,              // null：自动；也可以填写 10
+  titleFontSize: 21,
+  subtitleFontSize: 12,
+  legendFontSize: 12,
+  axisFontSize: 11,
+  footnoteFontSize: 11,
+  pointSize: 17,
+  lineWidth: 3,
+  changeLabelFontSize: 13,
+  targetLabelFontSize: 11,
+  targetTickHeight: 24,
+  targetTickWidth: 3,
+  showTargetLabel: true,
+  targetLabelAvoidOverlap: true, // 自动避开同比和圆点数值标签
+  hideTargetLabelWhenNarrow: true,
+  targetLabelHideWidth: 550,   // 画布总宽度小于此值时隐藏目标文字
+  labelCollisionPadding: 7,   // 标签边界额外间距 px
+  showTargetStatus: false,      // 图面默认不显示目标完成状态，避免画面复杂
+  targetStatusFontSize: 12,
+  targetStatusOffsetY: 51,     // 相对哑铃中心的垂直偏移（px）
+  showTargetStatusGap: true,   // 显示超额或差额（false 只显示达标状态）
+  valueLabelFontSize: 12,
+  categoryFontSize: 14,
+  legendTop: 110,
+
+  showDirectionSymbol: false,      // true：添加 ▲/▼；false：仅显示 +/-
+  showChangeAmount: true,
+  showGrowthRate: true,
+  animation: true,
+  source: '四家车企官方全年交付量；目标值仅用于视觉结构演示',
+  note: '图表说明：双期圆点表示规模，连线表示增减额；竖刻度表示本期目标；目标完成情况放入 Tooltip。'
+};
+
+// ============================================================
+// 03. 通用数据整理与校验（无需因品牌、年份改变而修改）
+// ============================================================
+if (!years.length || years.length !== brands.length || years.length !== deliveries.length || years.length !== targets.length) {
+  throw new Error('年份、品牌、交付量、目标值必须为长度一致的四个一维数组');
+}
+if (!(CONFIG.valueDivisor > 0)) throw new Error('valueDivisor 必须大于 0');
+
+const periods = [...new Set(years.map(v => String(v).trim()))].sort((a, b) =>
+  a.localeCompare(b, 'zh-CN', { numeric: true })
+);
+if (periods.length !== 2 || periods.some(p => !p)) {
+  throw new Error('V2 双期哑铃图要求年份字段恰好包含两个不同年份');
+}
+const [previousPeriod, currentPeriod] = periods;
+const groups = new Map();
+for (let i = 0; i < years.length; i++) {
+  const period = String(years[i]).trim();
+  const brand = String(brands[i] == null ? '' : brands[i]).trim();
+  const raw = deliveries[i];
+  const value = raw === null || raw === undefined || String(raw).trim() === ''
+    ? NaN : Number(String(raw).replace(/,/g, ''));
+  if (!brand || !Number.isFinite(value) || value < 0) {
+    throw new Error(`第 ${i + 1} 行品牌或交付量无效`);
+  }
+  if (!groups.has(brand)) groups.set(brand, { values: new Map(), goals: new Map() });
+  const group = groups.get(brand);
+  group.values.set(period, (group.values.get(period) || 0) + value);
+
+  const rawTarget = targets[i];
+  if (rawTarget !== null && rawTarget !== undefined && String(rawTarget).trim() !== '') {
+    const target = Number(String(rawTarget).replace(/,/g, ''));
+    if (!Number.isFinite(target) || target <= 0) {
+      throw new Error(`第 ${i + 1} 行目标值无效`);
+    }
+    if (group.goals.has(period) && group.goals.get(period) !== target) {
+      throw new Error(`品牌“${brand}”在 ${period} 的目标值不一致`);
+    }
+    group.goals.set(period, target);
+  }
+}
+
+const rows = [...groups].map(([name, group], index) => {
+  const values = group.values;
+  if (!values.has(previousPeriod) || !values.has(currentPeriod)) {
+    throw new Error(`“${name}”缺少 ${previousPeriod} 或 ${currentPeriod} 的交付量`);
+  }
+  const previous = values.get(previousPeriod);
+  const current = values.get(currentPeriod);
+  const delta = current - previous;
+  return { name, previous, current, delta, rate: previous === 0 ? null : delta / previous * 100,
+    target: group.goals.has(currentPeriod) ? group.goals.get(currentPeriod) : null, index };
+});
+if (CONFIG.sortBy === 'current') rows.sort((a, b) => b.current - a.current);
+else if (CONFIG.sortBy === 'deltaAbs') rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+const scaled = v => v / CONFIG.valueDivisor;
+const numberText = v => scaled(v).toFixed(CONFIG.valueDecimals);
+const signedText = (v, decimals) => `${v > 0 ? '+' : ''}${v.toFixed(decimals)}`;
+const deltaText = d => `${signedText(scaled(d.delta), CONFIG.valueDecimals)}${CONFIG.unit}`;
+const rateText = d => d.rate === null ? '—' : `${signedText(d.rate, CONFIG.rateDecimals)}%`;
+const colorFor = d => d.delta > 0 ? COLORS.positive : d.delta < 0 ? COLORS.negative : COLORS.zero;
+const arrowFor = d => d.delta > 0 ? '▲ ' : d.delta < 0 ? '▼ ' : '';
+const maxRaw = Math.max(1, ...rows.flatMap(d => [d.previous, d.current, d.target || 0]));
+const maxScaled = scaled(maxRaw);
+const niceStep = v => {
+  const base = Math.pow(10, Math.floor(Math.log10(Math.max(v, 0.000001))));
+  const ratio = v / base;
+  return (ratio <= 1 ? 1 : ratio <= 2 ? 2 : ratio <= 5 ? 5 : 10) * base;
+};
+const autoStep = niceStep(maxScaled / 7);
+const xMax = CONFIG.axisMax == null ? Math.ceil(maxScaled * 1.12 / autoStep) * autoStep : CONFIG.axisMax;
+const subtitle = CONFIG.subtitle || `${previousPeriod}—${currentPeriod}｜${CONFIG.metricName}（${CONFIG.unit}）｜横向哑铃图`;
+const escapeHtml = value => String(value).replace(/[&<>"']/g, c => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+})[c]);
+
+// ============================================================
+// 04. 富文本 Tooltip
+// ============================================================
+function tooltipFormatter(params) {
+  const d = rows[params.dataIndex];
+  if (!d) return '';
+  const yoyColor = colorFor(d);
+  const hasTarget = d.target != null;
+  const targetGap = hasTarget ? d.current - d.target : null;
+  const targetGapColor = !hasTarget ? COLORS.textSecondary : targetGap >= 0 ? COLORS.positive : COLORS.negative;
+  const completionRate = hasTarget ? (100 * d.current / d.target) : null;
+  const completionColor = !hasTarget ? COLORS.textSecondary : completionRate >= 100 ? COLORS.positive : COLORS.negative;
+
+  const line = (label, value, options = {}) => {
+    const valueColor = options.valueColor || COLORS.text;
+    const dotColor = options.dotColor || '';
+    const labelColor = options.labelColor || COLORS.textSecondary;
+    const dotHtml = dotColor
+      ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};margin-right:8px;flex:0 0 auto;"></span>`
+      : '';
+    return `<div style="display:flex;justify-content:space-between;gap:28px;margin-top:8px;align-items:center;">
+      <span style="display:flex;align-items:center;color:${labelColor};">${dotHtml}${escapeHtml(label)}</span>
+      <strong style="color:${valueColor};">${escapeHtml(value)}</strong>
+    </div>`;
+  };
+
+  return `<div style="min-width:236px;padding:12px 14px;font:12px Arial,'Microsoft YaHei',sans-serif;color:${COLORS.text};line-height:1.55;">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:8px;border-bottom:1px solid ${COLORS.gridLine};">
+      <div style="font-weight:700;font-size:15px;color:${COLORS.text};">${escapeHtml(d.name)}</div>
+      <div style="font-size:11px;color:${COLORS.textSecondary};">${escapeHtml(CONFIG.metricName)} · ${escapeHtml(CONFIG.unit)}</div>
+    </div>
+    ${line(previousPeriod + '（同期）', numberText(d.previous) + ' ' + CONFIG.unit, { valueColor: COLORS.previous, dotColor: COLORS.previous })}
+    ${line(currentPeriod + '（本期）', numberText(d.current) + ' ' + CONFIG.unit, { valueColor: COLORS.current, dotColor: COLORS.current })}
+    ${d.target == null ? '' : line('本期目标', numberText(d.target) + ' ' + CONFIG.unit, { valueColor: COLORS.target, dotColor: COLORS.target })}
+    <div style="border-top:1px dashed ${COLORS.gridLine};margin-top:10px;padding-top:2px;">
+      ${line('同比增减额', deltaText(d), { valueColor: yoyColor })}
+      ${line('同比增长率', rateText(d), { valueColor: yoyColor })}
+      ${d.target == null ? '' : line('目标差额', deltaText({delta: d.current - d.target}), { valueColor: targetGapColor })}
+      ${d.target == null ? '' : line('目标完成率', completionRate.toFixed(1) + '%', { valueColor: completionColor })}
+    </div>
+  </div>`;
+}
+
+// ============================================================
+// 05. 单 Grid 自定义哑铃绘制
+// ============================================================
+function renderDumbbell(params, api) {
+  const i = Math.round(api.value(0));
+  const d = rows[i];
+  if (!d) return null;
+  const p0 = api.coord([scaled(d.previous), i]);
+  const p1 = api.coord([scaled(d.current), i]);
+  const targetPoint = d.target == null ? null : api.coord([scaled(d.target), i]);
+  const xMin = Math.min(p0[0], p1[0]);
+  const xMaxPixel = Math.max(p0[0], p1[0]);
+  const y = p0[1];
+  const color = colorFor(d);
+  const markerRadius = CONFIG.pointSize / 2;
+  const changeParts = [];
+  if (CONFIG.showChangeAmount) changeParts.push(deltaText(d));
+  if (CONFIG.showGrowthRate) changeParts.push(rateText(d));
+  const changeLabel = (CONFIG.showDirectionSymbol ? arrowFor(d) : '') + changeParts.join('  |  ');
+  const shortDistance = xMaxPixel - xMin < 105;
+  const endpointLabelY = y + markerRadius + 8;
+  const targetGap = d.target == null ? null : d.current - d.target;
+  const targetStatus = targetGap == null ? '' : targetGap >= 0 ? '已完成目标' : '未完成目标';
+  const targetStatusDetail = targetGap == null ? '' : targetGap > 0
+    ? `超出 ${numberText(targetGap)}${CONFIG.unit}`
+    : targetGap < 0 ? `还差 ${numberText(-targetGap)}${CONFIG.unit}` : '刚好达标';
+  const targetStatusText = CONFIG.showTargetStatusGap && targetGap !== null
+    ? `${targetStatus}｜${targetStatusDetail}` : targetStatus;
+
+  // 标签在同一像素坐标空间内进行碰撞检测。优先保留同比注记和端点数值。
+  const estimateWidth = (text, fontSize) => [...String(text)].reduce((sum, ch) =>
+    sum + (/[^\x00-\xff]/.test(ch) ? fontSize : fontSize * 0.57), 0);
+  const boxFor = (x, top, text, fontSize) => ({
+    l: x - estimateWidth(text, fontSize) / 2,
+    r: x + estimateWidth(text, fontSize) / 2,
+    t: top,
+    b: top + fontSize * 1.3
+  });
+  const collide = (a, b) => a.l < b.r + CONFIG.labelCollisionPadding &&
+    a.r + CONFIG.labelCollisionPadding > b.l &&
+    a.t < b.b + CONFIG.labelCollisionPadding &&
+    a.b + CONFIG.labelCollisionPadding > b.t;
+  const annotationBoxes = [];
+  if (changeLabel) annotationBoxes.push(boxFor((p0[0] + p1[0]) / 2,
+    y - markerRadius - 9 - CONFIG.changeLabelFontSize * 1.3,
+    changeLabel, CONFIG.changeLabelFontSize));
+  annotationBoxes.push(boxFor(p0[0], endpointLabelY, numberText(d.previous), CONFIG.valueLabelFontSize));
+  annotationBoxes.push(boxFor(p1[0], endpointLabelY + (shortDistance ? 14 : 0),
+    numberText(d.current), CONFIG.valueLabelFontSize));
+  let targetLabelPlacement = null;
+  if (targetPoint && CONFIG.showTargetLabel &&
+    (!CONFIG.hideTargetLabelWhenNarrow || api.getWidth() >= CONFIG.targetLabelHideWidth)) {
+    const label = `目标 ${numberText(d.target)}`;
+    const f = CONFIG.targetLabelFontSize;
+    const aboveTop = y - CONFIG.targetTickHeight / 2 - 6 - f * 1.3;
+    const belowTop = y + CONFIG.targetTickHeight / 2 + 6;
+    const candidates = [
+      { x: targetPoint[0], top: aboveTop, verticalAlign: 'bottom', y: y - CONFIG.targetTickHeight / 2 - 6 },
+      { x: targetPoint[0], top: belowTop, verticalAlign: 'top', y: belowTop }
+    ];
+    // 行内预留空间，避免上下相邻品牌的标签交叉。
+    const rowHeight = Math.abs(api.size([0, 1])[1]);
+    const minY = y - rowHeight / 2 + 5;
+    const maxY = y + rowHeight / 2 - 5;
+    const gridLeftX = api.coord([0, i])[0];
+    const gridRightX = api.coord([xMax, i])[0];
+    for (const candidate of candidates) {
+      const bbox = boxFor(candidate.x, candidate.top, label, f);
+      const inside = bbox.t >= minY && bbox.b <= maxY &&
+        bbox.l >= gridLeftX + 2 && bbox.r <= gridRightX - 2;
+      if (inside && (!CONFIG.targetLabelAvoidOverlap || !annotationBoxes.some(other => collide(bbox, other)))) {
+        targetLabelPlacement = { ...candidate, label };
+        break;
+      }
+    }
+  }
+  return {
+    type: 'group',
+    children: [
+      // 透明触发区域，提高鼠标悬停在连线附近时的 Tooltip 可用性
+      { type: 'rect', shape: { x: xMin - markerRadius, y: y - 18, width: Math.max(2 * markerRadius, xMaxPixel - xMin + 2 * markerRadius), height: 55 }, style: { fill: 'rgba(0,0,0,0.001)' } },
+      { type: 'line', silent: true, shape: { x1: p0[0], y1: y, x2: p1[0], y2: y }, style: { stroke: color, lineWidth: CONFIG.lineWidth } },
+      { type: 'circle', silent: true, shape: { cx: p0[0], cy: y, r: markerRadius }, style: { fill: COLORS.previous, stroke: '#FFFFFF', lineWidth: 1.5 } },
+      { type: 'circle', silent: true, shape: { cx: p1[0], cy: y, r: markerRadius }, style: { fill: COLORS.current, stroke: '#FFFFFF', lineWidth: 1.5 } },
+      { type: 'text', silent: true, style: { x: p0[0], y: endpointLabelY, text: numberText(d.previous), align: 'center', verticalAlign: 'top', font: `500 ${CONFIG.valueLabelFontSize}px sans-serif`, fill: COLORS.text } },
+      { type: 'text', silent: true, style: { x: p1[0], y: endpointLabelY + (shortDistance ? 14 : 0), text: numberText(d.current), align: 'center', verticalAlign: 'top', font: `500 ${CONFIG.valueLabelFontSize}px sans-serif`, fill: COLORS.text } },
+      { type: 'text', silent: true, style: { x: (p0[0] + p1[0]) / 2, y: y - markerRadius - 9, text: changeLabel, align: 'center', verticalAlign: 'bottom', font: `700 ${CONFIG.changeLabelFontSize}px sans-serif`, fill: color } },
+      ...(targetPoint ? [
+        { type: 'line', silent: true, shape: { x1: targetPoint[0], y1: y-CONFIG.targetTickHeight/2, x2: targetPoint[0], y2: y+CONFIG.targetTickHeight/2 },
+          style: { stroke: COLORS.target, lineWidth: CONFIG.targetTickWidth } },
+        ...(targetLabelPlacement ? [{ type: 'text', silent: true, style: {
+          x: targetLabelPlacement.x, y: targetLabelPlacement.y, text: targetLabelPlacement.label,
+          align: 'center', verticalAlign: targetLabelPlacement.verticalAlign,
+          font: `500 ${CONFIG.targetLabelFontSize}px sans-serif`, fill: COLORS.target
+        } }] : []),
+        ...(CONFIG.showTargetStatus ? [{ type: 'text', silent: true, style: {
+          x: (p0[0] + p1[0])/2,
+          y: y + CONFIG.targetStatusOffsetY,
+          text: targetStatusText,
+          align: 'center', verticalAlign: 'top',
+          font: `600 ${CONFIG.targetStatusFontSize}px sans-serif`,
+          fill: targetGap >= 0 ? COLORS.positive : COLORS.negative
+        } }] : [])
+      ] : [])
+    ]
+  };
+}
+
+// ============================================================
+// 06. ECharts option
+// ============================================================
+option = {
+  backgroundColor: COLORS.background,
+  animation: CONFIG.animation,
+  title: {
+    text: CONFIG.title, subtext: subtitle, left: 36, top: 29, itemGap: 10,
+    textStyle: { color: COLORS.text, fontSize: CONFIG.titleFontSize, fontWeight: 700 },
+    subtextStyle: { color: COLORS.textSecondary, fontSize: CONFIG.subtitleFontSize }
+  },
+  legend: {
+    left: 40, top: CONFIG.legendTop, icon: 'circle', itemWidth: 12, itemHeight: 12,
+    textStyle: { color: COLORS.text, fontSize: CONFIG.legendFontSize }, data: [previousPeriod, currentPeriod, '本期目标']
+  },
+  grid: CONFIG.grid,
+  xAxis: {
+    type: 'value', min: 0, max: xMax,
+    ...(CONFIG.axisInterval == null ? { splitNumber: 7 } : { interval: CONFIG.axisInterval }),
+    axisLine: { show: true, lineStyle: { color: COLORS.axis } }, axisTick: { show: false },
+    axisLabel: { color: COLORS.textSecondary, fontSize: CONFIG.axisFontSize },
+    splitLine: { show: true, lineStyle: { color: COLORS.gridLine, type: 'dashed' } }
+  },
+  yAxis: {
+    type: 'category', inverse: true, data: rows.map(d => d.name),
+    axisLine: { show: false }, axisTick: { show: false },
+    axisLabel: { color: COLORS.text, fontSize: CONFIG.categoryFontSize, fontWeight: 600, margin: 16 },
+    splitLine: { show: false }
+  },
+  tooltip: {
+    trigger: 'item', renderMode: 'html', confine: true,
+    backgroundColor: '#FFFFFF', borderColor: COLORS.gridLine, borderWidth: 1, padding: 0,
+    extraCssText: 'border-radius:8px;box-shadow:0 6px 20px rgba(38,50,56,.12);',
+    formatter: tooltipFormatter
+  },
+  graphic: [
+    { type: 'rect', left: 37, top: 18, shape: { width: 19, height: 4 }, style: { fill: COLORS.negative }, silent: true },
+    { type: 'text', left: 36, bottom: 41, style: { text: `数据来源：${CONFIG.source}`, fill: COLORS.textSecondary, font: `${CONFIG.footnoteFontSize}px sans-serif` }, silent: true },
+    { type: 'text', left: 36, bottom: 22, style: { text: CONFIG.note, fill: COLORS.textSecondary, font: `${CONFIG.footnoteFontSize}px sans-serif` }, silent: true }
+  ],
+  series: [
+    // 用于显示图例；实际点和线全部由 custom series 一次绘制
+    { name: previousPeriod, type: 'scatter', data: [], itemStyle: { color: COLORS.previous } },
+    { name: currentPeriod, type: 'scatter', data: [], itemStyle: { color: COLORS.current } },
+    { name: '本期目标', type: 'scatter', data: [], itemStyle: { color: COLORS.target }, symbol: 'rect' },
+    {
+      name: '双期哑铃', type: 'custom', coordinateSystem: 'cartesian2d',
+      renderItem: renderDumbbell, data: rows.map((d, i) => [i, scaled(d.previous), scaled(d.current)]),
+      encode: { y: 0, x: [1, 2] }, z: 3
+    }
+  ]
+};

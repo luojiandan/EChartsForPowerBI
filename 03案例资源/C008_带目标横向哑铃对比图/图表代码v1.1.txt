@@ -1,0 +1,354 @@
+// C006 横向哑铃对比图 V3｜带目标区间
+// 在 ECharts 官方编辑器直接运行；仅需替换五个平行一维数组即可对接 Power BI。
+
+// ============================================================
+// 01. 原始数据（一个字段对应一个一维数组）
+// ============================================================
+const years = ['2024','2025','2024','2025','2024','2025','2024','2025'];
+const brands = ['零跑','零跑','小鹏','小鹏','理想','理想','蔚来','蔚来'];
+const deliveries = [293724,596555,190068,429445,500508,406343,221970,326028];
+// 目标区间是视觉演示值，非车企统一口径的官方目标
+const targetMins = [null,500000,null,350000,null,550000,null,350000];
+const targetMaxs = [null,600000,null,450000,null,650000,null,450000];
+
+// Power BI 按实际字段绑定顺序替换五个数组：
+// const years = dataArr.dataObjects[0].values;
+// const brands = dataArr.dataObjects[1].values;
+// const deliveries = dataArr.dataObjects[2].values;
+// const targetMins = dataArr.dataObjects[3].values;
+// const targetMaxs = dataArr.dataObjects[4].values;
+
+// ============================================================
+// 02. 所有用户可修改的设置（集中放在最前面）
+// ============================================================
+const COLORS = {
+  positive: '#239263',
+  negative: '#D9544D',
+  zero: '#AEB7C1',
+  previous: '#AEB7C1',
+  current: '#3187ED',
+  target: '#40505E',
+  targetBand: 'rgba(64,80,94,0.14)',
+  background: 'transparent',
+  text: '#263238',
+  textSecondary: '#8493A2',
+  gridLine: '#E5E9ED',
+  axis: '#CBD3DC'
+};
+
+const CONFIG = {
+  title: '谁增长最快，谁进入目标区间？',
+  subtitle: '',                    // 留空则自动组合两个年份和计量单位
+  metricName: '交付量',
+  unit: '万辆',
+  valueDivisor: 10000,              // 原始数据为“辆”，图中显示“万辆”
+  valueDecimals: 1,
+  rateDecimals: 1,
+  sortBy: 'current',                // current：本期降序；deltaAbs：变化量绝对值降序；none：输入顺序
+  grid: { left: 100, right: 65, top: 166, bottom: 116 }, // 全部是 px
+  axisMax: null,                   // null：自动求上界；也可以填写显示单位下的固定数值，如 70
+  axisInterval: null,              // null：自动；也可以填写 10
+  titleFontSize: 21,
+  subtitleFontSize: 12,
+  legendFontSize: 12,
+  axisFontSize: 11,
+  footnoteFontSize: 11,
+  pointSize: 17,
+  lineWidth: 3,
+  changeLabelFontSize: 13,
+  targetLabelFontSize: 11,
+  targetTickHeight: 22,
+  targetBandHeight: 9,
+  targetTickWidth: 3,
+  showTargetLabel: true, // 窄图和碰撞场景可自动隐藏目标注记
+  targetLabelAvoidOverlap: true, // 自动避开同比和圆点数值标签
+  hideTargetLabelWhenNarrow: true,
+  targetLabelHideWidth: 550,   // 画布总宽度小于此值时隐藏目标文字
+  labelCollisionPadding: 7,   // 标签边界额外间距 px
+  valueLabelFontSize: 12,
+  categoryFontSize: 14,
+  legendTop: 110,
+
+  showDirectionSymbol: false,      // true：添加 ▲/▼；false：仅显示 +/-
+  showChangeAmount: true,
+  showGrowthRate: true,
+  animation: true,
+  source: '四家车企官方全年交付量；目标区间为演示数据，非统一官方目标',
+  note: '图表说明：两点表示双期规模；深灰区间线表示目标上下限；目标区间状态见 Tooltip。'
+};
+
+// ============================================================
+// 03. 通用数据整理与校验（无需因品牌、年份改变而修改）
+// ============================================================
+if (!years.length || years.length !== brands.length || years.length !== deliveries.length || years.length !== targetMins.length || years.length !== targetMaxs.length) {
+  throw new Error('年份、品牌、交付量、目标下限、目标上限必须是长度一致的五个一维数组');
+}
+if (!(CONFIG.valueDivisor > 0)) throw new Error('valueDivisor 必须大于 0');
+
+const periods = [...new Set(years.map(v => String(v).trim()))].sort((a, b) =>
+  a.localeCompare(b, 'zh-CN', { numeric: true })
+);
+if (periods.length !== 2 || periods.some(p => !p)) {
+  throw new Error('V3 双期哑铃图要求年份字段恰好包含两个不同年份');
+}
+const [previousPeriod, currentPeriod] = periods;
+const groups = new Map();
+for (let i = 0; i < years.length; i++) {
+  const period = String(years[i]).trim();
+  const brand = String(brands[i] == null ? '' : brands[i]).trim();
+  const raw = deliveries[i];
+  const value = raw === null || raw === undefined || String(raw).trim() === ''
+    ? NaN : Number(String(raw).replace(/,/g, ''));
+  if (!brand || !Number.isFinite(value) || value < 0) {
+    throw new Error(`第 ${i + 1} 行品牌或交付量无效`);
+  }
+  if (!groups.has(brand)) groups.set(brand, { values: new Map(), goalRanges: new Map() });
+  const group = groups.get(brand);
+  group.values.set(period, (group.values.get(period) || 0) + value);
+
+  const lowerRaw = targetMins[i];
+  const upperRaw = targetMaxs[i];
+  const hasLower = lowerRaw !== null && lowerRaw !== undefined && String(lowerRaw).trim() !== '';
+  const hasUpper = upperRaw !== null && upperRaw !== undefined && String(upperRaw).trim() !== '';
+  if (hasLower !== hasUpper) throw new Error(`第 ${i + 1} 行目标上下限必须同时填写或同时为空`);
+  if (hasLower) {
+    const lower = Number(String(lowerRaw).replace(/,/g, ''));
+    const upper = Number(String(upperRaw).replace(/,/g, ''));
+    if (!Number.isFinite(lower) || !Number.isFinite(upper) || lower < 0 || upper <= 0 || lower > upper)
+      throw new Error(`第 ${i + 1} 行目标区间无效：须满足 0 ≤ 下限 ≤ 上限，且上限大于0`);
+    const saved = group.goalRanges.get(period);
+    if (saved && (saved[0] !== lower || saved[1] !== upper))
+      throw new Error(`品牌“${brand}”在 ${period} 年有不一致的目标区间`);
+    group.goalRanges.set(period, [lower, upper]);
+  }
+}
+
+const rows = [...groups].map(([name, group], index) => {
+  const values = group.values;
+  if (!values.has(previousPeriod) || !values.has(currentPeriod)) {
+    throw new Error(`“${name}”缺少 ${previousPeriod} 或 ${currentPeriod} 的交付量`);
+  }
+  const previous = values.get(previousPeriod);
+  const current = values.get(currentPeriod);
+  const delta = current - previous;
+  return { name, previous, current, delta, rate: previous === 0 ? null : delta / previous * 100,
+    targetRange: group.goalRanges.has(currentPeriod) ? group.goalRanges.get(currentPeriod) : null, index };
+});
+if (CONFIG.sortBy === 'current') rows.sort((a, b) => b.current - a.current);
+else if (CONFIG.sortBy === 'deltaAbs') rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+const scaled = v => v / CONFIG.valueDivisor;
+const numberText = v => scaled(v).toFixed(CONFIG.valueDecimals);
+const signedText = (v, decimals) => `${v > 0 ? '+' : ''}${v.toFixed(decimals)}`;
+const deltaText = d => `${signedText(scaled(d.delta), CONFIG.valueDecimals)}${CONFIG.unit}`;
+const rateText = d => d.rate === null ? '—' : `${signedText(d.rate, CONFIG.rateDecimals)}%`;
+const colorFor = d => d.delta > 0 ? COLORS.positive : d.delta < 0 ? COLORS.negative : COLORS.zero;
+const arrowFor = d => d.delta > 0 ? '▲ ' : d.delta < 0 ? '▼ ' : '';
+const maxRaw = Math.max(1, ...rows.flatMap(d => [d.previous, d.current, ...(d.targetRange || [])]));
+const maxScaled = scaled(maxRaw);
+const niceStep = v => {
+  const base = Math.pow(10, Math.floor(Math.log10(Math.max(v, 0.000001))));
+  const ratio = v / base;
+  return (ratio <= 1 ? 1 : ratio <= 2 ? 2 : ratio <= 5 ? 5 : 10) * base;
+};
+const autoStep = niceStep(maxScaled / 7);
+const xMax = CONFIG.axisMax == null ? Math.ceil(maxScaled * 1.12 / autoStep) * autoStep : CONFIG.axisMax;
+const subtitle = CONFIG.subtitle || `${previousPeriod}—${currentPeriod}｜${CONFIG.metricName}（${CONFIG.unit}）｜横向哑铃图`;
+const escapeHtml = value => String(value).replace(/[&<>"']/g, c => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+})[c]);
+
+// ============================================================
+// 04. 富文本 Tooltip
+// ============================================================
+function tooltipFormatter(params) {
+  const d = rows[params.dataIndex];
+  if (!d) return '';
+  const yoyColor = colorFor(d);
+  const hasTarget = !!d.targetRange;
+  const low = hasTarget ? d.targetRange[0] : null;
+  const high = hasTarget ? d.targetRange[1] : null;
+  const isSingle = hasTarget && low === high;
+  const targetStatus = !hasTarget ? '未设置目标' :
+    d.current < low ? '低于目标下限' : d.current > high ? '高于目标上限' : '处于目标区间';
+  const statusColor = !hasTarget ? COLORS.textSecondary :
+    d.current < low ? COLORS.negative : COLORS.positive;
+  const gap = !hasTarget ? null : d.current < low ? d.current - low : d.current > high ? d.current - high : 0;
+  const line = (label, value, color = COLORS.text, dot = null) =>
+    `<div style="display:flex;justify-content:space-between;align-items:center;gap:22px;margin-top:8px;">
+       <span style="color:${COLORS.textSecondary};white-space:nowrap;">${dot ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dot};margin-right:7px;"></span>` : ''}${escapeHtml(label)}</span>
+       <strong style="color:${color};white-space:nowrap;">${escapeHtml(value)}</strong>
+     </div>`;
+  const goalText = !hasTarget ? '—' : isSingle ? numberText(low) + ' ' + CONFIG.unit :
+    numberText(low) + '–' + numberText(high) + ' ' + CONFIG.unit;
+  return `<div style="min-width:244px;padding:12px 14px;font:12px Arial,'Microsoft YaHei',sans-serif;color:${COLORS.text};line-height:1.5;">
+    <div style="font-weight:700;font-size:15px;padding-bottom:8px;border-bottom:1px solid ${COLORS.gridLine};">${escapeHtml(d.name)}</div>
+    ${line(previousPeriod + '（同期）', numberText(d.previous) + ' ' + CONFIG.unit, COLORS.previous, COLORS.previous)}
+    ${line(currentPeriod + '（本期）', numberText(d.current) + ' ' + CONFIG.unit, COLORS.current, COLORS.current)}
+    ${hasTarget ? line('本期目标区间', goalText, COLORS.target, COLORS.target) : ''}
+    <div style="border-top:1px dashed ${COLORS.gridLine};margin-top:10px;padding-top:2px;">
+      ${line('同比增减额', deltaText(d), yoyColor)}
+      ${line('同比增长率', rateText(d), yoyColor)}
+      ${hasTarget ? line('目标状态', targetStatus, statusColor) : ''}
+      ${hasTarget ? line('距目标边界', gap === 0 ? '区间内' : deltaText({delta: gap}), statusColor) : ''}
+      ${hasTarget ? line('下限达成率', low === 0 ? '—' : (d.current/low*100).toFixed(1)+'%', d.current>=low ? COLORS.positive : COLORS.negative) : ''}
+    </div>
+  </div>`;
+}
+
+function renderDumbbell(params, api) {
+  const i = Math.round(api.value(0));
+  const d = rows[i];
+  if (!d) return null;
+  const p0 = api.coord([scaled(d.previous), i]);
+  const p1 = api.coord([scaled(d.current), i]);
+  const targetLow = d.targetRange ? api.coord([scaled(d.targetRange[0]), i]) : null;
+  const targetHigh = d.targetRange ? api.coord([scaled(d.targetRange[1]), i]) : null;
+  const xMin = Math.min(p0[0], p1[0]);
+  const xMaxPixel = Math.max(p0[0], p1[0]);
+  const y = p0[1];
+  const color = colorFor(d);
+  const markerRadius = CONFIG.pointSize / 2;
+  const changeParts = [];
+  if (CONFIG.showChangeAmount) changeParts.push(deltaText(d));
+  if (CONFIG.showGrowthRate) changeParts.push(rateText(d));
+  const changeLabel = (CONFIG.showDirectionSymbol ? arrowFor(d) : '') + changeParts.join('  |  ');
+  const shortDistance = xMaxPixel - xMin < 105;
+  const endpointLabelY = y + markerRadius + 8;
+  const estimateWidth = (text, fontSize) => [...String(text)].reduce((sum, ch) =>
+    sum + (/[^\x00-\xff]/.test(ch) ? fontSize : fontSize * 0.57), 0);
+  const boxFor = (x, top, text, fontSize) => ({
+    l: x - estimateWidth(text, fontSize) / 2,
+    r: x + estimateWidth(text, fontSize) / 2,
+    t: top,
+    b: top + fontSize * 1.3
+  });
+  const collide = (a, b) => a.l < b.r + CONFIG.labelCollisionPadding &&
+    a.r + CONFIG.labelCollisionPadding > b.l &&
+    a.t < b.b + CONFIG.labelCollisionPadding &&
+    a.b + CONFIG.labelCollisionPadding > b.t;
+  const annotationBoxes = [];
+  if (changeLabel) annotationBoxes.push(boxFor((p0[0] + p1[0]) / 2,
+    y - markerRadius - 9 - CONFIG.changeLabelFontSize * 1.3,
+    changeLabel, CONFIG.changeLabelFontSize));
+  annotationBoxes.push(boxFor(p0[0], endpointLabelY, numberText(d.previous), CONFIG.valueLabelFontSize));
+  annotationBoxes.push(boxFor(p1[0], endpointLabelY + (shortDistance ? 14 : 0),
+    numberText(d.current), CONFIG.valueLabelFontSize));
+  let targetLabelPlacement = null;
+  if (targetLow && CONFIG.showTargetLabel &&
+    (!CONFIG.hideTargetLabelWhenNarrow || api.getWidth() >= CONFIG.targetLabelHideWidth)) {
+    const label = d.targetRange[0] === d.targetRange[1]
+      ? `目标 ${numberText(d.targetRange[0])}`
+      : `目标 ${numberText(d.targetRange[0])}–${numberText(d.targetRange[1])}`;
+    const f = CONFIG.targetLabelFontSize;
+    const aboveTop = y - CONFIG.targetTickHeight / 2 - 6 - f * 1.3;
+    const belowTop = y + CONFIG.targetTickHeight / 2 + 6;
+    const candidates = [
+      { x: (targetLow[0] + targetHigh[0]) / 2, top: aboveTop, verticalAlign: 'bottom', y: y - CONFIG.targetTickHeight / 2 - 6 },
+      { x: (targetLow[0] + targetHigh[0]) / 2, top: belowTop, verticalAlign: 'top', y: belowTop }
+    ];
+    // 行内预留空间，避免上下相邻品牌的标签交叉。
+    const rowHeight = Math.abs(api.size([0, 1])[1]);
+    const minY = y - rowHeight / 2 + 5;
+    const maxY = y + rowHeight / 2 - 5;
+    const gridLeftX = api.coord([0, i])[0];
+    const gridRightX = api.coord([xMax, i])[0];
+    for (const candidate of candidates) {
+      const bbox = boxFor(candidate.x, candidate.top, label, f);
+      const inside = bbox.t >= minY && bbox.b <= maxY &&
+        bbox.l >= gridLeftX + 2 && bbox.r <= gridRightX - 2;
+      if (inside && (!CONFIG.targetLabelAvoidOverlap || !annotationBoxes.some(other => collide(bbox, other)))) {
+        targetLabelPlacement = { ...candidate, label };
+        break;
+      }
+    }
+  }
+  return {
+    type: 'group',
+    children: [
+      // 透明触发区域，提高鼠标悬停在连线附近时的 Tooltip 可用性
+      { type: 'rect', shape: { x: xMin - markerRadius, y: y - 18, width: Math.max(2 * markerRadius, xMaxPixel - xMin + 2 * markerRadius), height: 55 }, style: { fill: 'rgba(0,0,0,0.001)' } },
+      { type: 'line', silent: true, shape: { x1: p0[0], y1: y, x2: p1[0], y2: y }, style: { stroke: color, lineWidth: CONFIG.lineWidth } },
+      { type: 'circle', silent: true, shape: { cx: p0[0], cy: y, r: markerRadius }, style: { fill: COLORS.previous, stroke: '#FFFFFF', lineWidth: 1.5 } },
+      { type: 'circle', silent: true, shape: { cx: p1[0], cy: y, r: markerRadius }, style: { fill: COLORS.current, stroke: '#FFFFFF', lineWidth: 1.5 } },
+      { type: 'text', silent: true, style: { x: p0[0], y: endpointLabelY, text: numberText(d.previous), align: 'center', verticalAlign: 'top', font: `500 ${CONFIG.valueLabelFontSize}px sans-serif`, fill: COLORS.text } },
+      { type: 'text', silent: true, style: { x: p1[0], y: endpointLabelY + (shortDistance ? 14 : 0), text: numberText(d.current), align: 'center', verticalAlign: 'top', font: `500 ${CONFIG.valueLabelFontSize}px sans-serif`, fill: COLORS.text } },
+      { type: 'text', silent: true, style: { x: (p0[0] + p1[0]) / 2, y: y - markerRadius - 9, text: changeLabel, align: 'center', verticalAlign: 'bottom', font: `700 ${CONFIG.changeLabelFontSize}px sans-serif`, fill: color } },
+      ...(targetLow ? [
+        ...(d.targetRange[0] !== d.targetRange[1] ? [{
+          type: 'rect', silent: true,
+          shape: { x: targetLow[0], y: y-CONFIG.targetBandHeight/2,
+            width: Math.max(0, targetHigh[0]-targetLow[0]), height: CONFIG.targetBandHeight },
+          style: { fill: COLORS.targetBand }
+        }, {
+          type: 'line', silent: true,
+          shape: { x1: targetLow[0], y1: y, x2: targetHigh[0], y2: y },
+          style: { stroke: COLORS.target, lineWidth: 2, opacity: 0.7 }
+        }] : []),
+        ...[targetLow[0], ...(d.targetRange[0] === d.targetRange[1] ? [] : [targetHigh[0]])].map(x => ({
+          type: 'line', silent: true,
+          shape: { x1: x, y1: y-CONFIG.targetTickHeight/2, x2: x, y2: y+CONFIG.targetTickHeight/2 },
+          style: { stroke: COLORS.target, lineWidth: CONFIG.targetTickWidth }
+        })),
+        ...(targetLabelPlacement ? [{ type: 'text', silent: true, style: {
+          x: targetLabelPlacement.x, y: targetLabelPlacement.y, text: targetLabelPlacement.label,
+          align: 'center', verticalAlign: targetLabelPlacement.verticalAlign,
+          font: `500 ${CONFIG.targetLabelFontSize}px sans-serif`, fill: COLORS.target
+        } }] : [])
+      ] : [])
+    ]
+  };
+}
+
+// ============================================================
+// 06. ECharts option
+// ============================================================
+option = {
+  backgroundColor: COLORS.background,
+  animation: CONFIG.animation,
+  title: {
+    text: CONFIG.title, subtext: subtitle, left: 36, top: 29, itemGap: 10,
+    textStyle: { color: COLORS.text, fontSize: CONFIG.titleFontSize, fontWeight: 700 },
+    subtextStyle: { color: COLORS.textSecondary, fontSize: CONFIG.subtitleFontSize }
+  },
+  legend: {
+    left: 40, top: CONFIG.legendTop, icon: 'circle', itemWidth: 12, itemHeight: 12,
+    textStyle: { color: COLORS.text, fontSize: CONFIG.legendFontSize }, data: [previousPeriod, currentPeriod, '目标区间']
+  },
+  grid: CONFIG.grid,
+  xAxis: {
+    type: 'value', min: 0, max: xMax,
+    ...(CONFIG.axisInterval == null ? { splitNumber: 7 } : { interval: CONFIG.axisInterval }),
+    axisLine: { show: true, lineStyle: { color: COLORS.axis } }, axisTick: { show: false },
+    axisLabel: { color: COLORS.textSecondary, fontSize: CONFIG.axisFontSize },
+    splitLine: { show: true, lineStyle: { color: COLORS.gridLine, type: 'dashed' } }
+  },
+  yAxis: {
+    type: 'category', inverse: true, data: rows.map(d => d.name),
+    axisLine: { show: false }, axisTick: { show: false },
+    axisLabel: { color: COLORS.text, fontSize: CONFIG.categoryFontSize, fontWeight: 600, margin: 16 },
+    splitLine: { show: false }
+  },
+  tooltip: {
+    trigger: 'item', renderMode: 'html', confine: true,
+    backgroundColor: '#FFFFFF', borderColor: COLORS.gridLine, borderWidth: 1, padding: 0,
+    extraCssText: 'border-radius:8px;box-shadow:0 6px 20px rgba(38,50,56,.12);',
+    formatter: tooltipFormatter
+  },
+  graphic: [
+    { type: 'rect', left: 37, top: 18, shape: { width: 19, height: 4 }, style: { fill: COLORS.negative }, silent: true },
+    { type: 'text', left: 36, bottom: 41, style: { text: `数据来源：${CONFIG.source}`, fill: COLORS.textSecondary, font: `${CONFIG.footnoteFontSize}px sans-serif` }, silent: true },
+    { type: 'text', left: 36, bottom: 22, style: { text: CONFIG.note, fill: COLORS.textSecondary, font: `${CONFIG.footnoteFontSize}px sans-serif` }, silent: true }
+  ],
+  series: [
+    // 用于显示图例；实际点和线全部由 custom series 一次绘制
+    { name: previousPeriod, type: 'scatter', data: [], itemStyle: { color: COLORS.previous } },
+    { name: currentPeriod, type: 'scatter', data: [], itemStyle: { color: COLORS.current } },
+    { name: '目标区间', type: 'scatter', data: [], itemStyle: { color: COLORS.target }, symbol: 'rect' },
+    {
+      name: '双期哑铃', type: 'custom', coordinateSystem: 'cartesian2d',
+      renderItem: renderDumbbell, data: rows.map((d, i) => [i, scaled(d.previous), scaled(d.current)]),
+      encode: { y: 0, x: [1, 2] }, z: 3
+    }
+  ]
+};
