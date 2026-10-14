@@ -1,0 +1,483 @@
+// =====================================================
+// 01. 原始数据（4 个平行一维数组，按行同索引对应）
+// =====================================================
+// PY 表示上一报告期实际值，年份为上一期的真实年份；
+// AC 和 PL 均对应本期年份。PL 只是公开目标基准，目标口径见 setting.planNotes。
+// 图内数值直接保留原始车辆数（辆），由 valueScale 自动转换为“万辆”。
+var 年份 = [
+  '2024','2025','2025',
+  '2024','2025','2025',
+  '2024','2025','2025',
+  '2024','2025','2025'
+];
+var 品牌 = [
+  '零跑汽车','零跑汽车','零跑汽车',
+  '小鹏汽车','小鹏汽车','小鹏汽车',
+  '小米汽车','小米汽车','小米汽车',
+  '理想汽车','理想汽车','理想汽车'
+];
+var 情景 = [
+  'PY','AC','PL', 'PY','AC','PL',
+  'PY','AC','PL', 'PY','AC','PL'
+];
+var 度量值 = [
+  293724,596555,500000,
+  190068,429445,380000,
+  136854,411082,350000,
+  500508,406343,700000
+];
+
+// Power BI 字段映射示例（必须按用户实际的字段绑定顺序核对）：
+// var 年份 = dataArr.dataObjects[0].values;
+// var 品牌 = dataArr.dataObjects[1].values;
+// var 情景 = dataArr.dataObjects[2].values;
+// var 度量值 = dataArr.dataObjects[3].values;
+
+// =====================================================
+// 02. 用户可修改设置（统一放在最前面）
+// =====================================================
+var setting = {
+  title: '谁跑赢了去年，又有谁完成目标？',
+  subtitle: '新能源汽车品牌交付量 · PY 同期 / AC 实际 / PL 目标参考',
+  measureName: '交付量',
+  unit: '万辆',
+  valueScale: 10000,                 // 输入值 / valueScale = 展示值
+  valuePrecision: 2,
+  labelPrecision: 1,                // 柱顶标签展示精度，与悬停详情可分别调整
+  percentPrecision: 1,
+  activePeriod: null,                // null = 自动选择最新 AC 周期；可设为 '2025' 等
+  scenarioCodes: { previous: 'PY', actual: 'AC', plan: 'PL' },
+  scenarioLabels: { previous: '同期', actual: '实际', plan: '目标' },
+  layoutMode: 'nested',              // nested = 三柱同中心重叠；planMarker = 目标三角参考标记
+  sortMode: 'input',                 // input | actualDesc | goalRateDesc
+  compareAgainst: 'PL',             // 顶部变化标签的参照情景：PL 或 PY
+  higherIsBetter: true,             // 成本等“越低越好”指标改为 false
+  showActualLabels: true,
+  showVarianceLabels: true,
+  showXAxisLabels: true,
+  showYAxis: true,
+  barMaxWidth: 62,                  // 像素；按类目带宽自动收缩
+  barWidthRatio: { plan: 1, previous: 0.70, actual: 0.46 },
+  axisHeadroomRatio: 0.26,
+  grid: { left: 67, right: 35, top: 157, bottom: 102 }, // 必须是像素
+  colors: {
+    positive: '#239263',
+    negative: '#D9544D',
+    actual: '#263238',
+    previous: '#AEB7C1',
+    plan: '#8493A2',
+    bar: '#BFC6CE',
+    secondary: '#D9DEE3',
+    text: '#263238',
+    subtext: '#8493A2',
+    gridLine: '#E5E9ED',
+    background: 'transparent'
+  },
+  sourceText: '数据来源：零跑、小鹏、小米、理想官方财报及公告；目标来自同期公开报道',
+  explainText: '图表说明：AC 深灰｜PY 浅灰｜PL 目标（空心框）；▲▼ 为 AC 对比 PL 的变化率',
+  tooltipWidth: 275,
+  animationDuration: 650
+};
+
+// =====================================================
+// 03. 通用取数 / 校验 / 统计（不依赖年份、行业或品牌名称）
+// =====================================================
+(function () {
+  var colors = setting.colors;
+  var codes = setting.scenarioCodes;
+  var known = [codes.previous, codes.actual, codes.plan];
+  var arrays = [年份, 品牌, 情景, 度量值];
+  var len = 年份.length;
+  if (arrays.some(function (a) { return !Array.isArray(a) || a.length !== len; })) {
+    throw new Error('年份、品牌、情景、度量值必须是长度一致的一维数组。');
+  }
+  if (!len) {
+    throw new Error('没有输入数据，请检查 Power BI 字段映射。');
+  }
+  if (!(setting.valueScale > 0)) {
+    throw new Error('setting.valueScale 必须大于 0。');
+  }
+  if (!['nested', 'planMarker'].includes(setting.layoutMode)) {
+    throw new Error('setting.layoutMode 仅支持 nested / planMarker。');
+  }
+
+  function comparePeriod(a, b) {
+    return String(a).localeCompare(String(b), 'zh-CN', { numeric: true });
+  }
+  function toNum(value, index) {
+    if (value === null || value === undefined || value === '') { return null; }
+    var n = Number(value);
+    if (!Number.isFinite(n) || n < 0) {
+      throw new Error('度量值第 ' + (index + 1) + ' 行不是有效非负数：' + String(value));
+    }
+    return n;
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function textNum(v) {
+    if (v === null || v === undefined) { return '—'; }
+    return (v / setting.valueScale).toLocaleString('zh-CN', {
+      minimumFractionDigits: setting.valuePrecision,
+      maximumFractionDigits: setting.valuePrecision
+    });
+  }
+  function signedNum(v) {
+    if (v === null) { return '—'; }
+    return (v > 0 ? '+' : '') + textNum(v);
+  }
+  function signedPercent(v) {
+    if (v === null || !Number.isFinite(v)) { return '—'; }
+    return (v > 0 ? '+' : '') + v.toFixed(setting.percentPrecision) + '%';
+  }
+  function relative(actual, base) {
+    return actual === null || base === null || base <= 0 ? null : (actual - base) / base * 100;
+  }
+  function colorForChange(delta) {
+    if (delta === null || delta === 0) { return colors.subtext; }
+    var good = (delta > 0) === !!setting.higherIsBetter;
+    return good ? colors.positive : colors.negative;
+  }
+  function valueLabel(value) { return textNum(value); }
+  function textLabel(value) {
+    if (value === null || value === undefined) { return '—'; }
+    return (value / setting.valueScale).toLocaleString('zh-CN', {
+      minimumFractionDigits: setting.labelPrecision,
+      maximumFractionDigits: setting.labelPrecision
+    });
+  }
+  function scenarioYear(code, row) {
+    return code === codes.previous ? row.pyPeriod : row.activePeriod;
+  }
+  function pickLatest(records) {
+    if (!records.length) { return null; }
+    return records.slice().sort(function (a, b) { return comparePeriod(a.period, b.period); }).slice(-1)[0];
+  }
+
+  var input = [];
+  var cats = [];
+  var seenCats = Object.create(null);
+  var acPeriods = [];
+  for (var i = 0; i < len; i++) {
+    var c = String(品牌[i] == null ? '' : 品牌[i]).trim();
+    var p = String(年份[i] == null ? '' : 年份[i]).trim();
+    var s = String(情景[i] == null ? '' : 情景[i]).trim().toUpperCase();
+    var v = toNum(度量值[i], i);
+    if (!c || !p || known.indexOf(s) === -1 || v === null) { continue; }
+    input.push({ category: c, period: p, scenario: s, value: v });
+    if (!seenCats[c]) { seenCats[c] = true; cats.push(c); }
+    if (s === codes.actual && acPeriods.indexOf(p) === -1) { acPeriods.push(p); }
+  }
+  if (!acPeriods.length) { throw new Error('未找到 AC 实际值；请检查情景字段与年份。'); }
+  acPeriods.sort(comparePeriod);
+  var activePeriod = setting.activePeriod === null ? acPeriods[acPeriods.length - 1] : String(setting.activePeriod);
+  var grouped = Object.create(null);
+  input.forEach(function (r) {
+    if (!grouped[r.category]) { grouped[r.category] = []; }
+    grouped[r.category].push(r);
+  });
+
+  var rows = cats.map(function (category) {
+    var raw = grouped[category] || [];
+    // 对同一“类别 + 周期 + 情景”的重复记录执行求和，支持明细级 Power BI 数据。
+    var sums = Object.create(null);
+    raw.forEach(function (r) {
+      var key = r.period + '\u0001' + r.scenario;
+      if (!sums[key]) { sums[key] = { period: r.period, scenario: r.scenario, value: 0 }; }
+      sums[key].value += r.value;
+    });
+    var records = Object.keys(sums).map(function (key) { return sums[key]; });
+    var actual = records.filter(function (r) { return r.period === activePeriod && r.scenario === codes.actual; });
+    var plan = records.filter(function (r) { return r.period === activePeriod && r.scenario === codes.plan; });
+    // PY 必须来自比当期更早的周期，不把当前周期的目标冒充 PY。
+    var py = pickLatest(records.filter(function (r) {
+      return r.scenario === codes.previous && comparePeriod(r.period, activePeriod) < 0;
+    }));
+    // 兼容用户将 PY 作为当前报告期“上年参考值”传入的习惯。
+    if (!py) {
+      py = pickLatest(records.filter(function (r) {
+        return r.scenario === codes.previous && r.period === activePeriod;
+      }));
+    }
+    var ac = actual.length ? actual[0].value : null;
+    var pl = plan.length ? plan[0].value : null;
+    var pv = py ? py.value : null;
+    return {
+      category: category,
+      activePeriod: activePeriod,
+      pyPeriod: py ? py.period : null,
+      ac: ac,
+      py: pv,
+      pl: pl,
+      deltaPY: ac !== null && pv !== null ? ac - pv : null,
+      deltaPL: ac !== null && pl !== null ? ac - pl : null,
+      percentPY: relative(ac, pv),
+      percentPL: relative(ac, pl),
+      goalRate: pl !== null && pl > 0 && ac !== null ? ac / pl * 100 : null
+    };
+  }).filter(function (r) { return r.ac !== null || r.py !== null || r.pl !== null; });
+
+  if (setting.sortMode === 'actualDesc') {
+    rows.sort(function (a, b) { return (b.ac || 0) - (a.ac || 0); });
+  } else if (setting.sortMode === 'goalRateDesc') {
+    rows.sort(function (a, b) { return (b.goalRate == null ? -Infinity : b.goalRate) - (a.goalRate == null ? -Infinity : a.goalRate); });
+  }
+  if (!rows.length) { throw new Error('所选周期没有可显示的有效数据。'); }
+
+  var maxValue = Math.max.apply(null, rows.reduce(function (acc, r) {
+    [r.ac, r.py, r.pl].forEach(function (v) { if (v !== null) { acc.push(v); } });
+    return acc;
+  }, [0]));
+  var maxY = Math.max(1, maxValue * (1 + setting.axisHeadroomRatio));
+  var isPL = setting.compareAgainst === codes.plan;
+  var titleYear = String(activePeriod);
+  var legendNote = setting.layoutMode === 'nested' ? 'PL 目标（空心框）' : 'PL 目标（三角标记）';
+
+  function tooltipRow(mark, label, period, value, swatchType) {
+    var boxStyle = swatchType === 'outline'
+      ? 'border:2px solid ' + colors.plan + ';background:#fff;'
+      : 'border:1px solid transparent;background:' + (swatchType === 'actual' ? colors.actual : colors.previous) + ';';
+    return '<div style="display:flex;align-items:center;justify-content:space-between;margin:7px 0;gap:10px;">'
+      + '<div style="display:flex;align-items:center;gap:8px;color:' + colors.text + ';">'
+      + '<span style="display:inline-block;box-sizing:border-box;width:11px;height:11px;' + boxStyle + '"></span>'
+      + '<span>' + escapeHtml(mark) + ' ' + escapeHtml(label) + (period ? ' <span style="color:' + colors.subtext + ';font-size:11px;">(' + escapeHtml(period) + ')</span>' : '') + '</span>'
+      + '</div><strong style="color:' + colors.text + ';font-variant-numeric:tabular-nums;white-space:nowrap;">'
+      + escapeHtml(valueLabel(value)) + (value === null ? '' : ' ' + escapeHtml(setting.unit)) + '</strong></div>';
+  }
+  function diffRow(label, delta, percent) {
+    var col = colorForChange(delta);
+    var tri = delta > 0 ? '▲' : (delta < 0 ? '▼' : '');
+    return '<div style="display:flex;justify-content:space-between;gap:10px;margin-top:5px;font-size:12px;">'
+      + '<span style="color:' + colors.subtext + ';">' + escapeHtml(label) + '</span>'
+      + '<b style="color:' + col + ';">' + tri + ' ' + escapeHtml(signedNum(delta))
+      + (delta === null ? '' : ' ' + escapeHtml(setting.unit)) + ' / ' + escapeHtml(signedPercent(percent)) + '</b></div>';
+  }
+  function tooltipFormatter(params) {
+    var r = rows[params.dataIndex];
+    if (!r) { return ''; }
+    return '<div style="font-family:Microsoft YaHei,Arial,sans-serif;box-sizing:border-box;min-width:' + setting.tooltipWidth + 'px;max-width:340px;padding:4px 6px;font-size:12px;line-height:1.6;">'
+      + '<div style="font-size:14px;font-weight:700;color:' + colors.text + ';margin:1px 0 8px;">'
+      + escapeHtml(r.category) + '<span style="margin-left:8px;color:' + colors.subtext + ';font-weight:400;font-size:11px;">' + escapeHtml(titleYear) + '</span></div>'
+      + tooltipRow(codes.previous, setting.scenarioLabels.previous, r.pyPeriod, r.py, 'previous')
+      + tooltipRow(codes.actual, setting.scenarioLabels.actual, r.activePeriod, r.ac, 'actual')
+      + tooltipRow(codes.plan, setting.scenarioLabels.plan, r.activePeriod, r.pl, 'outline')
+      + '<div style="border-top:1px solid ' + colors.gridLine + ';margin:9px 0 7px;"></div>'
+      + diffRow('同比变化 ΔPY', r.deltaPY, r.percentPY)
+      + diffRow('目标差异 ΔPL', r.deltaPL, r.percentPL)
+      + '<div style="display:flex;justify-content:space-between;margin-top:6px;color:' + colors.text + ';">'
+      + '<span>目标完成率</span><b>' + (r.goalRate === null ? '—' : r.goalRate.toFixed(setting.percentPrecision) + '%') + '</b></div>'
+      + (setting.planNotes && setting.planNotes[r.category]
+        ? '<div style="margin-top:9px;padding:8px 9px;background:#F6F8FA;color:' + colors.subtext
+          + '</div>'
+        : '')
+      + '</div>';
+  }
+
+  function topPercentInfo(r) {
+    var delta = isPL ? r.deltaPL : r.deltaPY;
+    var percent = isPL ? r.percentPL : r.percentPY;
+    return { delta: delta, percent: percent };
+  }
+
+  function renderItem(params, api) {
+    var index = api.value(0);
+    var r = rows[params.dataIndex];
+    if (!r) { return null; }
+    var base = api.coord([index, 0]);
+    var cx = base[0];
+    var baseY = base[1];
+    var catBand = api.size([1, 0])[0];
+    var widest = Math.max(15, Math.min(setting.barMaxWidth, catBand * 0.68));
+    var pyWidth = widest * setting.barWidthRatio.previous;
+    var acWidth = widest * setting.barWidthRatio.actual;
+    var plWidth = widest * setting.barWidthRatio.plan;
+    var children = [];
+    var topList = [];
+
+    function yOf(v) { return api.coord([index, v])[1]; }
+    function rect(value, width, style, layer) {
+      if (value === null) { return; }
+      var y = yOf(value);
+      topList.push(y);
+      children.push({
+        type: 'rect',
+        shape: { x: cx - width / 2, y: Math.min(y, baseY), width: width, height: Math.max(1, Math.abs(baseY - y)) },
+        style: style,
+        z2: layer
+      });
+    }
+
+    // 先画 PY、再画 AC，最后画透明 PL 轮廓；避免 AC 高于 PL 时把目标轮廓盖住。
+    rect(r.py, pyWidth, { fill: colors.previous, stroke: colors.previous, lineWidth: 0 }, 2);
+    rect(r.ac, acWidth, { fill: colors.actual, stroke: colors.actual, lineWidth: 0 }, 3);
+    if (setting.layoutMode === 'nested') {
+      rect(r.pl, plWidth, { fill: 'rgba(255,255,255,0)', stroke: colors.plan, lineWidth: 1.8 }, 5);
+    }
+
+    if (setting.layoutMode === 'planMarker' && r.pl !== null) {
+      var yPlan = yOf(r.pl);
+      topList.push(yPlan);
+      children.push({
+        type: 'polygon',
+        shape: { points: [
+          [cx + widest * 0.20, yPlan],
+          [cx + widest * 0.39, yPlan - 6],
+          [cx + widest * 0.39, yPlan + 6]
+        ] },
+        style: { fill: '#FFFFFF', stroke: colors.plan, lineWidth: 1.6 },
+        z2: 4
+      });
+    }
+
+    var minBarTop = topList.length ? Math.min.apply(null, topList) : baseY;
+    if (setting.showActualLabels && r.ac !== null) {
+      children.push({
+        type: 'text',
+        style: {
+          text: textLabel(r.ac), x: cx, y: yOf(r.ac) - 7,
+          textAlign: 'center', textVerticalAlign: 'bottom',
+          fill: colors.text, font: '600 11px Microsoft YaHei, sans-serif',
+          backgroundColor: '#FFFFFF', padding: [1, 3]
+        },
+        z2: 9
+      });
+    }
+
+    var topInfo = topPercentInfo(r);
+    if (setting.showVarianceLabels && topInfo.delta !== null) {
+      var textVal = topInfo.percent === null
+        ? signedNum(topInfo.delta)
+        : signedPercent(topInfo.percent);
+      var triangle = topInfo.delta > 0 ? '▲' : (topInfo.delta < 0 ? '▼' : '');
+      children.push({
+        type: 'text',
+        style: {
+          text: (triangle ? triangle + ' ' : '') + textVal,
+          x: cx, y: minBarTop - 24,
+          textAlign: 'center', textVerticalAlign: 'bottom',
+          fill: colorForChange(topInfo.delta),
+          font: '600 11px Microsoft YaHei, sans-serif'
+        },
+        z2: 10
+      });
+    }
+    return { type: 'group', children: children };
+  }
+
+  var legendLeft = setting.grid.left;
+  var legendY = 112;
+  var keyGap = 113;
+  function legendMark(x, label, style) {
+    return {
+      type: 'group', left: legendLeft + x, top: legendY,
+      children: [
+        { type: 'rect', shape: { x: 0, y: 1, width: 17, height: 11 }, style: style },
+        { type: 'text', style: { x: 24, y: 7, text: label, fill: colors.text, font: '11px Microsoft YaHei, sans-serif', textVerticalAlign: 'middle' } }
+      ], silent: true
+    };
+  }
+
+  function planLegend(x, label) {
+    if (setting.layoutMode === 'nested') {
+      return legendMark(x, label, { fill: '#FFFFFF', stroke: colors.plan, lineWidth: 1.6 });
+    }
+    return {
+      type: 'group', left: legendLeft + x, top: legendY,
+      children: [
+        { type: 'polygon', shape: { points: [[1, 7], [17, 1], [17, 13]] },
+          style: { fill: '#FFFFFF', stroke: colors.plan, lineWidth: 1.6 } },
+        { type: 'text', style: { x: 24, y: 7, text: label, fill: colors.text,
+          font: '11px Microsoft YaHei, sans-serif', textVerticalAlign: 'middle' } }
+      ], silent: true
+    };
+  }
+
+  option = {
+    backgroundColor: colors.background,
+    animation: true,
+    animationDuration: setting.animationDuration,
+    textStyle: { fontFamily: 'Microsoft YaHei, sans-serif', color: colors.text },
+    title: {
+      text: setting.title,
+      subtext: setting.subtitle + '｜' + titleYear + '｜单位：' + setting.unit,
+      left: setting.grid.left,
+      top: 40,
+      itemGap: 8,
+      textStyle: { color: colors.text, fontSize: 20, fontWeight: 700 },
+      subtextStyle: { color: colors.subtext, fontSize: 12 }
+    },
+    grid: {
+      left: setting.grid.left, right: setting.grid.right,
+      top: setting.grid.top, bottom: setting.grid.bottom,
+      containLabel: false
+    },
+    tooltip: {
+      trigger: 'item',
+      confine: true,
+      renderMode: 'html',
+      appendToBody: false,
+      backgroundColor: '#FFFFFF',
+      borderColor: colors.gridLine,
+      borderWidth: 1,
+      padding: [10, 12],
+      textStyle: { color: colors.text },
+      extraCssText: 'box-shadow:0 7px 25px rgba(38,50,56,0.12);border-radius:5px;',
+      formatter: tooltipFormatter
+    },
+    xAxis: {
+      type: 'category',
+      data: rows.map(function (r) { return r.category; }),
+      boundaryGap: true,
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: colors.gridLine } },
+      axisLabel: {
+        show: setting.showXAxisLabels,
+        interval: 0, color: colors.text, fontSize: 12,
+        margin: 14, hideOverlap: true,
+        width: 90, overflow: 'truncate'
+      },
+      splitLine: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: maxY,
+      name: setting.showYAxis ? (setting.measureName + '（' + setting.unit + '）') : '',
+      nameTextStyle: { color: colors.subtext, fontSize: 11, align: 'left' },
+      nameLocation: 'end',
+      nameGap: 16,
+      axisLabel: {
+        show: setting.showYAxis,
+        color: colors.subtext, fontSize: 10,
+        formatter: function (v) { return (v / setting.valueScale).toLocaleString('zh-CN', { maximumFractionDigits: 1 }); }
+      },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { show: true, lineStyle: { color: colors.gridLine, width: 1 } }
+    },
+    series: [{
+      name: setting.measureName,
+      type: 'custom',
+      coordinateSystem: 'cartesian2d',
+      encode: { x: 0, y: 1 },
+      renderItem: renderItem,
+      data: rows.map(function (r, i) {
+        return { name: r.category, value: [i, r.ac === null ? 0 : r.ac] };
+      }),
+      z: 3
+    }],
+    graphic: [
+      { type: 'rect', left: setting.grid.left, top: 27,
+        shape: { width: 20, height: 4 }, style: { fill: colors.negative }, silent: true },
+      legendMark(0, codes.previous + ' 同期', { fill: colors.previous }),
+      legendMark(keyGap, codes.actual + ' 实际', { fill: colors.actual }),
+      planLegend(keyGap * 2, codes.plan + ' 目标'),
+      { type: 'text', left: setting.grid.left, bottom: 40,
+        style: { text: setting.sourceText, fill: colors.subtext, font: '10px Microsoft YaHei, sans-serif' }, silent: true },
+      { type: 'text', left: setting.grid.left, bottom: 23,
+        style: { text: setting.explainText.replace('PL 目标（空心框）', legendNote), fill: colors.subtext, font: '10px Microsoft YaHei, sans-serif' }, silent: true }
+    ]
+  };
+})();
