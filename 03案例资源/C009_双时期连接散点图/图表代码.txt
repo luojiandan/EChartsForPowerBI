@@ -1,0 +1,417 @@
+// C006 | 通用双时期连接散点图 V7.4（Tooltip 优化；滚轮缩放 + 拖拽平移）
+// 仅替换四个并行数组；示例数据未完成全部省份官方逐项核验。
+// Power BI：periods/categories/incomes/expenses 分别换成 dataArr.dataObjects[i].values
+
+// ================ 01 原始数据：四个字段 ================
+const periods = ["2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025"];
+const categories = ["上海","上海","北京","北京","浙江","浙江","江苏","江苏","天津","天津","广东","广东","福建","福建","山东","山东","内蒙古","内蒙古","辽宁","辽宁","重庆","重庆","湖南","湖南","湖北","湖北","安徽","安徽","江西","江西","海南","海南","河北","河北","四川","四川","陕西","陕西","宁夏","宁夏","山西","山西","河南","河南","西藏","西藏","吉林","吉林","黑龙江","黑龙江","广西","广西","新疆","新疆","青海","青海","云南","云南","贵州","贵州","甘肃","甘肃"];
+const incomes = [88366,91987,85415,89090,67013,70240,55415,57971,53581,55918,51474,53669,47857,50302,42077,44180,40077,41921,39844,41703,39713,41580,37679,39545,36947,38881,36782,38755,36007,37846,34829,36306,34665,36439,34325,36120,33905,35790,33355,35184,32441,33923,31554,33215,31358,33600,31318,32881,31269,32851,31125,32721,30899,32881,30117,31661,29932,31311,28561,30001,26612,28224];
+const expenses = [52722,54765,49748,50667,45107,47551,37346,38975,35804,37147,35818,37262,33876,35631,25645,26596,28113,29159,25963,26933,27451,28046,26760,27882,27888,28769,24996,26022,24726,26094,25908,27147,24253,25464,24878,26073,23213,24409,22865,23971,21090,22265,21956,22850,18983,20501,23118,24074,23467,24431,21150,22142,21364,22657,21204,22315,22280,23335,20871,21770,19829,20781];
+
+
+
+// ================ 02 所有用户配置：只需修改本区域 ================
+const CONFIG = {
+  fields: {
+    selectedPeriods: null,          // null 自动选择最新两个时期；也可 ['2024','2025']
+    categoryName: '省份',
+    xName: '人均消费支出',
+    yName: '人均可支配收入',
+    unit: '元/人·年',
+    xMetric: '支出', yMetric: '收入'
+  },
+  text: {
+    title: '中国31省，2025年收入和消费谁增长得更快？',
+    subtitle: '居民人均可支配收入与消费支出对比',
+    source: '国家统计局、各省统计局及公开整理资料（示例数据待逐项核验）',
+    note: '灰点：早期  ·  彩点：晚期  ·  绿：纵轴增长更快  ·  红：横轴增长更快  ·  虚线：两指标相等',
+    interactionTip: '滚轮缩放  ·  拖拽平移  ·  双击复原',
+    fontTitle: 21, fontSubtitle: 12, fontAxis: 12, fontTicks: 11, fontFootnote: 10.5
+  },
+  layout: {
+    // 宽屏矩形占满更多空间；strictSquare=true 时才采用方形画布
+    strictSquare: false,
+    // 默认 false：让两轴独立适配数据；true：等单位长度（可能产生额外空白）
+    equalUnitScale: false,
+    left: 88, right: 26, top: 166, bottom: 138,
+    titleLeft: 48, titleTop: 32, ruleTop: 22,
+    legendTop: 130, footerLeft: null, sourceBottom: 34, noteBottom: 18,
+    // 顶部提示与图例默认对齐到绘图区左右边界；横向空间不足时图例自动换行
+    alignTopInfoToPlot: true, alignFooterToPlot: true,
+    legendLeft: 0, legendRight: 0, legendFontSize: 11, legendGap: 13,
+    tipOffsetY: 0, legendOffsetY: 0, footerLineHeight: 15,
+    // 画布窄时额外增大底部留白，避免 X 轴标题与数据来源重叠
+    narrowWidth: 760, narrowBottomExtra: 0,
+    axisNameGapX: 32, axisNameGapY: 43,
+    minPlotWidth: 280, minPlotHeight: 250
+  },
+  axis: {
+    paddingRatio: 0.10, tickCount: 5,
+    // 默认分别按照各指标实际数据范围选轴，不为平衡线牺牲画布空间
+    // equalUnitScale=false 时不会强迫 X/Y 相同像素比例
+    nonNegative: true,
+    xMin: null, xMax: null,  // 可分别固定横轴上下界，例如 15000 / 60000
+    yMin: null, yMax: null,  // 可分别固定纵轴上下界，例如 25000 / 100000
+    showGrid: true, showBalanceLine: true, balanceLineWidth: 1.5,
+    compactWan: true
+  },
+  interaction: {
+    wheelEnabled: true, dragEnabled: true, doubleClickReset: true,
+    wheelFactor: 0.82, minZoomRatio: 0.07, panMarginRatio: 0.2,
+    labelRevealZoom: 1.5, animationDuration: 0
+  },
+  labels: {
+    fullViewMax: 10, zoomViewMax: 40,
+    distance: 13, position: 'right', fontSize: 11, fontWeight: 600,
+    hideOverlap: true, autoPosition: true, positionCandidates: ['right','top','bottom','left'],
+    symbolSizeOld: 7, symbolSizeNew: 11,
+    lineWidth: 2, lineOpacity: 0.75
+  },
+  tooltipStyle: {
+    show: true,
+    width: 266,
+    fontSize: 12,
+    titleFontSize: 13,
+    lineHeight: 22,
+    padding: 12,
+    borderRadius: 5,
+    valueDigits: 0,
+    percentDigits: 2,
+    showComparison: true,   // 同时展示前后两个时期的指标值
+    showGrowth: true,       // 展示两个指标的增速以及哪一项增长更快
+    showBalance: false,     // 可选：展示当前时期两项指标的差额
+    decimalSeparator: true,
+    confine: true
+  },
+  colors: {
+    positive: '#239263', negative: '#D9544D', old: '#AEB7C1',
+    text: '#263238', secondary: '#8493A2', grid: '#E5E9ED',
+    background: 'transparent', white: '#FFFFFF'
+  }
+};
+
+// ================ 03 通用算法：一般无需修改 ================
+const C=CONFIG, F=C.fields, L=C.layout, A=C.axis, I=C.interaction, T=C.text;
+function numeric(v){if(v===null||v===undefined||String(v).trim()==='')return NaN;return Number(String(v).replace(/,/g,''));}
+function fmt(v){return Number(v).toLocaleString('zh-CN',{maximumFractionDigits:0});}
+function fmtPercent(v){return v===null?'无法计算':(v>=0?'+':'')+v.toFixed(2)+'%';}
+function pkey(v){return String(v).trim();}
+function sortPeriod(a,b){const x=Number(a),y=Number(b);return Number.isFinite(x)&&Number.isFinite(y)?x-y:String(a).localeCompare(String(b),'zh-CN',{numeric:true});}
+if(![periods,categories,incomes,expenses].every(Array.isArray))throw Error('四个输入字段必须是一维数组');
+if(new Set([periods.length,categories.length,incomes.length,expenses.length]).size!==1)throw Error('四个输入数组长度必须相同');
+const allPeriods=[...new Set(periods.map(pkey))].sort(sortPeriod);
+const chosenPeriods=F.selectedPeriods===null?allPeriods.slice(-2):F.selectedPeriods.map(pkey);
+if(chosenPeriods.length!==2||chosenPeriods[0]===chosenPeriods[1]||!chosenPeriods.every(x=>allPeriods.includes(x)))throw Error('请确保比较的两个时期有效');
+const [oldPeriod,newPeriod]=chosenPeriods;
+const grouped=new Map();
+for(let i=0;i<periods.length;i++){
+  const year=pkey(periods[i]);if(year!==oldPeriod&&year!==newPeriod)continue;
+  const name=String(categories[i]).trim(),y=numeric(incomes[i]),x=numeric(expenses[i]);
+  if(!name||!Number.isFinite(x)||!Number.isFinite(y))continue;
+  if(!grouped.has(name))grouped.set(name,new Map());
+  if(grouped.get(name).has(year))throw Error('年度+对象存在重复记录：'+year+' / '+name+'；请先在 Power BI 汇总。');
+  grouped.get(name).set(year,{x,y});
+}
+const rows=[];
+for(const [name,m] of grouped){if(!m.has(oldPeriod)||!m.has(newPeriod))continue;
+  const old=m.get(oldPeriod),now=m.get(newPeriod);
+  const gx=old.x===0?null:(now.x/old.x-1)*100,gy=old.y===0?null:(now.y/old.y-1)*100;
+  rows.push({name,old,now,gx,gy,diff:gx===null||gy===null?null:gy-gx});
+}
+if(rows.length===0)throw Error('两个时期没有可配对的对象');
+const col=r=>r.diff===null?C.colors.secondary:r.diff>=0?C.colors.positive:C.colors.negative;
+const vals=rows.flatMap(r=>[r.old.x,r.old.y,r.now.x,r.now.y]);
+const dataMin=Math.min(...vals),dataMax=Math.max(...vals);
+const W=typeof myChart!=='undefined'?myChart.getWidth():1400;
+const H=typeof myChart!=='undefined'?myChart.getHeight():820;
+// 采用 grid 四边边距，而非固定 width/height。ECharts 容器变化时会自然重排。
+// V7：两轴独立取值区间，优先让有效数据占据矩形绘图区。
+const bottomSpace=L.bottom+(W<L.narrowWidth?L.narrowBottomExtra:0);
+let gx=L.left,gy=L.top;
+let gw=Math.max(120,W-L.left-L.right),gh=Math.max(120,H-L.top-bottomSpace);
+if(L.strictSquare){const side=Math.min(gw,gh);gx=L.left+(gw-side)/2;gy=L.top+(gh-side)/2;gw=side;gh=side;}
+const xValues=rows.flatMap(r=>[r.old.x,r.now.x]);
+const yValues=rows.flatMap(r=>[r.old.y,r.now.y]);
+const xLow=Math.min(...xValues),xHigh=Math.max(...xValues);
+const yLow=Math.min(...yValues),yHigh=Math.max(...yValues);
+const pad=A.paddingRatio;
+const xSpan=Math.max(1,(xHigh-xLow)*(1+2*pad));
+const ySpan=Math.max(1,(yHigh-yLow)*(1+2*pad));
+const perPx=Math.max(xSpan/gw,ySpan/gh,1e-9);
+const fullXSpan=L.equalUnitScale?perPx*gw:xSpan;
+const fullYSpan=L.equalUnitScale?perPx*gh:ySpan;
+function axisBounds(low,high,span,userMin,userMax){
+  let lo= userMin===null ? (low+high-span)/2 : Number(userMin);
+  let hi= userMax===null ? lo+span : Number(userMax);
+  if(A.nonNegative && userMin===null && lo<0){lo=0;if(userMax===null)hi=span;}
+  if(!(Number.isFinite(lo)&&Number.isFinite(hi)&&hi>lo))throw Error('坐标轴上下界无效');
+  return [lo,hi];
+}
+const xBounds=axisBounds(xLow,xHigh,fullXSpan,A.xMin,A.xMax);
+const yBounds=axisBounds(yLow,yHigh,fullYSpan,A.yMin,A.yMax);
+const full={x:xBounds[0],y:yBounds[0],sx:xBounds[1]-xBounds[0],sy:yBounds[1]-yBounds[0]};
+let view={...full};
+function nice(v){if(!A.compactWan)return fmt(v);return Math.abs(v)>=10000?(v/10000).toFixed(v%10000===0?0:1)+'万':fmt(v);}
+function lineClip(x0,y0,x1,y1,r){const dx=x1-x0,dy=y1-y0,p=[-dx,dx,-dy,dy],q=[x0-r.x,r.x+r.width-x0,y0-r.y,r.y+r.height-y0];let u0=0,u1=1;for(let j=0;j<4;j++){if(Math.abs(p[j])<1e-12){if(q[j]<0)return null;continue;}const t=q[j]/p[j];if(p[j]<0)u0=Math.max(u0,t);else u1=Math.min(u1,t);if(u0>u1)return null;}return {x1:x0+dx*u0,y1:y0+dy*u0,x2:x0+dx*u1,y2:y0+dy*u1};}
+function linkRender(params,api){const r=rows[api.value(4)];const p=api.coord([api.value(0),api.value(1)]),q=api.coord([api.value(2),api.value(3)]);const s=params.coordSys;
+  const c=lineClip(p[0],p[1],q[0],q[1],s);return c?{type:'line',shape:c,style:{stroke:col(r),lineWidth:C.labels.lineWidth,opacity:C.labels.lineOpacity}}:null;
+}
+const prior=rows.map(r=>({name:r.name,value:[r.old.x,r.old.y]}));
+const priorities=new Set(rows.slice().sort((a,b)=>b.now.y-a.now.y).slice(0,C.labels.fullViewMax).map(r=>r.name));
+function chooseLabelLayouts(selectedRows){
+  const boxW = view.sx / Math.max(gw, 1) * (C.labels.fontSize * 2.2);
+  const boxH = view.sy / Math.max(gh, 1) * (C.labels.fontSize + 7);
+  const gapX = view.sx / Math.max(gw, 1) * (C.labels.distance + 5);
+  const gapY = view.sy / Math.max(gh, 1) * (C.labels.distance + 4);
+  const candidates = (C.labels.positionCandidates || ['right','top','bottom','left']).slice();
+  const placed = [];
+  const layout = new Map();
+  function rectFor(pos, x, y, name){
+    const w = boxW + name.length * view.sx / Math.max(gw,1) * C.labels.fontSize * 0.9;
+    const h = boxH;
+    if(pos==='left') return {x1:x-w-gapX,x2:x-gapX,y1:y-h/2,y2:y+h/2};
+    if(pos==='top') return {x1:x-w/2,x2:x+w/2,y1:y-h-gapY,y2:y-gapY};
+    if(pos==='bottom') return {x1:x-w/2,x2:x+w/2,y1:y+gapY,y2:y+h+gapY};
+    return {x1:x+gapX,x2:x+w+gapX,y1:y-h/2,y2:y+h/2};
+  }
+  function overlapArea(a,b){
+    const w = Math.max(0, Math.min(a.x2,b.x2)-Math.max(a.x1,b.x1));
+    const h = Math.max(0, Math.min(a.y2,b.y2)-Math.max(a.y1,b.y1));
+    return w*h;
+  }
+  function score(pos, r){
+    const rect = rectFor(pos, r.now.x, r.now.y, r.name);
+    let penalty = 0;
+    if(rect.x1 < view.x) penalty += (view.x-rect.x1) * 50;
+    if(rect.x2 > view.x+view.sx) penalty += (rect.x2-(view.x+view.sx)) * 50;
+    if(rect.y1 < view.y) penalty += (view.y-rect.y1) * 50;
+    if(rect.y2 > view.y+view.sy) penalty += (rect.y2-(view.y+view.sy)) * 50;
+    for(const p of placed) penalty += overlapArea(rect, p.rect) * 500;
+    return {penalty, rect};
+  }
+  const rowsSorted = selectedRows.slice().sort((a,b)=>b.now.y-a.now.y);
+  for(const r of rowsSorted){
+    let cand = candidates.slice();
+    if(r.now.x > view.x + view.sx*0.8) cand = ['left','top','bottom','right'];
+    else if(r.now.y > view.y + view.sy*0.85) cand = ['bottom','right','left','top'];
+    else if(r.now.y < view.y + view.sy*0.18) cand = ['top','right','left','bottom'];
+    let best = {penalty: Infinity, pos: cand[0], rect: null};
+    for(const pos of cand){
+      const s = score(pos, r);
+      if(s.penalty < best.penalty) best = {penalty: s.penalty, pos, rect: s.rect};
+      if(s.penalty === 0) break;
+    }
+    placed.push({name:r.name, rect:best.rect});
+    layout.set(r.name, best.pos);
+  }
+  return layout;
+}
+function currentPoints(){const zoom=full.sx/view.sx;
+  const inside=rows.filter(r=>r.now.x>=view.x&&r.now.x<=view.x+view.sx&&r.now.y>=view.y&&r.now.y<=view.y+view.sy);
+  const pool=zoom>=I.labelRevealZoom?inside:inside.filter(r=>priorities.has(r.name));
+  const cap=zoom>=I.labelRevealZoom?C.labels.zoomViewMax:C.labels.fullViewMax;
+  const selected = pool.slice().sort((a,b)=>b.now.y-a.now.y).slice(0,cap);
+  const names=new Set(selected.map(r=>r.name));
+  const layouts = C.labels.autoPosition ? chooseLabelLayouts(selected) : new Map();
+  return rows.map(r=>({name:r.name,value:[r.now.x,r.now.y],itemStyle:{color:col(r)},label:{show:names.has(r.name),position:layouts.get(r.name)||C.labels.position,distance:C.labels.distance}}));
+}
+function axis(horizontal){return {type:'value',min:horizontal?view.x:view.y,max:horizontal?view.x+view.sx:view.y+view.sy,scale:true,
+  name:(horizontal?F.xName:F.yName)+'（'+F.unit+'）',nameLocation:'middle',nameGap:horizontal?L.axisNameGapX:L.axisNameGapY,
+  nameTextStyle:{color:C.colors.text,fontSize:T.fontAxis},axisLabel:{color:C.colors.secondary,fontSize:T.fontTicks,formatter:nice},
+  axisLine:{lineStyle:{color:C.colors.grid}},axisTick:{show:false},splitLine:{show:A.showGrid,lineStyle:{color:C.colors.grid,type:'dashed'}}};}
+function footer(s,bottom){const footerLeft=(L.alignFooterToPlot!==false?Math.round(gx):L.footerLeft);return {type:'text',left:footerLeft,bottom,style:{text:s,fontSize:T.fontFootnote,fill:C.colors.secondary,lineHeight:L.footerLineHeight}};}
+const topLeftBase=(L.alignTopInfoToPlot!==false?Math.round(gx):L.titleLeft)+L.legendLeft;
+const topRightBase=(L.alignTopInfoToPlot!==false?Math.round(gx+gw):W-L.right)-L.legendRight;
+const tipX=topLeftBase;
+const legendText='● '+oldPeriod+'    ● '+newPeriod+'    ┄ 收支平衡线（收入＝支出）';
+const legendWidthEstimate=legendText.length*L.legendFontSize*0.75;
+const tipWidthEstimate=T.interactionTip.length*L.legendFontSize*0.75;
+const splitLegend=tipX+tipWidthEstimate+L.legendGap+legendWidthEstimate>topRightBase;
+const legendX=splitLegend?tipX:Math.max(tipX+tipWidthEstimate+L.legendGap, topRightBase-legendWidthEstimate);
+const legendY=L.legendTop+L.legendOffsetY+(splitLegend?17:0);
+option={backgroundColor:C.colors.background,animationDuration:I.animationDuration,
+  grid:{left:Math.round(gx),right:Math.round(W-gx-gw),top:Math.round(gy),bottom:Math.round(H-gy-gh)},
+  title:{left:L.titleLeft,top:L.titleTop,text:T.title,subtext:oldPeriod+'—'+newPeriod+' '+T.subtitle,
+    textStyle:{fontSize:T.fontTitle,fontWeight:700,color:C.colors.text},subtextStyle:{fontSize:T.fontSubtitle,color:C.colors.secondary,lineHeight:24},itemGap:9},
+  graphic:[{type:'rect',left:L.titleLeft,top:L.ruleTop,shape:{width:20,height:4},style:{fill:C.colors.negative}},
+    {type:'text',left:tipX,top:L.legendTop+L.tipOffsetY,style:{text:T.interactionTip,fontSize:L.legendFontSize,fill:C.colors.secondary}},
+    {type:'text',left:legendX,top:legendY,style:{text:legendText,fontSize:L.legendFontSize,fill:C.colors.secondary}},
+    footer('数据来源：'+T.source,L.sourceBottom),footer('图表说明：'+T.note,L.noteBottom)],
+  tooltip:{
+    show:C.tooltipStyle.show,
+    trigger:'item', confine:C.tooltipStyle.confine, renderMode:'html',
+    appendToBody:false,
+    backgroundColor:C.colors.white,
+    borderColor:C.colors.grid, borderWidth:1,
+    padding:0, extraCssText:'box-shadow:0 3px 14px rgba(38,50,56,.12);border-radius:'+C.tooltipStyle.borderRadius+'px;',
+    textStyle:{color:C.colors.text,fontSize:C.tooltipStyle.fontSize},
+    formatter:p=>{
+      if(p.seriesName!=='旧时期' && p.seriesName!=='新时期')return '';
+      const r=rows[p.dataIndex];
+      if(!r)return '';
+      const cfg=C.tooltipStyle,clr=C.colors;
+      const activeOld=p.seriesName==='旧时期';
+      const current=activeOld?r.old:r.now;
+      const activePeriod=activeOld?oldPeriod:newPeriod;
+      const esc=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      const num=v=>Number(v).toLocaleString('zh-CN',{minimumFractionDigits:cfg.valueDigits,maximumFractionDigits:cfg.valueDigits,useGrouping:cfg.decimalSeparator});
+      const pct=v=>v===null?'—':(v>0?'+':'')+v.toFixed(cfg.percentDigits)+'%';
+      const growthTone=v=>v===null?clr.secondary:(v>0?clr.positive:v<0?clr.negative:clr.secondary);
+      const growthSymbol=v=>v===null?'':v>0?'▲ ':v<0?'▼ ':'';
+      const rowStyle='display:flex;justify-content:space-between;gap:16px;align-items:baseline;line-height:'+cfg.lineHeight+'px;';
+      const nameStyle='color:'+clr.secondary+';white-space:nowrap;';
+      const valueStyle='color:'+clr.text+';font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap;';
+      const valueRow=(label,val)=>'<div style="'+rowStyle+'"><span style="'+nameStyle+'">'+esc(label)+'</span><span style="'+valueStyle+'">'+val+'</span></div>';
+      const growthRow=(label,val)=>'<div style="'+rowStyle+'"><span style="'+nameStyle+'">'+esc(label)+'</span><span style="color:'+growthTone(val)+';font-weight:600;white-space:nowrap;">'+growthSymbol(val)+pct(val)+'</span></div>';
+      const sep='<div style="height:1px;background:'+clr.grid+';margin:8px 0;"></div>';
+      let html='<div style="width:'+cfg.width+'px;box-sizing:border-box;padding:'+cfg.padding+'px;font-size:'+cfg.fontSize+'px;color:'+clr.text+';">';
+      html+='<div style="font-size:'+cfg.titleFontSize+'px;font-weight:700;margin-bottom:4px;">'+esc(r.name)+' <span style="font-size:'+cfg.fontSize+'px;font-weight:400;color:'+clr.secondary+';">· '+esc(activePeriod)+'</span></div>';
+      html+=valueRow(F.yName,num(current.y));
+      html+=valueRow(F.xName,num(current.x));
+      if(cfg.showComparison){
+        html+=sep;
+        html+='<div style="color:'+clr.secondary+';font-size:11px;margin:0 0 3px;">'+esc(oldPeriod)+' → '+esc(newPeriod)+' 数值对比（'+esc(F.unit)+'）</div>';
+        html+=valueRow(F.yMetric,num(r.old.y)+' → '+num(r.now.y));
+        html+=valueRow(F.xMetric,num(r.old.x)+' → '+num(r.now.x));
+      }
+      if(cfg.showGrowth){
+        html+=sep;
+        html+=growthRow(F.yMetric+'增长率',r.gy);
+        html+=growthRow(F.xMetric+'增长率',r.gx);
+        // 增速差：自动生成直观结论；颜色表示纵轴/横轴增速对比，不代表经济改善。
+        const threshold=1e-9;
+        const hasDifference=Number.isFinite(r.diff);
+        const fasterY=hasDifference && r.diff>threshold;
+        const fasterX=hasDifference && r.diff<-threshold;
+        const conclusion= !hasDifference ? '增速无法比较' :
+          fasterY ? F.yMetric+'增长更快' : fasterX ? F.xMetric+'增长更快' : '两项指标增速持平';
+        const conclusionValue=hasDifference ? Math.abs(r.diff).toFixed(cfg.percentDigits)+' 个百分点' : '—';
+        const conclusionColor=!hasDifference||(!fasterY&&!fasterX)?clr.secondary:(fasterY?clr.positive:clr.negative);
+        html+=sep;
+        html+='<div style="'+rowStyle+'font-weight:600;">'+
+          '<span style="color:'+clr.text+';white-space:nowrap;">'+esc(conclusion)+'</span>'+
+          '<span style="color:'+conclusionColor+';font-variant-numeric:tabular-nums;white-space:nowrap;">'+esc(conclusionValue)+'</span></div>';
+      }
+      if(cfg.showBalance){html+=sep;html+=valueRow(F.yMetric+'－'+F.xMetric,num(current.y-current.x));}
+      html+='</div>';
+      return html;
+    }
+  },
+  xAxis:axis(true),yAxis:axis(false),
+  series:[
+    ...(A.showBalanceLine?[{id:'balance',name:'两指标相等',type:'line',showSymbol:false,silent:true,clip:true,
+      data:[[Math.min(full.x,full.y)-full.sx-full.sy,Math.min(full.x,full.y)-full.sx-full.sy],[Math.max(full.x+full.sx,full.y+full.sy)+full.sx+full.sy,Math.max(full.x+full.sx,full.y+full.sy)+full.sx+full.sy]],
+      lineStyle:{color:C.colors.secondary,type:'dashed',width:A.balanceLineWidth},z:1}]:[]),
+    {id:'links',name:'连接线',type:'custom',renderItem:linkRender,silent:true,data:rows.map((r,i)=>[r.old.x,r.old.y,r.now.x,r.now.y,i]),z:2},
+    {id:'history',name:'旧时期',type:'scatter',symbolSize:C.labels.symbolSizeOld,data:prior,itemStyle:{color:C.colors.old},z:3},
+    {id:'current',name:'新时期',type:'scatter',symbolSize:C.labels.symbolSizeNew,data:currentPoints(),
+      label:{show:true,formatter:p=>p.name,position:C.labels.position,distance:C.labels.distance,color:C.colors.text,fontSize:C.labels.fontSize,fontWeight:C.labels.fontWeight},
+      labelLayout:{hideOverlap:C.labels.hideOverlap,moveOverlap:'shiftY'},z:4}
+  ]
+};
+// 更新缩放区域并自动显示放大区域中的对象名称
+function applyView(){if(typeof myChart==='undefined')return;
+ myChart.setOption({xAxis:{min:view.x,max:view.x+view.sx},yAxis:{min:view.y,max:view.y+view.sy},series:[{id:'current',data:currentPoints()}]});}
+if(typeof myChart !== 'undefined') {
+  const zr = myChart.getZr();
+  if (myChart.__c006GenericHandlers) {
+    for (const [eventName, fn] of myChart.__c006GenericHandlers) zr.off(eventName, fn);
+  }
+  const handlers = [];
+  function bind(eventName, fn) {
+    zr.on(eventName, fn);
+    handlers.push([eventName, fn]);
+  }
+
+  // 坐标统一使用 ZRender 的画布坐标；兼容编辑器内外层事件包装。
+  // 不使用 DOM 的 layerX / offsetX（其参照节点可能是散点或其他元素）。
+  function pointer(e) {
+    const nested = e && e.event;
+    const nativeEvent = nested && nested.event ? nested.event : nested;
+    let x = Number.isFinite(e && e.offsetX) ? e.offsetX : NaN;
+    let y = Number.isFinite(e && e.offsetY) ? e.offsetY : NaN;
+    // 浏览器事件经 ZRender 处理后会带有 zrX/zrY，优先使用。
+    if (nativeEvent && Number.isFinite(nativeEvent.zrX) && Number.isFinite(nativeEvent.zrY)) {
+      x = nativeEvent.zrX; y = nativeEvent.zrY;
+    } else if (nested && Number.isFinite(nested.zrX) && Number.isFinite(nested.zrY)) {
+      x = nested.zrX; y = nested.zrY;
+    }
+    return {x, y, nativeEvent};
+  }
+
+  // 根据当前真实坐标系统判断是否在绘图区，而非依赖手工边距。
+  function plotRect() {
+    const x0 = myChart.convertToPixel({xAxisIndex:0}, view.x);
+    const x1 = myChart.convertToPixel({xAxisIndex:0}, view.x + view.sx);
+    const y0 = myChart.convertToPixel({yAxisIndex:0}, view.y);
+    const y1 = myChart.convertToPixel({yAxisIndex:0}, view.y + view.sy);
+    if ([x0,x1,y0,y1].every(Number.isFinite)) {
+      return {left:Math.min(x0,x1), right:Math.max(x0,x1),
+              top:Math.min(y0,y1), bottom:Math.max(y0,y1),
+              width:Math.abs(x1-x0), height:Math.abs(y1-y0)};
+    }
+    return {left:gx,right:gx+gw,top:gy,bottom:gy+gh,width:gw,height:gh};
+  }
+  function hitPlot(p) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return false;
+    return myChart.containPixel({gridIndex:0}, [p.x,p.y]);
+  }
+  function clamp(v) {
+    const mx = v.sx * I.panMarginRatio, my = v.sy * I.panMarginRatio;
+    v.x = Math.max(full.x-v.sx+mx, Math.min(full.x+full.sx-mx, v.x));
+    v.y = Math.max(full.y-v.sy+my, Math.min(full.y+full.sy-my, v.y));
+    return v;
+  }
+  let dragging = null;
+  function wheel(e) {
+    if (!I.wheelEnabled) return;
+    const p = pointer(e);
+    if (!hitPlot(p)) return;
+    const ev = p.nativeEvent;
+    let dy = ev && typeof ev.deltaY === 'number' ? -ev.deltaY : (e.wheelDelta || 0);
+    if (!dy && ev && typeof ev.wheelDelta === 'number') dy = ev.wheelDelta;
+    if (!dy) return;
+    const ratio = dy > 0 ? I.wheelFactor : 1 / I.wheelFactor;
+    const scale = Math.max(I.minZoomRatio, Math.min(1, view.sx / full.sx * ratio));
+    const nsx = full.sx * scale, nsy = full.sy * scale;
+    const rect = plotRect();
+    const fx = Math.max(0,Math.min(1,(p.x-rect.left)/rect.width));
+    const fy = Math.max(0,Math.min(1,1-(p.y-rect.top)/rect.height));
+    const ax = view.x + fx*view.sx, ay = view.y + fy*view.sy;
+    view = clamp({x:ax-fx*nsx,y:ay-fy*nsy,sx:nsx,sy:nsy});
+    applyView();
+    if (ev && ev.preventDefault) ev.preventDefault();
+  }
+  function down(e) {
+    if (!I.dragEnabled) return;
+    const p = pointer(e);
+    if (!hitPlot(p)) return;
+    const ev = p.nativeEvent;
+    if (ev && typeof ev.button === 'number' && ev.button !== 0) return;
+    dragging = {px:p.x, py:p.y, x:view.x, y:view.y, sx:view.sx, sy:view.sy};
+  }
+  function move(e) {
+    if (!dragging) return;
+    const p = pointer(e);
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+    const rect = plotRect();
+    view = clamp({...view,
+      x:dragging.x-(p.x-dragging.px)*dragging.sx/rect.width,
+      y:dragging.y+(p.y-dragging.py)*dragging.sy/rect.height});
+    applyView();
+  }
+  function up() { dragging = null; }
+  function reset(e) {
+    if (!I.doubleClickReset) return;
+    const p=pointer(e);
+    if (!hitPlot(p)) return;
+    dragging=null;view={...full};applyView();
+  }
+  bind('mousewheel', wheel);
+  bind('mousedown', down);
+  bind('mousemove', move);
+  bind('mouseup', up);
+  bind('globalout', up);
+  bind('dblclick', reset);
+  myChart.__c006GenericHandlers=handlers;
+}
