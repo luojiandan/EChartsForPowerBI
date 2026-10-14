@@ -1,0 +1,423 @@
+﻿/**
+ * C008 | IBCS 风格横向财务瀑布（真正通用的动态科目模板）
+ * 用法：直接粘贴到 Apache ECharts 官方编辑器的 JS 区域。
+ * 模式：setting.mode = 'c12' (四栏 PY/AC/Δ/Δ%) 或 'bridge' (净变化桥)。
+ * 原始数据每个字段独立一维数组，同索引对齐；不要修改第三节及后面的绘制逻辑。
+ * 图表参考 IBCS C12；不声称通过官方 IBCS 认证。
+ * 演示数据源：Tesla 2025 Form 10-K, Consolidated Statements of Operations:
+ * https://www.sec.gov/Archives/edgar/data/1318605/000162828026003952/tsla-20251231.htm
+ * 金额为百万美元；展示时按 valueDivisor=100 换算成亿美元。
+ */
+
+// ===================================================================
+// 01数据区域（Power BI 替换入口）
+// ===================================================================
+var 年份 = [
+  '2024','2024','2024','2024','2024','2024','2024','2024','2024','2024','2024','2024','2024',
+  '2025','2025','2025','2025','2025','2025','2025','2025','2025','2025','2025','2025','2025'
+];
+var 指标 = [
+  '营业收入','营业成本','毛利润','研发费用','销售及管理费用','重组及其他费用','营业利润',
+  '利息收入','利息费用','其他损益（净额）','税前利润','所得税费用','净利润',
+  '营业收入','营业成本','毛利润','研发费用','销售及管理费用','重组及其他费用','营业利润',
+  '利息收入','利息费用','其他损益（净额）','税前利润','所得税费用','净利润'
+];
+var 度量值 = [
+  97690,80240,null,4540,5150,684,null,1569,350,695,null,1837,null,
+  94827,77733,null,6411,5834,494,null,1680,338,-419,null,1423,null
+];
+var 指标类型 = [
+  'income','expense','subtotal','expense','expense','expense','subtotal',
+  'income','expense','income','subtotal','expense','subtotal',
+  'income','expense','subtotal','expense','expense','expense','subtotal',
+  'income','expense','income','subtotal','expense','subtotal'
+];
+
+// ===================================================================
+// 02 参数设置区域。图表样式、布局和交互参数集中管理。
+// 科目类型：income（加项）、expense（减项）、subtotal（小计/合计）。
+// income 可输入负数，例如“其他损益（净额）”本期为 -419。
+// expense 通常输入正的费用金额，绘图自动将其视为减项。
+// subtotal 的度量值可用 null：自动根据前面行运算，不需手改小计/合计。
+// 例：新增“销售费用”需在两个期间各加一行 income/expense；删除同理。
+// 最后一行建议放一个 subtotal；没有也会自动补最终结果。
+// ===================================================================
+var setting = {
+  mode: 'bridge',                     // 'c12' 四栏；'bridge' 差异桥
+  entity: '特斯拉',
+  title: '营收小幅下滑，为何净利润大幅缩水？',
+  subtitle: 'IBCS 风格 · 财务形成过程与同比差异',
+  periods: null,                   // null 自动取最后两个周期；或 ['2024','2025']
+  resultLabel: '最终结果',           // 删除所有 subtotal 行时自动补一行结果
+  source: '数据来源：Tesla, Inc. 2025 Form 10-K · Consolidated Statements of Operations',
+  description: '图表说明：PY/AC=前期/当期；Δ金额=对最终结果的贡献（费用取反）；Δ%=科目原值同比变动。',
+  displayUnit: '亿美元',
+  valueDivisor: 100,               // 原始金额单位转换，原始值是百万美元
+  decimals: 2,
+  percentDecimals: 1,
+  strictSubtotal: true,            // subtotal 输入数值不为 null 时，校验与运算是否一致
+  showValueLabels: true,
+  showDeltaLabels: true,
+  showPercentLabels: true,
+  showConnectors: true,
+  showSubtotalLines: true,
+  showZeroLines: true,
+  showTooltips: true,
+  animationDuration: 450,
+  font: 'Microsoft YaHei, Arial, sans-serif',
+  layout: {
+    left: 26,                    // 单位：px；所有 grid 边距也都是 px
+    right: 22,
+    nameWidth: 130,               // 左侧科目文本预留宽度
+    top: 142,
+    bottom: 91,
+    panelGap: 20,
+    ratios: [0.28, 0.28, 0.25, 0.19], // PY, AC, Δ金额, Δ%
+    maxBarHeight: 20,
+    barHeightRatio: 0.43,
+    minRowLabelHeight: 15,         // 小于该高度时自动隐藏部分数值标签，避免互相叠压
+    fallbackWidth: 1250,
+    fallbackHeight: 790,
+    titleTop: 49,
+    subtitleTop: 73,
+    columnHeaderOffset: 45
+  },
+  colors: {
+    positive: '#239263',
+    negative: '#D9544D',
+    py: '#AEB7C1',
+    ac: '#263238',
+    bar: '#BFC6CE',
+    barSecondary: '#D9DEE3',
+    background: 'transparent',
+    text: '#263238',
+    secondaryText: '#8493A2',
+    grid: '#E5E9ED',
+    white: '#FFFFFF'
+  }
+};
+
+// ===================================================================
+// 03 数据与数据语义处理（不依赖指标名称、年份、指标数量）
+// ===================================================================
+var C = setting.colors, L = setting.layout;
+function isNil(v) { return v === null || v === undefined || String(v).trim() === ''; }
+function toNum(v) { return isNil(v) ? null : Number(String(v).replace(/,/g,'')); }
+function closeNum(a,b) { return Math.abs(a-b) <= Math.max(1e-7,Math.abs(b)*1e-9); }
+function roundZero(v) { return Math.abs(v) < 1e-9 ? 0 : v; }
+function display(v){ return v / setting.valueDivisor; }
+function nfmt(v,digits) {
+  if (v === null || !isFinite(v)) return '—';
+  return roundZero(v).toLocaleString('en-US',{minimumFractionDigits:digits, maximumFractionDigits:digits});
+}
+function money(v) { return nfmt(display(v),setting.decimals); }
+function signedMoney(v) { return (v>1e-9?'+':'')+money(v); }
+function signedPct(v) { return v===null ? '—' : (v>1e-9?'+':'')+nfmt(v,setting.percentDecimals)+'%'; }
+function dir(v) { return v>1e-9?'▲':v< -1e-9?'▼':'●'; }
+function effectColor(v){return v>1e-9?C.positive:v< -1e-9?C.negative:C.secondaryText;}
+function html(v){return String(v).replace(/[&<>"']/g,function(s){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s];});}
+function metricKind(v) {
+  var t=String(v).trim().toLowerCase();
+  if (['income','add','+','加项','增项'].indexOf(t)>=0) return 'income';
+  if (['expense','subtract','-','减项','支出','费用'].indexOf(t)>=0) return 'expense';
+  if (['subtotal','total','sum','=','小计','合计'].indexOf(t)>=0) return 'subtotal';
+  throw new Error('未知指标类型：'+v+'（请使用 income/expense/subtotal）');
+}
+if (!(setting.valueDivisor>0)) throw new Error('setting.valueDivisor 必须大于 0');
+if ([指标.length,度量值.length,指标类型.length].some(function(k){return k!==年份.length;}))
+  throw new Error('年份、指标、度量值、指标类型四个数组必须等长，所有字段按相同索引对应。');
+if (!年份.length) throw new Error('没有输入数据。');
+var periodList=Array.from(new Set(年份.map(String)));
+periodList.sort(function(a,b){var x=Number(a),y=Number(b);return isFinite(x)&&isFinite(y)?x-y:a.localeCompare(b,'zh-CN');});
+var selectedPeriods=setting.periods&&setting.periods.length===2?setting.periods.map(String):periodList.slice(-2);
+if(selectedPeriods.length!==2 || selectedPeriods[0]===selectedPeriods[1])throw new Error('必须至少有两个不同的期间。');
+var py=selectedPeriods[0], ac=selectedPeriods[1];
+var entries=Object.create(null),kindMap=Object.create(null),metricOrder=[];
+for(var i=0;i<年份.length;i++) {
+  var period=String(年份[i]),name=String(指标[i]).trim(),kind=metricKind(指标类型[i]);
+  var value=toNum(度量值[i]);
+  if(!name)throw new Error('第 '+(i+1)+' 条记录缺少指标名称。');
+  if(value!==null&&!isFinite(value))throw new Error('非数字的度量值：'+period+'/'+name);
+  if(kind!=='subtotal'&&value===null)throw new Error('收入/费用项目不能缺少金额：'+period+'/'+name);
+  var key=JSON.stringify([period,name]);
+  if(Object.prototype.hasOwnProperty.call(entries,key))throw new Error('重复的期间+指标：'+period+'/'+name);
+  entries[key]=value;
+  if(kindMap[name]&&kindMap[name]!==kind)throw new Error('同一指标不能跨期间修改类型：'+name);
+  kindMap[name]=kind;
+  if(period===py)metricOrder.push(name);
+}
+var rows=[];
+for(var i=0;i<metricOrder.length;i++) {
+  var name=metricOrder[i],k0=JSON.stringify([py,name]),k1=JSON.stringify([ac,name]);
+  if(!Object.prototype.hasOwnProperty.call(entries,k1))throw new Error('两期必须拥有相同指标；当期缺少：'+name);
+  rows.push({name:name,kind:kindMap[name],pyInput:entries[k0],acInput:entries[k1]});
+}
+Object.keys(entries).forEach(function(key){var pair=JSON.parse(key);if(pair[0]===ac&&metricOrder.indexOf(pair[1])<0)throw new Error('两期必须拥有相同指标；同期缺少：'+pair[1]);});
+if(!rows.length) throw new Error('请提供至少一个财务指标。');
+if(rows[rows.length-1].kind!=='subtotal') rows.push({name:setting.resultLabel,kind:'subtotal',pyInput:null,acInput:null,autoFinal:true});
+function calcSteps(field){
+  var running=0,steps=[];
+  rows.forEach(function(row,i){
+    var source=row[field+'Input'],before=running,after;
+    if(row.kind==='subtotal'){
+      after=running;
+      if(source!==null && setting.strictSubtotal && !closeNum(source,after))
+        throw new Error('小计数值不匹配：'+row.name+' / '+field+'，填入 '+source+'，自动计算 '+after+'。修改指标后，可把 subtotal 对应的度量值改为 null。');
+      row[field]=source===null?after:source;
+      steps.push({from:0,to:row[field],kind:'subtotal',index:i});
+    } else {
+      var change=(row.kind==='expense'?-source:source);
+      running+=change;
+      row[field]=source;
+      steps.push({from:before,to:running,kind:row.kind,index:i});
+    }
+  });
+  return steps;
+}
+var stepsPY=calcSteps('py'),stepsAC=calcSteps('ac');
+rows.forEach(function(r,i){
+  r.index=i;
+  r.rawChange=r.ac-r.py;
+  r.contribution=r.kind==='expense'?-r.rawChange:r.rawChange;
+  r.percent=closeNum(r.py,0)?null:100*r.rawChange/Math.abs(r.py);
+});
+var final=rows[rows.length-1];
+var contributions=rows.filter(function(r){return r.kind!=='subtotal';}).reduce(function(acc,r){return acc+r.contribution;},0);
+if(!closeNum(contributions,final.ac-final.py))throw new Error('明细贡献与期末结果没有勾稽，请检查输入科目。');
+
+// ===================================================================
+// 04 适配布局：每个栏位有独立 xAxis；坐标与数值统一，图形边界裁剪。
+// ===================================================================
+var W=(typeof myChart!=='undefined'&&myChart&&myChart.getWidth)?myChart.getWidth():L.fallbackWidth;
+var H=(typeof myChart!=='undefined'&&myChart&&myChart.getHeight)?myChart.getHeight():L.fallbackHeight;
+W=Math.max(570,W||L.fallbackWidth);H=Math.max(320,H||L.fallbackHeight);
+var compact=W<900, fontPx=W<800?9:11, valuePx=W<900?9:10;
+var nameWidth=compact?Math.min(137,L.nameWidth):L.nameWidth;
+// 图表主体顶部位置完全由 layout.top 控制
+var top=L.top;
+var bottom=Math.min(L.bottom,Math.max(66,Math.round(H*0.13)));
+var plotHeight=H-top-bottom,rowHeight=plotHeight/rows.length;
+var canLabel=rowHeight>=L.minRowLabelHeight;
+var gap=compact?9:L.panelGap;
+var startX=L.left+nameWidth;
+var totalWidth=W-startX-L.right-gap*3;
+var ratioSum=L.ratios.reduce(function(a,b){return a+b;},0);
+var widths=L.ratios.map(function(r){return totalWidth*r/ratioSum;});
+var lefts=[startX];for(var j=1;j<4;j++)lefts.push(lefts[j-1]+widths[j-1]+gap);
+var domains=[];
+var financeValues=[0];stepsPY.concat(stepsAC).forEach(function(s){financeValues.push(s.from,s.to);});
+var financeMin=Math.min.apply(null,financeValues),financeMax=Math.max.apply(null,financeValues);
+var financeSpread=Math.max(1,financeMax-financeMin);
+var xFinancialMin=(financeMin<0?financeMin-financeSpread*0.07:0);
+var xFinancialMax=financeMax+financeSpread*0.24;
+var maxDelta=Math.max(1,Math.max.apply(null,rows.map(function(r){return Math.abs(display(r.contribution));})));
+var maxPercent=Math.max(1,Math.max.apply(null,rows.map(function(r){return Math.abs(r.percent===null?0:r.percent);})));
+domains=[{min:display(xFinancialMin),max:display(xFinancialMax)},
+ {min:display(xFinancialMin),max:display(xFinancialMax)},
+ {min:-maxDelta*1.20,max:maxDelta*1.85},
+ {min:-maxPercent*1.20,max:maxPercent*2.30}];
+function grid(left,width){return {left:Math.round(left),right:Math.round(W-left-width),top:Math.round(top),bottom:Math.round(bottom),containLabel:false};}
+function xAxis(ix,domain){return {gridIndex:ix,type:'value',min:domain.min,max:domain.max,show:false,scale:true};}
+function yAxis(ix,names){return {
+  gridIndex:ix,type:'category',data:names,inverse:true,boundaryGap:true,
+  axisTick:{show:false},axisLine:{show:false},splitLine:{show:false},
+  axisLabel: ix===0?{
+    show:true,interval:0,width:nameWidth-12,overflow:'truncate',align:'right',margin:16,
+    color:C.text,fontSize:fontPx,fontFamily:setting.font,
+    rich:{subtotal:{color:C.text,fontSize:fontPx,fontWeight:700,fontFamily:setting.font}},
+    formatter:function(value,i){var r=rows[i];return r.kind==='subtotal'?'{subtotal|=  '+value+'}':(r.kind==='expense'?'−  ':'+  ')+value;}
+  }:{show:false}
+};}
+function clip(value,min,max){return Math.max(min,Math.min(max,value));}
+function textGraphic(x,y,str,size,bold,color,align,width){return {type:'text',silent:true,z:8,
+  style:{x:x,y:y,text:String(str),font:(bold?'bold ':'')+size+'px '+setting.font,fill:color||C.text,
+    align:align||'left',verticalAlign:'middle',width:width,overflow:'truncate'}};}
+function lineGraphic(x1,y1,x2,y2,color,width){return {type:'line',silent:true,z:1,
+  shape:{x1:x1,y1:y1,x2:x2,y2:y2},style:{stroke:color,lineWidth:width||1}};}
+function backgroundHeader(){
+  var g=[{type:'rect',silent:true,left:L.left,top:22,z:9,shape:{width:20,height:4},style:{fill:C.negative}}];
+  g.push(textGraphic(L.left,L.titleTop,setting.title,W<850?16:20,true,C.text,'left',W-2*L.left));
+  g.push(textGraphic(L.left,L.subtitleTop,setting.entity+' · '+py+' → '+ac+' · '+setting.subtitle+' · 单位：'+setting.displayUnit,
+    compact?10:12,false,C.secondaryText,'left',W-2*L.left));
+  g.push(lineGraphic(L.left,top-22,W-L.right,top-22,C.grid,1));
+  g.push(textGraphic(L.left,H-48,setting.source,W<900?9:10,false,C.secondaryText,'left',W-L.left-L.right));
+  g.push(textGraphic(L.left,H-29,setting.description,W<900?9:10,false,C.secondaryText,'left',W-L.left-L.right));
+  return g;
+}
+function blankTooltipStyle(){return {
+  trigger:'item',confine:true,show:setting.showTooltips,backgroundColor:C.white,borderColor:C.grid,borderWidth:1,
+  padding:[10,12],textStyle:{color:C.text,fontSize:12},extraCssText:'box-shadow:0 4px 20px rgba(0,0,0,.10);'
+};}
+function tooltipFor(r){
+  var tr=function(a,b){return '<tr><td style="padding:5px 14px 5px 0;color:#8493A2">'+html(a)+
+    '</td><td style="padding:5px 0;text-align:right;font-weight:600">'+html(b)+'</td></tr>';};
+  var color=effectColor(r.contribution);
+  return '<div style="font-family:'+setting.font+';min-width:225px;color:'+C.text+';line-height:1.5">'+
+    '<div style="font-size:14px;font-weight:bold;padding-bottom:7px">'+html(r.name)+'</div><table style="border-collapse:collapse;width:100%">'+
+    tr(py+' (PY)',money(r.py)+' '+setting.displayUnit)+
+    tr(ac+' (AC)',money(r.ac)+' '+setting.displayUnit)+
+    tr('指标自身变化',signedMoney(r.rawChange)+' '+setting.displayUnit)+
+    tr('同比变化率',signedPct(r.percent))+'</table><div style="border-top:1px solid '+C.grid+';margin-top:7px;padding-top:7px">'+
+    '<span style="font-weight:bold;color:'+color+'">'+html(dir(r.contribution)+' '+signedMoney(r.contribution))+' '+html(setting.displayUnit)+'</span>'+
+    '<span style="color:'+C.secondaryText+';margin-left:8px">对最终结果的贡献</span></div>'+
+    '<div style="font-size:11px;color:'+C.secondaryText+';margin-top:5px">'+
+    html(r.kind==='expense'?'费用金额增加对利润通常是不利的；此处对利润的贡献取费用变动的相反数。':
+    r.kind==='subtotal'?'小计或合计由前面科目累计计算，不重复计入差异桥。':'收入/收益的变动按原值计入利润贡献。')+'</div></div>';
+}
+function shapeRect(x1,x2,cy,height,fill,lo,hi){
+  var a=clip(Math.min(x1,x2),lo,hi),b=clip(Math.max(x1,x2),lo,hi);
+  return {type:'rect',shape:{x:a,y:cy-height/2,width:Math.max(0.8,b-a),height:height},style:{fill:fill}};
+}
+function shapeText(str,x,y,align,color,fontSize,bold){return {type:'text',silent:true,
+  style:{text:String(str),x:x,y:y,textAlign:align,textVerticalAlign:'middle',fill:color,
+    font:(bold?'bold ':'')+fontSize+'px '+setting.font}};}
+function tooltipHitbox(left,width,cy,height){return {type:'rect',shape:{x:left,y:cy-height/2,width:width,height:height},
+  style:{fill:'rgba(255,255,255,0)'},z:5};}
+function financePainter(steps,ix){
+  return function(params,api){
+    var i=params.dataIndex,r=rows[i],s=steps[i];
+    var y=api.coord([0,i])[1],from=api.coord([display(s.from),i])[0],to=api.coord([display(s.to),i])[0];
+    var plotL=lefts[ix]+2,plotR=lefts[ix]+widths[ix]-2;
+    var height=Math.max(2.5,Math.min(L.maxBarHeight,rowHeight*L.barHeightRatio));
+    var isTotal=r.kind==='subtotal',fill=isTotal?(ix===0?C.py:C.ac):(ix===0?C.barSecondary:C.bar);
+    var children=[];
+    if(setting.showConnectors&&i<rows.length-1&&!isTotal&&rows[i+1].kind!=='subtotal'){
+      var end=clip(to,plotL,plotR),nextY=api.coord([0,i+1])[1];
+      children.push({type:'line',shape:{x1:end,y1:y+height/2,x2:end,y2:nextY-height/2},
+        style:{stroke:C.secondaryText,lineWidth:0.8,opacity:0.45}});
+    }
+    var rectFrom=isTotal?api.coord([0,i])[0]:from;
+    children.push(shapeRect(rectFrom,to,y,height,fill,plotL,plotR));
+    if(setting.showValueLabels&&canLabel){
+      // 数值强制放在当前栏最右端的文字槽，任何指标数值均不进入相邻栏。
+      var label=money(r[ix===0?'py':'ac']);
+      var labelX=plotR-3;
+      // 深色合计柱覆盖最右端文字槽时切成白字。
+      var onDark=isTotal&&ix===1&&Math.max(rectFrom,to)>labelX-label.length*valuePx*0.65;
+      children.push(shapeText(label,labelX,y,'right',onDark?C.white:C.text,valuePx,isTotal));
+    }
+    children.push(tooltipHitbox(plotL,plotR-plotL,y,Math.max(12,rowHeight*0.85)));
+    return {type:'group',children:children};
+  };
+}
+function variancePainter(ix,percent){
+  return function(params,api){
+    var i=params.dataIndex,r=rows[i],v=percent?r.percent:display(r.contribution);
+    if(v===null)return {type:'group',children:[tooltipHitbox(lefts[ix],widths[ix],api.coord([0,i])[1],Math.max(12,rowHeight*0.8))]};
+    var y=api.coord([0,i])[1],zero=api.coord([0,i])[0],end=api.coord([v,i])[0];
+    var pL=lefts[ix]+2,pR=lefts[ix]+widths[ix]-2;
+    var fill=effectColor(r.contribution),height=Math.max(3,Math.min(12,rowHeight*0.30));
+    var children=[shapeRect(zero,end,y,height,fill,pL,pR)];
+    var endClip=clip(end,pL,pR);
+    children.push({type:'rect',shape:{x:endClip-1,y:y-height/2-2,width:2,height:height+4},style:{fill:fill}});
+    if(canLabel&&(percent?setting.showPercentLabels:setting.showDeltaLabels)){
+      var label=percent?(r.percent===null?'—':dir(r.percent)+' '+nfmt(Math.abs(r.percent),setting.percentDecimals)+'%'):
+        dir(r.contribution)+' '+nfmt(Math.abs(display(r.contribution)),setting.decimals);
+      children.push(shapeText(label,pR-2,y,'right',fill,valuePx,r.kind==='subtotal'));
+    }
+    children.push(tooltipHitbox(pL,pR-pL,y,Math.max(12,rowHeight*0.84)));
+    return {type:'group',children:children};
+  };
+}
+function makeCustom(name,ix,values,painter,tooltip) {return {
+  name:name,type:'custom',coordinateSystem:'cartesian2d',xAxisIndex:ix,yAxisIndex:ix,
+  encode:{x:0,y:1},
+  data:values.map(function(v,i){return {value:[v,i],rowIndex:i};}),
+  renderItem:painter,clip:true,z:3,animationDuration:setting.animationDuration,
+  emphasis:{disabled:true},tooltip:{formatter:tooltip}
+};}
+
+// ===================================================================
+// 05 输出官方编辑器 option（没有 var option、没有 HTML / DOM）
+// ===================================================================
+if(setting.mode==='c12') {
+  var names=rows.map(function(r){return r.name;});
+  var graphics=backgroundHeader();
+  ['PY · '+py,'AC · '+ac,'ΔPY · 金额','ΔPY% · 比例'].forEach(function(header,i){
+    graphics.push(textGraphic(lefts[i]+2,top-L.columnHeaderOffset,header,compact?10:12,true,C.text,'left',widths[i]));
+    if(i>0)graphics.push(lineGraphic(lefts[i]-gap/2,top-49,lefts[i]-gap/2,H-bottom,C.grid,0.9));
+  });
+  rows.forEach(function(r,i){
+    if(setting.showSubtotalLines&&r.kind==='subtotal'){
+      var yy=top+(i+0.95)*rowHeight;
+      graphics.push(lineGraphic(L.left,yy,W-L.right,yy,C.secondaryText,0.8));
+    }
+  });
+  if(setting.showZeroLines){
+    [2,3].forEach(function(ix){
+      var d=domains[ix],zx=lefts[ix]+widths[ix]*(0-d.min)/(d.max-d.min);
+      graphics.push(lineGraphic(zx,top-4,zx,H-bottom,C.secondaryText,0.7));
+    });
+  }
+  var tip=blankTooltipStyle();tip.formatter=function(p){return rows[p.data.rowIndex]?tooltipFor(rows[p.data.rowIndex]):'';};
+  option={
+    backgroundColor:C.background,animation:true,
+    grid:lefts.map(function(l,i){return grid(l,widths[i]);}),
+    xAxis:domains.map(function(d,i){return xAxis(i,d);}),
+    yAxis:[0,1,2,3].map(function(i){return yAxis(i,names);}),
+    graphic:graphics,tooltip:tip,
+    series:[
+      makeCustom('PY',0,stepsPY.map(function(s){return display(s.to);}),financePainter(stepsPY,0)),
+      makeCustom('AC',1,stepsAC.map(function(s){return display(s.to);}),financePainter(stepsAC,1)),
+      makeCustom('ΔPY',2,rows.map(function(r){return display(r.contribution);}),variancePainter(2,false)),
+      makeCustom('ΔPY%',3,rows.map(function(r){return r.percent;}),variancePainter(3,true))
+    ]
+  };
+} else if(setting.mode==='bridge') {
+  var bridge=[{name:py+' · 结果',from:0,to:final.py,contribution:final.py,kind:'total',ref:rows.length-1}];
+  var running=final.py;
+  rows.forEach(function(r){
+    if(r.kind==='subtotal')return;
+    var next=running+r.contribution;
+    bridge.push({name:r.name,from:running,to:next,contribution:r.contribution,kind:'driver',ref:r.index});
+    running=next;
+  });
+  if(!closeNum(running,final.ac))throw new Error('差异桥终点未匹配当期结果。');
+  bridge.push({name:ac+' · 结果',from:0,to:final.ac,contribution:final.ac,kind:'total',ref:rows.length-1});
+  var bNameWidth=compact?155:193,bLeft=L.left+bNameWidth,bWidth=W-bLeft-L.right;
+  var bRow=(H-top-bottom)/bridge.length;
+  var ext=[0];bridge.forEach(function(s){ext.push(s.from,s.to);});
+  var lo=Math.min.apply(null,ext),hi=Math.max.apply(null,ext),spread=Math.max(1,hi-lo);
+  var bMin=(lo<0?lo-spread*0.06:0)/setting.valueDivisor;
+  var bMax=(hi+spread*0.25)/setting.valueDivisor;
+  var bGraphics=backgroundHeader();
+  bGraphics.push(textGraphic(bLeft+2,top-45,'净利润差异桥 · '+py+' → '+ac,12,true,C.text));
+  bridge.forEach(function(s,i){
+    var yy=top+(i+0.5)*bRow;
+    bGraphics.push(textGraphic(L.left+3,yy,(s.kind==='total'?'=  ':(s.contribution>=0?'+  ':'−  '))+s.name,
+      fontPx,s.kind==='total',C.text,'left',bNameWidth-12));
+    if(s.kind==='total'&&i===bridge.length-1)bGraphics.push(lineGraphic(L.left,top+(i+0.95)*bRow,W-L.right,top+(i+0.95)*bRow,C.secondaryText,0.8));
+  });
+  var bTip=blankTooltipStyle();bTip.formatter=function(p){
+    var bi=p.data.bridgeIndex,s=bridge[bi];
+    return s.kind==='driver'?tooltipFor(rows[s.ref]):'<div style="font:12px '+setting.font+';color:'+C.text+'"><b>'+html(s.name)+'</b><div style="margin-top:9px">'+money(s.to)+' '+html(setting.displayUnit)+'</div></div>';
+  };
+  var bGrid={left:Math.round(bLeft),right:Math.round(L.right),top:Math.round(top),bottom:Math.round(bottom)};
+  var bridgeSeries={name:'差异桥',type:'custom',coordinateSystem:'cartesian2d',xAxisIndex:0,yAxisIndex:0,
+    encode:{x:0,y:1},data:bridge.map(function(s,i){return {value:[display(s.to),i],bridgeIndex:i};}),
+    clip:true,z:3,animationDuration:setting.animationDuration,emphasis:{disabled:true},
+    renderItem:function(params,api){
+      var i=params.dataIndex,s=bridge[i],y=api.coord([0,i])[1];
+      var a=api.coord([display(s.from),i])[0],b=api.coord([display(s.to),i])[0];
+      var pL=bLeft+2,pR=bLeft+bWidth-2;
+      var hh=Math.max(3,Math.min(19,bRow*L.barHeightRatio));
+      var fill=s.kind==='total'?(i===0?C.py:C.ac):effectColor(s.contribution);
+      var children=[shapeRect(a,b,y,hh,fill,pL,pR)];
+      if(setting.showConnectors&&i<bridge.length-1&&bridge[i+1].kind!=='total'){
+        var to=clip(b,pL,pR),ny=api.coord([0,i+1])[1];
+        children.unshift({type:'line',shape:{x1:to,y1:y+hh/2,x2:to,y2:ny-hh/2},
+          style:{stroke:C.secondaryText,lineWidth:0.8,opacity:0.5}});
+      }
+      if(setting.showValueLabels&&bRow>=L.minRowLabelHeight){
+        var t=s.kind==='total'?money(s.to):dir(s.contribution)+' '+nfmt(Math.abs(display(s.contribution)),setting.decimals);
+        children.push(shapeText(t,pR-5,y,'right',s.kind==='total'?C.text:fill,valuePx,s.kind==='total'));
+      }
+      children.push(tooltipHitbox(pL,pR-pL,y,Math.max(12,bRow*0.85)));
+      return {type:'group',children:children};
+    }
+  };
+  option={backgroundColor:C.background,animation:true,grid:[bGrid],
+    xAxis:[xAxis(0,{min:bMin,max:bMax})],
+    yAxis:[{gridIndex:0,type:'category',data:bridge.map(function(b){return b.name;}),inverse:true,show:false}],
+    graphic:bGraphics,tooltip:bTip,series:[bridgeSeries]};
+} else {throw new Error("setting.mode 只能为 'c12' 或 'bridge'");}
