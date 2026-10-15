@@ -1,0 +1,265 @@
+﻿/**
+ * C009 | IBCS T02 自动识别 PL 的四/七指标可视化财务表（ECharts for Power BI）
+ * 参考 IBCS T02：hierarchical rows + absolute variance bars + relative variance pins。
+ * 财报：Apple Inc. FY2025 Form 10-K, Note 13 Segment Information。
+ * 原始单位：百万美元；演示字段为两个期间的逐行数据。PL 为明确标注的教学模拟预算，非苹果官方目标；PY/AC 为财报真实数据。
+ * 注意：集团营业利润包括公司层面费用调整；分部收入和利润不应重复汇总。
+ * Power BI：按同索引取出六列数组即可，无须在 Power BI 设置原始记录顺序；若视图业务顺序变化，在 02 设置区修改两个 *Order。
+ */
+
+// =====================================================================
+// 01 示例数据：原始输入仅使用同长度、同索引的独立一维数组
+// =====================================================================
+var 年份 = ["2024","2024","2024","2024","2024","2024","2024","2024","2024","2024","2024","2024","2024","2024","2024","2024","2024","2024","2025","2025","2025","2025","2025","2025","2025","2025","2025","2025","2025","2025","2025","2025","2025","2025","2025","2025"];
+var 分组 = ["美洲","美洲","美洲","欧洲","欧洲","欧洲","大中华区","大中华区","大中华区","日本","日本","日本","亚太其他地区","亚太其他地区","亚太其他地区","公司层面","集团合计","集团合计","美洲","美洲","美洲","欧洲","欧洲","欧洲","大中华区","大中华区","大中华区","日本","日本","日本","亚太其他地区","亚太其他地区","亚太其他地区","公司层面","集团合计","集团合计"];
+var 指标名称 = ["营业收入","销售成本","营业利润","营业收入","销售成本","营业利润","营业收入","销售成本","营业利润","营业收入","销售成本","营业利润","营业收入","销售成本","营业利润","未分配营业费用及调整","营业收入","营业利润","营业收入","销售成本","营业利润","营业收入","销售成本","营业利润","营业收入","销售成本","营业利润","营业收入","销售成本","营业利润","营业收入","销售成本","营业利润","未分配营业费用及调整","营业收入","营业利润"];
+var 指标值 = [167045,89587,67656,101328,55197,41790,66952,37519,27082,25052,11744,12454,30658,16305,13062,38828,391035,123216,178353,95699,72480,111032,58617,47739,64377,35141,26917,28703,13779,13955,33696,17724,14586,42627,416161,133050];
+var 指标类型 = ["income","expense","result","income","expense","result","income","expense","result","income","expense","result","income","expense","result","expense","income","result","income","expense","result","income","expense","result","income","expense","result","income","expense","result","income","expense","result","expense","income","result"];
+// PL 可选：若无计划值，将 var 计划值 设置为 []，自动隐藏 PL/△PL/△PL% 三列。
+// PL 为教学模拟预算！并非 Apple 公司披露或确认的经营目标。
+// 模拟方法：2024 实际额乘以教学用假设增长率；各地区营业利润根据
+// 模拟收入 - 模拟销售成本 - 模拟销售及营销费用计算；集团合计保证勾稽。
+// 输入单位同指标值：百万美元。前18项为2024记录，不存在2024 PL，设为 null。
+var 计划值 = [
+  null,null,null,null,null,null,null,null,null,
+  null,null,null,null,null,null,null,null,null,
+  178738,95410,72840,   // 美洲：收入、销售成本、营业利润（模拟）
+  110954,59889,46312,   // 欧洲（模拟）
+  68961,38457,28082,    // 大中华区（模拟）
+  28058,12977,14125,    // 日本（模拟）
+  33417,17609,14401,    // 亚太其他地区（模拟）
+  41934,                // 公司层面未分配费用及调整（模拟）
+  420128,133826         // 集团合计：收入、营业利润（模拟）
+];
+
+
+// =====================================================================
+// 02 参数设置：用户可修改的布局、标题、颜色、格式集中在这里
+// =====================================================================
+var setting = {
+  title: '苹果全球营收增长，大中华区为什么逆势下降？',
+  subtitle: '五大地区经营表现 · FY2024 PY / FY2025 AC · PL 为教学模拟预算（非苹果官方目标）',
+  source: '数据来源：Apple Inc. 2025 Form 10-K · Note 13 Segment Information and Geographic Data',
+  description: '图表说明：PY/AC=真实财报数据；PL=模拟预算（非官方）；△PY=AC−PY；△PL=AC−PL；成本/费用减少为有利；集团含公司层面调整。',
+  unit: '亿美元',
+  planIsSimulated: true,       // true：明确提示 PL 为教学模拟预算
+  valueDivisor: 100,
+  decimals: 2,
+  percentDecimals: 1,
+  periods: ['2024','2025'], // 明确指定 PY、AC 年度，不依赖 Power BI 的行顺序；通用模板可改为 null
+  groupOrder: ['美洲','欧洲','大中华区','日本','亚太其他地区','公司层面','集团合计'], // 分组固定顺序；其他案例可自行修改
+  indicatorOrder: ['营业收入','销售成本','营业利润','未分配营业费用及调整'], // 每个分组内指标顺序；其他案例可自行修改
+  showGroupRows: true,
+  showDeltaBar: true,
+  showPercentPin: true,
+  showPlan: true,                // 总开关：自动隐藏优先级高于此设置
+  showPlanDelta: true,
+  showPlanPercent: true,
+  showBarValueLabel: true,
+  animationDuration: 400,
+  font: 'Microsoft YaHei, Arial, sans-serif',
+  layout: {
+    left: 28, right: 24, top: 154, bottom: 83,
+    titleY: 42, subtitleY: 78, headerOffset: 31,
+    nameWidth: 164, panelGap: 9,
+    ratios: [0.13,0.13,0.13,0.18,0.12,0.18,0.13],  // AC | PY | PL | △PY | △PY% | △PL | △PL%
+    minRowHeight: 16,
+    fallbackWidth: 1280, fallbackHeight: 840
+  },
+  colors: {
+    positive: '#239263', negative: '#D9544D',
+    py: '#AEB7C1', ac: '#263238',
+    bar: '#BFC6CE', secondary: '#8493A2', text: '#263238',
+    grid: '#E5E9ED', background: 'transparent', white: '#FFFFFF'
+  }
+};
+
+// =====================================================================
+// 03 数据处理：按照 setting 的业务顺序稳定排序；不依赖 Power BI 输入记录顺序
+// =====================================================================
+var C = setting.colors, L = setting.layout;
+function fmt(v,d){ return Number(v).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}); }
+function num(v){ if(v===null||v===undefined||String(v).trim()==='')return null;return Number(String(v).replace(/,/g,'')); }
+function esc(v){return String(v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function isResult(k){return k==='result'||k==='total'||k==='subtotal';}
+if([分组.length,指标名称.length,指标值.length,指标类型.length].some(function(n){return n!==年份.length;}))throw Error('五个必需输入数组必须长度一致。');
+var planInputAvailable=(typeof 计划值!=='undefined' && Array.isArray(计划值) && 计划值.length>0);
+if(planInputAvailable && 计划值.length!==年份.length)throw Error('若提供计划值数组，其长度必须与年份数组一致。');
+if(!年份.length)throw Error('输入数据不能为空。');
+if(!(setting.valueDivisor>0))throw Error('valueDivisor 必须 > 0。');
+var periods = Array.from(new Set(年份.map(String)));
+periods.sort(function(a,b){var x=Number(a),y=Number(b);return isFinite(x)&&isFinite(y)?x-y:a.localeCompare(b,'zh-CN');});
+var periodsSelected=setting.periods&&setting.periods.length===2?setting.periods.map(String):periods.slice(-2);
+if(periodsSelected.length!==2 || periodsSelected[0]===periodsSelected[1])throw Error('至少需要两个不同周期。');
+var py=periodsSelected[0],ac=periodsSelected[1], lookup=Object.create(null), ordered=[], groupOrder=[];
+for(var i=0;i<年份.length;i++){
+  var p=String(年份[i]),g=String(分组[i]).trim(),m=String(指标名称[i]).trim(),k=String(指标类型[i]).toLowerCase().trim(),v=num(指标值[i]);
+  if(!g||!m||!['income','expense','result','subtotal','total'].includes(k))throw Error('第 '+(i+1)+' 条记录的分组、指标或类型不合法。');
+  if(v===null||!isFinite(v))throw Error('第 '+(i+1)+' 条指标值必须是有效数字。');
+  var key=JSON.stringify([p,g,m]);
+  if(Object.prototype.hasOwnProperty.call(lookup,key))throw Error('重复的年份+分组+指标：'+key);
+  var plValue=planInputAvailable?num(计划值[i]):null;
+  if(plValue!==null&&!isFinite(plValue))throw Error('计划值必须是数字或空值：'+key);
+  lookup[key]={value:v,kind:k,plan:plValue};
+  if(p===py){ordered.push({group:g,name:m,kind:k});if(groupOrder.indexOf(g)<0)groupOrder.push(g);}
+}
+// Power BI 返回行顺序不稳定：不依赖数据到达顺序，统一按用户定义的业务顺序组织。
+// 未列在配置中的分组、指标，按名称稳定排序，保证新增项目也不会随机漂移。
+function stableBusinessCompare(a,b,order){
+  var ia=order.indexOf(String(a)),ib=order.indexOf(String(b));
+  if(ia>=0 && ib>=0)return ia-ib;
+  if(ia>=0)return -1;
+  if(ib>=0)return 1;
+  return String(a).localeCompare(String(b),'zh-CN');
+}
+var configuredGroups=Array.isArray(setting.groupOrder)?setting.groupOrder.map(String):[];
+var configuredIndicators=Array.isArray(setting.indicatorOrder)?setting.indicatorOrder.map(String):[];
+groupOrder.sort(function(a,b){return stableBusinessCompare(a,b,configuredGroups);});
+ordered.sort(function(a,b){
+  var g=stableBusinessCompare(a.group,b.group,configuredGroups);
+  return g || stableBusinessCompare(a.name,b.name,configuredIndicators);
+});
+var orderedRows=[];
+groupOrder.forEach(function(group){
+  if(setting.showGroupRows) orderedRows.push({group:group,name:group,kind:'group'});
+  ordered.filter(function(r){return r.group===group;}).forEach(function(r){
+    var k0=JSON.stringify([py,r.group,r.name]),k1=JSON.stringify([ac,r.group,r.name]);
+    if(!lookup[k1])throw Error('AC 缺少指标：'+r.group+' / '+r.name);
+    if(lookup[k1].kind!==r.kind)throw Error('两期指标类型不一致：'+r.group+' / '+r.name);
+    var prev=lookup[k0].value,curr=lookup[k1].value,delta=curr-prev;
+    var plan=lookup[k1].plan;
+    var planDelta=plan===null?null:curr-plan;
+    var planPct=plan===null||plan===0?null:planDelta/Math.abs(plan)*100;
+    var planEffect=planDelta===null?null:(r.kind==='expense'?-planDelta:planDelta);
+    var effect=r.kind==='expense'?-delta:delta;
+    orderedRows.push({group:r.group,name:r.name,kind:r.kind,py:prev,ac:curr,pl:plan,delta:delta,effect:effect,pct:prev===0?null:delta/Math.abs(prev)*100,planDelta:planDelta,planEffect:planEffect,planPct:planPct});
+  });
+});
+var expected=Object.keys(lookup).filter(function(k){var a=JSON.parse(k);return a[0]===ac;}).length;
+if(expected!==ordered.length)throw Error('PY 和 AC 的指标集合必须一致。');
+var detailRows=orderedRows.filter(function(r){return r.kind!=='group';});
+// 按当期明细中是否至少有一个有效 PL 自动切换 4 列 / 7 列。
+// 部分 PL 缺失时保留 7 列，缺失单元格显示 —。
+var hasPlan=detailRows.some(function(r){return r.pl!==null && isFinite(r.pl);});
+var showPLColumns=hasPlan && setting.showPlan;
+var columnDefs=[{key:'ac',ratio:L.ratios[0]},{key:'py',ratio:L.ratios[1]}];
+if(showPLColumns)columnDefs.push({key:'pl',ratio:L.ratios[2]});
+columnDefs.push({key:'delta',ratio:L.ratios[3]},{key:'pct',ratio:L.ratios[4]});
+if(showPLColumns)columnDefs.push({key:'planDelta',ratio:L.ratios[5]},{key:'planPct',ratio:L.ratios[6]});
+var colIndex=Object.create(null);columnDefs.forEach(function(c,i){colIndex[c.key]=i;});
+var maxAbsDelta=Math.max(1,...detailRows.map(function(r){return Math.abs(r.delta);}),...detailRows.map(function(r){return Math.abs(r.planDelta||0);}));
+var maxAbsPct=Math.max(1,...detailRows.map(function(r){return Math.abs(r.pct||0);}),...detailRows.map(function(r){return Math.abs(r.planPct||0);}));
+
+// =====================================================================
+// 04 布局与渲染：所有 Grid 边距以像素表示；各列绘图严格限于本栏范围
+// =====================================================================
+var W=(typeof myChart!=='undefined' && myChart && myChart.getWidth)?myChart.getWidth():L.fallbackWidth;
+var H=(typeof myChart!=='undefined' && myChart && myChart.getHeight)?myChart.getHeight():L.fallbackHeight;
+W=Math.max(740,W||L.fallbackWidth); H=Math.max(430,H||L.fallbackHeight);
+var compact=W<1120,fontSize=compact?9:11,valSize=compact?8:10;
+var nameWidth=compact?Math.min(145,L.nameWidth):L.nameWidth;
+var gap=L.panelGap,baseX=L.left+nameWidth;
+var remain=W-baseX-L.right-gap*(columnDefs.length-1);
+if(remain<=300)throw Error('图表可用宽度不足，请扩大画布。');
+var ratioSum=columnDefs.reduce(function(a,b){return a+b.ratio;},0);
+var widths=columnDefs.map(function(c){return remain*c.ratio/ratioSum;});
+var lefts=[baseX];for(var j=1;j<columnDefs.length;j++)lefts[j]=lefts[j-1]+widths[j-1]+gap;
+var top=L.top,bottom=L.bottom,plotH=H-top-bottom;
+if(plotH<120)throw Error('图表可用高度不足，请减小 layout.top 或 layout.bottom。');
+var rowH=plotH/orderedRows.length;
+function rowTop(i){return top+i*rowH;}
+function rowMid(i){return top+(i+0.5)*rowH;}
+function graphicText(x,y,s,size,bold,color,align,width,z){return {type:'text',silent:true,z:z||5,style:{x:x,y:y,text:String(s),fill:color||C.text,font:(bold?'bold ':'')+size+'px '+setting.font,align:align||'left',verticalAlign:'middle',width:width,overflow:'truncate'}};}
+function graphicLine(x1,y1,x2,y2,color,w){return {type:'line',silent:true,z:1,shape:{x1:x1,y1:y1,x2:x2,y2:y2},style:{stroke:color,lineWidth:w||1}};}
+function graphicRect(x,y,w,h,fill,z){return {type:'rect',silent:true,z:z||2,shape:{x:x,y:y,width:w,height:h},style:{fill:fill}};}
+function unitVal(v){return v===null?'—':fmt(v/setting.valueDivisor,setting.decimals);}
+function signed(v){return v===null?'—':(v>0?'+':'')+unitVal(v);}
+function percent(v){return v===null?'—':(v>0?'+':'')+fmt(v,setting.percentDecimals)+'%';}
+function effectColor(e){return e===null?C.secondary:e>0?C.positive:e<0?C.negative:C.secondary;}
+var graphics=[];
+graphics.push(graphicRect(L.left,20,19,4,C.negative,8));
+graphics.push(graphicText(L.left,L.titleY,setting.title,compact?16:20,true,C.text,'left',W-L.left-L.right,8));
+graphics.push(graphicText(L.left,L.subtitleY,(showPLColumns?setting.subtitle:setting.subtitle.replace(/\s*·\s*PL 为教学模拟预算（非苹果官方目标）/g,''))+' · 金额单位：'+setting.unit,compact?10:12,false,C.secondary,'left',W-L.left-L.right,8));
+var headerMap={ac:'AC · '+ac,py:'PY · '+py,pl:setting.planIsSimulated?'PL · 模拟计划':'PL · 计划',delta:'△PY · 金额',pct:'△PY%',planDelta:'△PL · 金额',planPct:'△PL%'};
+columnDefs.forEach(function(col,i){var h=headerMap[col.key];
+  graphics.push(graphicText(lefts[i]+2,top-L.headerOffset,h,compact?9:11,true,C.text,'left',widths[i]-3));
+  if(i>0)graphics.push(graphicLine(lefts[i]-gap/2,top-39,lefts[i]-gap/2,top+plotH,C.grid,0.8));
+});
+graphics.push(graphicLine(L.left,top-13,W-L.right,top-13,C.grid,1));
+function drawNumber(i,cy,str,bold){
+  graphics.push(graphicText(lefts[i]+widths[i]-3,cy,str,valSize,bold,C.text,'right',widths[i]-5));
+}
+function drawVariance(i,cy,delta,effect,mode,bold){
+  var x=lefts[i]+2, w=widths[i]-4;
+  // 差异图形占左半部分，右半部分保留数据标签，避免任何横向覆盖。
+  var visW=w*0.55,center=x+visW/2,span=Math.max(2,visW/2-5);
+  var valueMax=mode==='percent'?maxAbsPct:maxAbsDelta;
+  var thickness=Math.max(3,Math.min(9,rowH*0.25));
+  graphics.push(graphicLine(center,cy-thickness/2-3,center,cy+thickness/2+3,C.secondary,0.7));
+  if(delta!==null && isFinite(delta)){
+    var ex=delta/valueMax*span, col=effectColor(effect);
+    if(mode==='percent'){
+      graphics.push(graphicLine(center,cy,center+ex,cy,col,2));
+      graphics.push(graphicLine(center+ex,cy-thickness/2-2,center+ex,cy+thickness/2+2,col,2));
+    }else if(Math.abs(ex)>0.2){
+      graphics.push(graphicRect(ex>=0?center:center+ex,cy-thickness/2,Math.abs(ex),thickness,col,2));
+    }
+  }
+  var label=mode==='percent'?percent(delta):signed(delta);
+  graphics.push(graphicText(x+w-1,cy,label,valSize,bold,effectColor(effect),'right',w*0.44,6));
+}
+orderedRows.forEach(function(r,i){
+  var cy=rowMid(i);
+  if(r.kind==='group'){
+    graphics.push(graphicRect(L.left,rowTop(i)+1,W-L.left-L.right,Math.max(1,rowH-2),'rgba(229,233,237,0.30)',0));
+    graphics.push(graphicText(L.left+3,cy,r.name,fontSize+1,true,C.text,'left',nameWidth-6));
+    graphics.push(graphicLine(L.left,rowTop(i)+rowH-1,W-L.right,rowTop(i)+rowH-1,C.grid,0.7));
+    return;
+  }
+  var bold=isResult(r.kind);
+  graphics.push(graphicText(baseX-10,cy,(bold?'=  ':'')+r.name,fontSize,bold,C.text,'right',nameWidth-7));
+  drawNumber(colIndex.ac,cy,unitVal(r.ac),bold);
+  drawNumber(colIndex.py,cy,unitVal(r.py),bold);
+  if(showPLColumns)drawNumber(colIndex.pl,cy,unitVal(r.pl),bold);
+  if(setting.showDeltaBar)drawVariance(colIndex.delta,cy,r.delta,r.effect,'amount',bold);
+  if(setting.showPercentPin)drawVariance(colIndex.pct,cy,r.pct,r.effect,'percent',bold);
+  if(showPLColumns && setting.showPlanDelta)drawVariance(colIndex.planDelta,cy,r.planDelta,r.planEffect,'amount',bold);
+  if(showPLColumns && setting.showPlanPercent)drawVariance(colIndex.planPct,cy,r.planPct,r.planEffect,'percent',bold);
+  if(bold)graphics.push(graphicLine(L.left,rowTop(i)+rowH-1,W-L.right,rowTop(i)+rowH-1,C.grid,0.85));
+});
+if(showPLColumns && setting.planIsSimulated)graphics.push(graphicText(L.left,H-68,'注意：PL 为教学模拟值，△PL、△PL% 仅用于演示；不代表 Apple 官方目标。',10,true,C.negative,'left',W-L.left-L.right));
+graphics.push(graphicText(L.left,H-51,setting.source,10,false,C.secondary,'left',W-L.left-L.right));
+graphics.push(graphicText(L.left,H-29,showPLColumns?setting.description:setting.description.replace(/；PL=模拟预算（非官方）/g,'').replace(/；△PL=AC−PL/g,''),10,false,C.secondary,'left',W-L.left-L.right));
+var tooltipSeries={
+  name:'财务指标',type:'custom',coordinateSystem:'cartesian2d',xAxisIndex:0,yAxisIndex:0,
+  data:orderedRows.map(function(r,i){return {value:[0,i],index:i};}),
+  renderItem:function(params,api){var i=params.dataIndex;return {type:'rect',shape:{x:L.left,y:rowTop(i),width:W-L.left-L.right,height:rowH},style:{fill:'rgba(255,255,255,0.001)'}};},
+  z:10,animationDuration:setting.animationDuration,emphasis:{disabled:true}
+};
+option={
+  backgroundColor:C.background,animation:false,
+  grid:[{left:Math.round(L.left),right:Math.round(L.right),top:Math.round(top),bottom:Math.round(bottom),containLabel:false}],
+  xAxis:[{type:'value',show:false,min:0,max:1}],
+  yAxis:[{type:'category',show:false,inverse:true,data:orderedRows.map(function(r){return r.name;})}],
+  graphic:graphics,
+  tooltip:{trigger:'item',confine:true,backgroundColor:C.white,borderColor:C.grid,borderWidth:1,padding:[12,14],textStyle:{color:C.text,fontSize:12},extraCssText:'box-shadow:0 4px 15px rgba(0,0,0,.09);',formatter:function(p){
+    var r=orderedRows[p.data.index];if(r.kind==='group')return '<b>'+esc(r.name)+'</b>';
+    function tr(k,v,color){
+      return '<tr><td style="padding:4px 15px 4px 0;color:'+C.secondary+'">'+esc(k)+'</td>'+
+        '<td style="text-align:right;font-weight:600;color:'+(color||C.text)+'">'+esc(v)+'</td></tr>';
+    }
+    return '<div style="min-width:245px;font-family:'+setting.font+';line-height:1.5;color:'+C.text+'"><b>'+esc(r.group)+' · '+esc(r.name)+'</b><table style="margin-top:8px;width:100%;border-collapse:collapse">'+
+      tr(ac+' (AC)',unitVal(r.ac)+' '+setting.unit)+tr(py+' (PY)',unitVal(r.py)+' '+setting.unit)+
+      (showPLColumns?tr(setting.planIsSimulated?'PL（教学模拟）':'PL',r.pl===null?'未提供':unitVal(r.pl)+' '+setting.unit):'')+
+      tr('△PY 金额',signed(r.delta)+' '+setting.unit,effectColor(r.effect))+
+      tr('△PY%',percent(r.pct),effectColor(r.effect))+
+      (showPLColumns?
+        tr('△PL 金额',r.planDelta===null?'—':signed(r.planDelta)+' '+setting.unit,
+           r.planEffect===null?C.secondary:effectColor(r.planEffect))+
+        tr('△PL%',percent(r.planPct),
+           r.planEffect===null?C.secondary:effectColor(r.planEffect))
+      :'')+
+      '</table></div>';
+  }},
+  series:[tooltipSeries]
+};
