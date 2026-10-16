@@ -1,0 +1,401 @@
+﻿/**
+ * C014 · IBCS C05 风格多情景差异瀑布组合图
+ * Apache ECharts 官方编辑器：直接粘贴此文件，不需要 HTML，不要声明 var option。
+ * 数据：Apple Inc. FY2025 Form 10-K，FY2024/FY2025 五大地区净销售额（百万美元）。
+ * PL：仅教学模拟预算，非 Apple 官方目标；请在左下角说明中保持标注。
+ * 图表借鉴 IBCS 的表达方式，不代表官方认证。
+ */
+
+// ============================================================================
+// 01 数据区域：四个独立的一维数组，同一索引为同一条记录
+// ============================================================================
+var 年份 = [
+  '2024','2024','2024','2024','2024',
+  '2025','2025','2025','2025','2025'
+];
+var 地区 = [
+  '美洲','欧洲','大中华区','日本','亚太其他地区',
+  '美洲','欧洲','大中华区','日本','亚太其他地区'
+];
+var 实际营收 = [
+  167045,101328,66952,25052,30658,
+  178353,111032,64377,28703,33696
+];
+// 同期计划值留空；当前计划值仅为教学模拟。全部置 null 将隐藏 PL 和 △PL。
+var 计划营收 = [
+  null,null,null,null,null,
+  175000,109000,69000,27500,33000
+];
+
+// ============================================================================
+// 02 用户设置区域：数据以外的可调参数集中于此
+// ============================================================================
+var setting = {
+  title: '苹果全球营收增长，为什么大中华区反而下降？',
+  subtitle: '五大地区 FY2024 → FY2025 · IBCS C05 风格 · 单位：亿美元',
+  periods: ['2024','2025'],      // null：按年份升序取最后两期
+  groupOrder: ['美洲','欧洲','大中华区','日本','亚太其他地区'],
+  totalName: '全球合计',
+  unit: '亿美元',
+  valueDivisor: 100,            // 原始单位：百万美元；展示单位：亿美元
+  decimals: 1,
+  percentDecimals: 1,
+  showGroupTotal: true,
+  showTotalDivider: true,      // 全球合计前增加竖向分隔线；不改变地区顺序
+  planIsSimulated: true,        // 仅影响来源说明；不改变数值
+  showConnectors: true,
+  showLabels: true,
+  showGridLines: true,                // 仅底部保留少量淡灰参考线；改为 false 可全部隐藏
+  showBridgeGridLines: false,        // 差异瀑布默认隐藏密集刻度线
+  showBridgeAxisLabels: false,       // 差异瀑布金额通过柱顶标签直接读取
+  showBridgeZeroLine: true,         // 保留弱化的 0 基准线
+  varianceScale: 'shared',          // 'shared' 统一尺度（推荐） | 'independent' 独立尺度（不适合跨图比柱高）
+  animationDuration: 450,
+  font: 'Microsoft YaHei, Arial, sans-serif',
+  layout: {
+    left: 76, right: 34, top: 164, bottom: 96,     // 全部像素
+    panelGap: 38,                                  // 面板之间标题带的间距（px）
+    barPanelRatio: 0.48,                           // 剩余有效绘图区由营收柱占用的比例
+    maxBarWidth: 20,
+    labelFontSize: 10,
+    labelRowGap: 13,                               // AC / PY / PL 标注行间距（px）
+    labelHeadroom: 18,                             // 标签顶部额外安全留白（px）
+    labelToBarGap: 8,                               // 三行数字最下一行与本组最高柱顶的间距（px）
+    bridgeTickSegments: 5,                          // 差异瀑布自动刻度的目标分段数
+    volumeTickSegments: 3,                          // 营收规模自动刻度的目标分段数
+    minThreeLineWidth: 125,                        // 单地区宽度不足时仅保留 AC 值
+    minOneLineWidth: 85,                           // 更窄时图内隐藏数值，Tooltip 仍完整
+    titleTop: 54,
+    subtitleTop: 80,
+    fallbackWidth: 1250,
+    fallbackHeight: 820
+  },
+  colors: {
+    positive: '#239263', negative: '#D9544D',
+    totalPositive: '#176B4B', totalNegative: '#AD403A', // 合计差异的深色版本
+    py: '#AEB7C1', ac: '#263238',
+    pl: '#FFFFFF', plStroke: '#8493A2',
+    bar: '#BFC6CE', barSecondary: '#D9DEE3',
+    text: '#263238', secondary: '#8493A2',
+    grid: '#E5E9ED', white: '#FFFFFF', background: 'transparent'
+  },
+  source: '数据来源：Apple Inc. FY2025 Form 10-K · Geographic net sales（美国 SEC）',
+  description: '图表说明：△PY/△PL 为地区差异瀑布，红色减少、绿色增加；底部为营收规模。'
+};
+
+// ============================================================================
+// 03 数据清洗、稳定排序、差异计算与布局推导
+// ============================================================================
+var C = setting.colors, L = setting.layout;
+function isNil(v) { return v === null || v === undefined || String(v).trim() === ''; }
+function toNumber(v) { return isNil(v) ? null : Number(String(v).replace(/,/g,'')); }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, function(k) {
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[k];
+}); }
+function formatNumber(v, digits) {
+  return v === null || !isFinite(v) ? '—' :
+    (Math.abs(v)<1e-9?0:v).toLocaleString('en-US', {
+      minimumFractionDigits:digits, maximumFractionDigits:digits
+    });
+}
+function money(v) { return v===null?'—':formatNumber(v/setting.valueDivisor,setting.decimals); }
+function signedMoney(v) { return v===null?'—':(v>1e-9?'+':'')+money(v); }
+function percent(v) { return v===null?'—':(v>1e-9?'+':'')+formatNumber(v,setting.percentDecimals)+'%'; }
+function pctOf(delta, base) { return base===null||Math.abs(base)<1e-9?null:100*delta/Math.abs(base); }
+function sign(v) { return v>1e-9?'▲':v< -1e-9?'▼':'●'; }
+function semanticColor(v) { return v===null?C.secondary:v>1e-9?C.positive:v< -1e-9?C.negative:C.secondary; }
+function labelValue(v) { return formatNumber(v/setting.valueDivisor,setting.decimals); }
+if (!(setting.valueDivisor>0)) throw new Error('setting.valueDivisor 必须大于 0');
+if ([地区.length,实际营收.length,计划营收.length].some(function(n){return n!==年份.length;}))
+  throw new Error('年份、地区、实际营收、计划营收四个数组必须等长。');
+if (!年份.length) throw new Error('没有输入数据。');
+var periodList = Array.from(new Set(年份.map(String)));
+periodList.sort(function(a,b) { return Number(a)-Number(b)||a.localeCompare(b,'zh-CN'); });
+var selected = setting.periods || periodList.slice(-2);
+if (selected.length!==2||String(selected[0])===String(selected[1]))
+  throw new Error('必须指定两个不同期间。');
+var py = String(selected[0]), ac = String(selected[1]);
+var lookup = Object.create(null), seen = Object.create(null);
+for (var i=0;i<年份.length;i++) {
+  var period=String(年份[i]), group=String(地区[i]).trim();
+  var key=JSON.stringify([period,group]);
+  if (!group) throw new Error('第 '+(i+1)+' 行地区名称为空');
+  if (Object.prototype.hasOwnProperty.call(lookup,key)) throw new Error('期间和地区重复：'+key);
+  var actual=toNumber(实际营收[i]), plan=toNumber(计划营收[i]);
+  if (actual===null||!isFinite(actual)||plan!==null&&!isFinite(plan)) throw new Error('金额无效：'+key);
+  lookup[key]={actual:actual,plan:plan}; seen[group]=true;
+}
+var groups=Object.keys(seen).filter(function(g) {
+  return Object.prototype.hasOwnProperty.call(lookup,JSON.stringify([py,g])) &&
+         Object.prototype.hasOwnProperty.call(lookup,JSON.stringify([ac,g]));
+});
+groups.sort(function(a,b){
+  var x=setting.groupOrder.indexOf(a),y=setting.groupOrder.indexOf(b);
+  if(x<0)x=1e6; if(y<0)y=1e6;
+  return x-y||a.localeCompare(b,'zh-CN');
+});
+if(!groups.length) throw new Error('所选期间没有共同地区。');
+var rows=groups.map(function(g){
+  return {name:g,py:lookup[JSON.stringify([py,g])].actual,
+    ac:lookup[JSON.stringify([ac,g])].actual,
+    pl:lookup[JSON.stringify([ac,g])].plan,total:false};
+});
+var hasPL=rows.some(function(r){return r.pl!==null;});
+var partialPL=hasPL&&rows.some(function(r){return r.pl===null;});
+if(setting.showGroupTotal) {
+  var total={name:setting.totalName,py:0,ac:0,pl:0,total:true};
+  rows.forEach(function(r){
+    total.py+=r.py; total.ac+=r.ac;
+    if(r.pl===null)total.pl=null;else if(total.pl!==null)total.pl+=r.pl;
+  });
+  rows.push(total);
+}
+rows.forEach(function(r){
+  r.deltaPY=r.ac-r.py; r.pctPY=pctOf(r.deltaPY,r.py);
+  r.deltaPL=r.pl===null?null:r.ac-r.pl;
+  r.pctPL=r.pl===null?null:pctOf(r.deltaPL,r.pl);
+});
+var names=rows.map(function(r){return r.name;});
+function makeBridge(key){
+  var running=0;
+  return rows.map(function(r){
+    if(r.total) return {start:0,end:running,delta:running,total:true};
+    var delta=r[key];
+    if(delta===null)return {start:running,end:running,delta:null,total:false};
+    var start=running; running+=delta;
+    return {start:start,end:running,delta:delta,total:false};
+  });
+}
+var bridgePY=makeBridge('deltaPY');
+var bridgePL=hasPL?makeBridge('deltaPL'):[];
+
+// 画布始终使用 ECharts 实际尺寸，不以 fallback 强制放大 Power BI 画布。
+var W=(typeof myChart!=='undefined'&&myChart&&myChart.getWidth)?myChart.getWidth():L.fallbackWidth;
+var H=(typeof myChart!=='undefined'&&myChart&&myChart.getHeight)?myChart.getHeight():L.fallbackHeight;
+W=W||L.fallbackWidth; H=H||L.fallbackHeight;
+var left=Math.min(L.left,Math.max(38,Math.floor(W*0.10)));
+var right=Math.min(L.right,Math.max(15,Math.floor(W*0.05)));
+var plotWidth=W-left-right;
+var top=L.top,bottom=L.bottom;
+var bridgeCount=hasPL?2:1;
+var gap=L.panelGap;
+var available=H-top-bottom-gap*bridgeCount;
+if(available<195||plotWidth<220)
+  throw new Error('画布空间不足：请增加视觉对象高度/宽度或调小 setting.layout 的 top、bottom、panelGap。');
+var barHeight=Math.round(available*L.barPanelRatio);
+var bridgeHeight=(available-barHeight)/bridgeCount;
+var bridgeTops=[];
+var gridDefs=[];
+for(var b=0;b<bridgeCount;b++) {
+  var by=Math.round(top+b*(bridgeHeight+gap));
+  bridgeTops.push(by);
+  gridDefs.push({left:Math.round(left),right:Math.round(right),top:by,bottom:Math.round(H-by-bridgeHeight),containLabel:false});
+}
+var barTop=Math.round(top+bridgeCount*(bridgeHeight+gap));
+var barGridIndex=bridgeCount;
+gridDefs.push({left:Math.round(left),right:Math.round(right),top:barTop,bottom:Math.round(H-barTop-barHeight),containLabel:false});
+var categoryWidth=plotWidth/rows.length;
+var compact=W<800;
+var threeLineLabels=setting.showLabels&&categoryWidth>=L.minThreeLineWidth&&barHeight>=165;
+var oneLineLabels=setting.showLabels&&categoryWidth>=L.minOneLineWidth;
+var labelRows=threeLineLabels&&hasPL?3:threeLineLabels?2:oneLineLabels?1:0;
+var stackHeight=labelRows*L.labelRowGap+L.labelHeadroom;
+var maxVolume=Math.max.apply(null,rows.map(function(r){return Math.max(r.py,r.ac,r.pl===null?0:r.pl);})) / setting.valueDivisor;
+// 按柱图高度换算出能容纳 AC/PY/PL 三行标注的顶部数据尺度，不再靠随机 labelLayout 偏移。
+var safeHead=Math.min(barHeight*0.50,stackHeight+7);
+var financialMax=maxVolume*barHeight/Math.max(1,barHeight-safeHead);
+
+function bridgeDomain(steps){
+  var values=[0];
+  steps.forEach(function(s){values.push(s.start/setting.valueDivisor,s.end/setting.valueDivisor);});
+  var lo=Math.min.apply(null,values),hi=Math.max.apply(null,values),span=Math.max(1,hi-lo);
+  return {min:lo-Math.max(5,span*0.16),max:hi+Math.max(8,span*0.16)};
+}
+var domainPY=bridgeDomain(bridgePY),domainPL=hasPL?bridgeDomain(bridgePL):null;
+if(hasPL&&setting.varianceScale==='shared'){
+  // 相同金额单位 + 相同轴界限 + 相同面板像素高度：差异条长度才允许直接比较。
+  var combined={min:Math.min(domainPY.min,domainPL.min),max:Math.max(domainPY.max,domainPL.max)};
+  domainPY=combined;domainPL=combined;
+}
+// 规整轴刻度：自动选 1/2/2.5/5/10 × 10^n 的等距步长。
+// 不写死苹果示例的 -50~300、-10~70、0~6000，换数据后仍自动适配。
+function niceStep(span, targetSegments){
+  var raw=Math.max(1e-12,span/Math.max(2,targetSegments));
+  var scale=Math.pow(10,Math.floor(Math.log10(raw)));
+  var choices=[1,2,2.5,5,10].map(function(n){return n*scale;});
+  var best=choices[0];
+  choices.forEach(function(v){if(Math.abs(v-raw)<Math.abs(best-raw))best=v;});
+  return best;
+}
+function niceDomain(domain,targetSegments,anchorZero){
+  var range=Math.max(1e-10,domain.max-domain.min);
+  var step=niceStep(range,targetSegments);
+  var lo=anchorZero?0:Math.floor((domain.min+step*1e-9)/step)*step;
+  var hi=Math.ceil((domain.max-step*1e-9)/step)*step;
+  if(hi<=lo)hi=lo+step;
+  var precision=function(v){return Math.round(v*1e9)/1e9;};
+  return {min:precision(lo),max:precision(hi),interval:precision(step)};
+}
+var domains=(hasPL?[domainPY,domainPL]:[domainPY]).map(function(d){
+  return niceDomain(d,L.bridgeTickSegments,false);
+});
+var financeAxis=niceDomain({min:0,max:financialMax},L.volumeTickSegments,true);
+
+
+// ============================================================================
+// 04 option：△PY → △PL（有 PL 时）→ PY/AC/PL 营收规模
+// ============================================================================
+function gText(x,y,str,size,bold,color,align){
+  return {type:'text',silent:true,z:20,style:{x:x,y:y,text:String(str),
+    font:(bold?'bold ':'')+size+'px '+setting.font,fill:color||C.text,
+    align:align||'left',verticalAlign:'middle'}};
+}
+function gLine(x1,y1,x2,y2,color,width){
+  return {type:'line',silent:true,z:1,shape:{x1:x1,y1:y1,x2:x2,y2:y2},style:{stroke:color||C.grid,lineWidth:width||1}};
+}
+function tooltipHtml(p){
+  var idx=p.data&&p.data.rowIndex!==undefined?p.data.rowIndex:p.dataIndex;
+  var r=rows[idx];if(!r)return '';
+  function tr(name,value,color){return '<tr><td style="padding:4px 14px 4px 0;color:'+C.secondary+'">'+escapeHtml(name)+'</td><td style="text-align:right;color:'+(color||C.text)+';font-weight:600">'+escapeHtml(value)+'</td></tr>';}
+  return '<div style="font-family:'+setting.font+';color:'+C.text+';min-width:225px;line-height:1.5">'+
+    '<b style="font-size:14px">'+escapeHtml(r.name)+'</b><table style="width:100%;margin-top:7px;border-collapse:collapse">'+
+    tr('AC '+ac,money(r.ac)+' '+setting.unit)+tr('PY '+py,money(r.py)+' '+setting.unit)+
+    (hasPL?tr('PL',r.pl===null?'—':money(r.pl)+' '+setting.unit):'')+
+    tr('△PY',signedMoney(r.deltaPY)+' '+setting.unit,semanticColor(r.deltaPY))+
+    tr('△PY%',percent(r.pctPY),semanticColor(r.deltaPY))+
+    (hasPL?tr('△PL',signedMoney(r.deltaPL)+' '+(r.deltaPL===null?'':setting.unit),semanticColor(r.deltaPL))+
+           tr('△PL%',percent(r.pctPL),semanticColor(r.deltaPL)):'')+
+    '</table></div>';
+}
+function categoryAxis(ix,showLabels){
+  return {type:'category',gridIndex:ix,data:names,boundaryGap:true,
+    axisLine:{show:showLabels,lineStyle:{color:C.grid}},axisTick:{show:false},
+    axisLabel:{show:showLabels,interval:0,margin:9,rotate:categoryWidth<105?20:0,
+      color:C.text,fontFamily:setting.font,fontSize:compact?10:11,
+      formatter:function(v){return v===setting.totalName?'{bold|'+v+'}':v;},
+      rich:{bold:{fontWeight:700,color:C.text,fontSize:compact?10:11,fontFamily:setting.font}}}
+  };
+}
+function bridgeSeries(steps,ix,name){
+  return {name:name,type:'custom',coordinateSystem:'cartesian2d',xAxisIndex:ix,yAxisIndex:ix,
+    data:steps.map(function(s,i){return {value:[i,s.end/setting.valueDivisor],rowIndex:i};}),
+    encode:{x:0,y:1},clip:true,z:5,animationDuration:setting.animationDuration,
+    emphasis:{disabled:true},renderItem:function(params,api){
+      var i=params.dataIndex,s=steps[i];
+      if(s.delta===null)return {type:'group',children:[]};
+      var before=api.coord([i,s.start/setting.valueDivisor]);
+      var after=api.coord([i,s.end/setting.valueDivisor]);
+      var bottomCoord=api.coord([i,0])[1];
+      var x=before[0], y1=s.total?bottomCoord:before[1], y2=after[1];
+      var bw=Math.max(8,Math.min(32,categoryWidth*0.23));
+      var color=s.total?(s.delta>1e-9?C.totalPositive:s.delta< -1e-9?C.totalNegative:C.ac):semanticColor(s.delta);
+      var h=Math.max(1.5,Math.abs(y2-y1));
+      var shapes=[{type:'rect',shape:{x:x-bw/2,y:Math.min(y1,y2),width:bw,height:h},style:{fill:color}}];
+      if(setting.showConnectors&&i<steps.length-1&&!s.total){
+        var nx=api.coord([i+1,0])[0];
+        shapes.push({type:'line',shape:{x1:x+bw/2,y1:after[1],x2:nx-bw/2,y2:after[1]},
+          style:{stroke:C.secondary,opacity:0.52,lineDash:[3,3],lineWidth:1}});
+      }
+      if(setting.showLabels && categoryWidth>64){
+        var v=s.total?money(s.end):sign(s.delta)+' '+formatNumber(Math.abs(s.delta)/setting.valueDivisor,setting.decimals);
+        var minTop=bridgeTops[ix]+10;
+        var labelY=Math.max(minTop,Math.min(y1,y2)-8);
+        shapes.push({type:'text',silent:true,style:{x:x,y:labelY,text:v,
+          textAlign:'center',textVerticalAlign:'bottom',fill:color,
+          font:'bold '+(compact?9:10)+'px '+setting.font}});
+      }
+      shapes.push({type:'rect',shape:{x:x-categoryWidth*0.42,y:Math.min(y1,y2)-16,
+        width:categoryWidth*0.84,height:Math.max(28,h+29)},style:{fill:'rgba(255,255,255,0)'},z:6});
+      return {type:'group',children:shapes};
+    }};
+}
+function volumeBar(name,color,key,border){
+  return {name:name,type:'bar',xAxisIndex:barGridIndex,yAxisIndex:barGridIndex,z:4,
+    data:rows.map(function(r,i){return {value:r[key]===null?null:r[key]/setting.valueDivisor,rowIndex:i};}),
+    barMaxWidth:L.maxBarWidth,barGap:'22%',barCategoryGap:'43%',
+    label:{show:false},itemStyle:{color:color,borderColor:border||color,borderWidth:border?1.4:0},
+    emphasis:{disabled:true},animationDuration:setting.animationDuration};
+}
+var graphic=[{type:'rect',silent:true,left:left,top:22,z:10,shape:{width:20,height:4},style:{fill:C.negative}}];
+graphic.push(gText(left,L.titleTop,setting.title,compact?17:20,true,C.text));
+graphic.push(gText(left,L.subtitleTop,setting.subtitle,compact?10:12,false,C.secondary));
+graphic.push(gLine(left,112,W-right,112,C.grid,1));
+function headerOf(ix,txt){graphic.push(gText(left,bridgeTops[ix]-21,txt,compact?11:12,true,C.text));}
+headerOf(0,'△PY · 各地区对全球营收同比变化的贡献');
+if(hasPL)headerOf(1,'△PL · 各地区较计划的偏差');
+graphic.push(gText(left,barTop-22,'营收规模 · PY / AC'+(hasPL?' / PL':''),compact?11:12,true,C.text));
+// 瀑布只保留 0 基准线；不绘制会干扰阅读的密集水平刻度线。
+// 使用各面板真实 min/max 与像素高度换算，保证线位与 custom series 的 y 坐标一致。
+if(setting.showBridgeZeroLine){
+  for(var zi=0;zi<bridgeCount;zi++){
+    var zd=domains[zi];
+    if(zd.min<=0&&zd.max>=0){
+      var zy=bridgeTops[zi]+bridgeHeight*(zd.max/(zd.max-zd.min));
+      graphic.push(gLine(left,zy,W-right,zy,C.grid,1));
+    }
+  }
+}
+
+// 合计之前的竖向分隔线贯穿三个面板，清楚区分组成地区与汇总结果。
+// 线放在类别单元的边界，不穿过柱体、地区文字及其数值标签。
+if(setting.showGroupTotal && setting.showTotalDivider && rows.length>1){
+  var dividerX=left+categoryWidth*(rows.length-1);
+  var divider=gLine(dividerX,bridgeTops[0]-8,dividerX,H-bottom+5,C.grid,1);
+  divider.style.opacity=0.50;
+  graphic.push(divider);
+}
+
+// 统一定位：每个地区以三根柱体中的最大值为基准，绘制不碰撞的固定 AC → PY → PL 标签。
+if(setting.showLabels&&labelRows>0){
+  rows.forEach(function(r,i){
+    var mx=Math.max(r.py,r.ac,r.pl===null?0:r.pl)/setting.valueDivisor;
+    var barY=barTop+barHeight*(1-mx/financeAxis.max);
+    var x=left+categoryWidth*(i+0.5);
+    // 最后一行固定在最高柱顶上方，不再额外留下 15～20 px 的空隙。
+    var labelY=Math.max(barTop+10,barY-(labelRows-1)*L.labelRowGap-L.labelToBarGap);
+    var stack=threeLineLabels?
+      [{k:'AC',v:r.ac,c:C.ac},{k:'PY',v:r.py,c:C.secondary}].concat(hasPL?[{k:'PL',v:r.pl,c:C.secondary}]:[]):
+      [{k:'AC',v:r.ac,c:C.ac}];
+    stack.forEach(function(e,j){
+      if(e.v===null)return;
+      graphic.push(gText(x,labelY+j*L.labelRowGap,
+        e.k+' '+labelValue(e.v),compact?9:L.labelFontSize,j===0,e.c,'center'));
+    });
+  });
+}
+// 柱图图例放在第三层标题右侧，而不是挤占底部来源区域。
+var legendY=barTop-30;
+var footerNote=setting.description;
+if(hasPL && setting.planIsSimulated)footerNote+=' PL 为教学模拟预算，非 Apple 官方目标。';
+if(partialPL)footerNote+=' 部分地区无 PL，△PL 累计仅包含有计划值的地区。';
+if(setting.varianceScale==='independent'&&hasPL)footerNote+=' △PY 与 △PL 使用独立尺度，不可跨面板比较柱高。';
+graphic.push(gText(left,H-46,setting.source,10,false,C.secondary));
+graphic.push(gText(left,H-27,footerNote,10,false,C.secondary));
+
+var xAxes=[],yAxes=[];
+for(var ix=0;ix<bridgeCount;ix++){
+  xAxes.push(categoryAxis(ix,false));
+  yAxes.push({type:'value',gridIndex:ix,min:domains[ix].min,max:domains[ix].max,interval:domains[ix].interval,
+    splitNumber:L.bridgeTickSegments,axisLine:{show:false},axisTick:{show:false},
+    axisLabel:{show:setting.showBridgeAxisLabels,color:C.secondary,fontSize:10,formatter:function(v){return formatNumber(v,0);}},
+    splitLine:{show:setting.showBridgeGridLines,lineStyle:{color:C.grid,type:'dashed',opacity:0.6}}});
+}
+xAxes.push(categoryAxis(barGridIndex,true));
+yAxes.push({type:'value',gridIndex:barGridIndex,min:0,max:financeAxis.max,interval:financeAxis.interval,splitNumber:L.volumeTickSegments,
+  axisLine:{show:false},axisTick:{show:false},
+  axisLabel:{color:C.secondary,fontSize:10,formatter:function(v){return formatNumber(v,0);}},
+  splitLine:{show:setting.showGridLines,lineStyle:{color:C.grid,type:'dashed',opacity:0.24}}});
+var series=[bridgeSeries(bridgePY,0,'△PY')];
+if(hasPL)series.push(bridgeSeries(bridgePL,1,'△PL'));
+series.push(volumeBar('PY',C.py,'py'));
+series.push(volumeBar('AC',C.ac,'ac'));
+if(hasPL)series.push(volumeBar('PL',C.pl,'pl',C.plStroke));
+option={
+  backgroundColor:C.background,animation:true,
+  grid:gridDefs,xAxis:xAxes,yAxis:yAxes,graphic:graphic,
+  legend:{top:legendY,right:right,itemWidth:14,itemHeight:9,itemGap:15,
+    textStyle:{color:C.secondary,fontSize:10},data:hasPL?['PY','AC','PL']:['PY','AC']},
+  tooltip:{trigger:'item',confine:true,backgroundColor:C.white,borderColor:C.grid,borderWidth:1,
+    padding:[10,12],textStyle:{color:C.text,fontSize:12},formatter:tooltipHtml},
+  series:series
+};
