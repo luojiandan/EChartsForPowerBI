@@ -1,0 +1,518 @@
+/**
+ * C017 | IBCS 风格月度差异贡献瀑布图（含 AC/PY 重叠柱）
+ * 结构：上层月度差异累计贡献瀑布；中层月度同比变化率；下层 AC/PY 重叠月度规模柱。
+ * 说明：累计列另绘 AC/PY 累计双柱，采用明确标注的独立尺度，避免压缩月度柱。
+ */
+
+// ============================================================================
+// 01 数据区域：一个字段一个独立的一维数组；同索引代表同一条原始记录
+// ============================================================================
+var 年份 = [
+  '2025','2025','2025','2025','2025','2025','2025','2025','2025',
+  '2026','2026','2026','2026','2026','2026','2026','2026','2026'
+];
+var 月份 = [
+  '1','2','3','4','5','6','7','8','9',
+  '1','2','3','4','5','6','7','8','9'
+];
+var 度量值 = [
+  94.4,89.2,123.7,122.6,130.7,132.9,126.2,139.5,160.4,
+  94.5,76.5,125.2,134.4,149.6,164.3,156.1,164.3,182.3
+];
+var 数据元信息 = {
+  指标名称: '新能源汽车销量',
+  单位: '万辆',
+  来源: '中国汽车工业协会月度产销数据（工业和信息化部发布）',
+  口径备注: '示例数据中，2025年逐月累加为1,119.6万辆，另行公布的同期累计为1,122.8万辆。'
+};
+
+// ============================================================================
+// 02 用户设置区域：可修改的选项集中在 setting 中
+// ============================================================================
+var setting = {
+  title: '累计增长从哪些月份来？',
+  subtitleTemplate: '{actual} vs {previous} · 1—{month}月 · {metric}月度差异贡献',
+  actualYear: 'auto',
+  previousYear: 'auto',
+  cutoffMonth: 'previousMonth',
+  dataMonthLimit: 'available',
+  missingMonthPolicy: 'stop',
+  unitDecimals: 1,
+  percentDecimals: 1,
+  positiveIsGood: true,
+  showLegend: true,
+  showFooter: true,
+  showSectionTitles: true,
+  showBridgeConnectors: true,
+  showTotalDivider: true,
+  showPairLabels: true,
+  showGridLines: false,
+  showAxisNumbers: false,
+  showTotalRateBar: true,
+  overlapRatio: 0.70,
+  legendItemGap: 18,              // 图例各项之间的像素间距
+  showTotalSizeBars: true,         // 最后一列显示 AC/PY 累计双柱
+  totalBarHeightRatio: 0.63,      // 累计双柱独立缩放后的最高柱占底图高度
+  showTotalScaleHint: true,       // 提醒读者累计柱单独缩放，不能与月度柱高比较
+  chartWidthFallback: 1250,
+  chartHeightFallback: 840,
+  minChartWidth: 760,
+  minChartHeight: 640,
+  tooltipMinWidth: 285,
+  sizePyBarMaxWidth: 28,
+  sizePyBarMinWidth: 14,
+  sizeAcBarMaxWidth: 22,
+  sizeAcBarMinWidth: 10,
+  waterfallBarMaxWidth: 54,
+  waterfallBarMinWidth: 14,
+  rateBarMaxWidth: 44,
+  rateBarMinWidth: 10,
+  layout: {
+    left: 82, right: 66, top: 174, bottom: 112,
+    topPanelRatio: 0.39,
+    midPanelRatio: 0.21,
+    bottomPanelRatio: 0.40,
+    panelGap: 54,
+    titleLeft: 36, redDashTop: 16, titleTop: 36, subtitleTop: 78,
+    legendTop: 110, sectionGap: 28,
+    footerLeft: 36, footerBottom: 55,
+    labelDistance: 10
+  },
+  colors: {
+    positive: '#239263',
+    negative: '#D9544D',
+    previous: '#AEB7C1',
+    actual: '#263238',
+    text: '#263238',
+    secondary: '#8493A2',
+    gridLine: '#E5E9ED',
+    background: 'transparent'
+  }
+};
+
+// ============================================================================
+// 03 通用工具与数据整理
+// ============================================================================
+var C = setting.colors;
+var L = setting.layout;
+var eps = 1e-9;
+var metricName = String(数据元信息.指标名称 || '指标值');
+var metricUnit = String(数据元信息.单位 || '');
+var sourceText = String(数据元信息.来源 || '用户提供的数据');
+var sourceNote = String(数据元信息.口径备注 || '');
+var W = typeof myChart !== 'undefined' && myChart && typeof myChart.getWidth === 'function' ? Number(myChart.getWidth()) : setting.chartWidthFallback;
+var H = typeof myChart !== 'undefined' && myChart && typeof myChart.getHeight === 'function' ? Number(myChart.getHeight()) : setting.chartHeightFallback;
+W = W > 0 ? W : setting.chartWidthFallback;
+H = H > 0 ? H : setting.chartHeightFallback;
+var compact = W < 1020;
+
+function fmt(v, d) {
+  if (v === null || v === undefined || !isFinite(Number(v))) return '—';
+  return Number(v).toLocaleString('zh-CN', {
+    minimumFractionDigits: d === undefined ? setting.unitDecimals : d,
+    maximumFractionDigits: d === undefined ? setting.unitDecimals : d
+  });
+}
+function esc(v) {
+  return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function validNumber(v) {
+  return v !== null && v !== undefined && String(v).trim() !== '' && isFinite(Number(v));
+}
+function directionColor(v) {
+  if (v === null || !isFinite(v) || Math.abs(v) < eps) return C.secondary;
+  return (v > 0) === setting.positiveIsGood ? C.positive : C.negative;
+}
+function arrowText(v, pct) {
+  if (v === null || !isFinite(v)) return '—';
+  return (v > eps ? '▲ ' : v < -eps ? '▼ ' : '') + fmt(Math.abs(v), pct ? setting.percentDecimals : setting.unitDecimals) + (pct ? '%' : '');
+}
+function signedText(v, pct) {
+  if (v === null || !isFinite(v)) return '—';
+  return (v > eps ? '+' : '') + fmt(v, pct ? setting.percentDecimals : setting.unitDecimals) + (pct ? '%' : '');
+}
+function percent(numerator, denominator) {
+  return denominator === null || !isFinite(denominator) || Math.abs(denominator) < eps ? null : numerator / Math.abs(denominator) * 100;
+}
+function niceStep(raw) {
+  var t = Math.abs(raw);
+  if (!isFinite(t) || t <= 0) return 1;
+  var power = Math.pow(10, Math.floor(Math.log(t) / Math.LN10));
+  var candidates = [1, 2, 2.5, 5, 10];
+  for (var i = 0; i < candidates.length; i++) if (candidates[i] * power >= t - 1e-12) return candidates[i] * power;
+  return 10 * power;
+}
+function niceSignedExtent(values, minPadding, maxPadding, ticks) {
+  var lo = Math.min.apply(null, values.concat([0]));
+  var hi = Math.max.apply(null, values.concat([0]));
+  var span = Math.max(eps, hi - lo);
+  var targetStep = span * (1 + minPadding + maxPadding) / (ticks || 5);
+  var step = niceStep(targetStep);
+  var a = Math.floor((lo - span * minPadding) / step) * step;
+  var b = Math.ceil((hi + span * maxPadding) / step) * step;
+  if (a === b) b = a + step;
+  return { min: Number(a.toPrecision(12)), max: Number(b.toPrecision(12)), interval: Number(step.toPrecision(12)) };
+}
+function nicePositiveExtent(values, padTop, ticks) {
+  var hi = Math.max.apply(null, values.concat([0]));
+  var top = hi * (1 + padTop);
+  var step = niceStep(top / Math.max(3, ticks || 4));
+  var max = Math.ceil(top / step) * step;
+  return { min: 0, max: max, interval: step };
+}
+function graphicText(x, y, text, style) {
+  return {
+    type: 'text', silent: true, left: x, top: y,
+    style: Object.assign({ text: String(text), fill: C.text, font: '12px sans-serif' }, style || {})
+  };
+}
+
+var errorText = null;
+if (!Array.isArray(年份) || !Array.isArray(月份) || !Array.isArray(度量值) || 年份.length !== 月份.length || 年份.length !== 度量值.length) {
+  errorText = '年份、月份、度量值必须是长度相同的一维数组。';
+}
+var rows = [];
+if (!errorText) {
+  for (var i = 0; i < 年份.length; i++) {
+    var yr = Number(String(年份[i]).trim());
+    var mo = Number(String(月份[i]).trim().replace('月', ''));
+    if (!Number.isInteger(yr) || !Number.isInteger(mo) || mo < 1 || mo > 12 || !validNumber(度量值[i])) continue;
+    rows.push({ year: yr, month: mo, value: Number(度量值[i]) });
+  }
+  if (!rows.length) errorText = '没有有效的年月及度量值，请检查数据类型。';
+}
+var availableYears = Array.from(new Set(rows.map(function(r){ return r.year; }))).sort(function(a, b){ return a - b; });
+var acYear = setting.actualYear === 'auto' ? availableYears[availableYears.length - 1] : Number(setting.actualYear);
+var pyYear = setting.previousYear === 'auto' ? acYear - 1 : Number(setting.previousYear);
+var acMap = {}, pyMap = {};
+rows.forEach(function(r){
+  var dst = r.year === acYear ? acMap : (r.year === pyYear ? pyMap : null);
+  if (dst) dst[r.month] = (dst[r.month] || 0) + r.value;
+});
+if (!errorText && (!Object.keys(acMap).length || !Object.keys(pyMap).length)) {
+  errorText = '必须同时提供实际年度 AC 与上年同期 PY 的有效月度数据。';
+}
+var now = new Date();
+var cutoff = 12;
+if (setting.cutoffMonth === 'previousMonth') {
+  if (acYear === now.getFullYear()) cutoff = now.getMonth();
+} else if (setting.cutoffMonth !== 'all') {
+  cutoff = Math.max(1, Math.min(12, Math.floor(Number(setting.cutoffMonth) || 12)));
+}
+var acLatest = Math.max.apply(null, Object.keys(acMap).map(Number).concat([0]));
+if (setting.dataMonthLimit === 'available') cutoff = Math.min(cutoff, acLatest);
+var displayMonths = [];
+var incompleteMonth = null;
+for (var mm = 1; mm <= cutoff; mm++) {
+  if (!Object.prototype.hasOwnProperty.call(acMap, mm) || !Object.prototype.hasOwnProperty.call(pyMap, mm)) {
+    incompleteMonth = mm;
+    break;
+  }
+  displayMonths.push(mm);
+}
+if (!errorText && !displayMonths.length) errorText = '1 月缺少 AC 或 PY 数据，不能从年初开始计算。';
+if (!errorText && incompleteMonth !== null && setting.missingMonthPolicy === 'error') {
+  errorText = '第 ' + incompleteMonth + ' 月 AC/PY 数据不完整；请补全或选择 stop 模式。';
+}
+var acMonthly = displayMonths.map(function(m){ return acMap[m]; });
+var pyMonthly = displayMonths.map(function(m){ return pyMap[m]; });
+var monthlyDiff = acMonthly.map(function(v, i){ return v - pyMonthly[i]; });
+var monthlyRate = monthlyDiff.map(function(v, i){ return percent(v, pyMonthly[i]); });
+var acAccum = [], pyAccum = [], deltaAccum = [];
+var aSum = 0, pSum = 0, dSum = 0;
+monthlyDiff.forEach(function(d, i){
+  aSum += acMonthly[i]; pSum += pyMonthly[i]; dSum += d;
+  acAccum.push(aSum); pyAccum.push(pSum); deltaAccum.push(dSum);
+});
+var totalAC = acAccum.length ? acAccum[acAccum.length - 1] : null;
+var totalPY = pyAccum.length ? pyAccum[pyAccum.length - 1] : null;
+var totalDiff = totalAC !== null ? totalAC - totalPY : null;
+var totalRate = totalDiff === null ? null : percent(totalDiff, totalPY);
+var monthCount = displayMonths.length;
+var lastMonth = monthCount ? displayMonths[monthCount - 1] : null;
+var categories = displayMonths.map(function(m){ return m + '月'; }).concat(['累计']);
+var sizeAC = acMonthly.concat([null]);
+var sizePY = pyMonthly.concat([null]);
+var rowsWaterfall = [];
+for (var j = 0; j < monthCount; j++) rowsWaterfall.push([j, j === 0 ? 0 : deltaAccum[j - 1], deltaAccum[j], monthlyDiff[j], 0]);
+rowsWaterfall.push([monthCount, 0, totalDiff === null ? 0 : totalDiff, totalDiff === null ? 0 : totalDiff, 1]);
+var waterfallEnds = [0];
+rowsWaterfall.forEach(function(v){ waterfallEnds.push(v[1], v[2]); });
+var barsAxis = nicePositiveExtent(acMonthly.concat(pyMonthly).filter(function(v){ return v !== null; }), 0.24, 4);
+var bridgeAxis = niceSignedExtent(waterfallEnds, 0.15, 0.18, 5);
+var pctPoints = monthlyRate.filter(function(v){ return v !== null; });
+if (setting.showTotalRateBar && totalRate !== null) pctPoints.push(totalRate);
+var rateAxis = niceSignedExtent(pctPoints, 0.25, 0.24, 4);
+
+var topMargin = compact ? L.top - 6 : L.top;
+var availableHeight = H - topMargin - L.bottom;
+var totalRatio = L.topPanelRatio + L.midPanelRatio + L.bottomPanelRatio;
+var gap2 = L.panelGap * 2;
+var usableHeight = availableHeight - gap2;
+var topHeight = Math.round(usableHeight * (L.topPanelRatio / totalRatio));
+var midHeight = Math.round(usableHeight * (L.midPanelRatio / totalRatio));
+var bottomHeight = usableHeight - topHeight - midHeight;
+var midTop = topMargin + topHeight + L.panelGap;
+var bottomTop = midTop + midHeight + L.panelGap;
+var gridLeft = compact ? Math.max(66, L.left - 10) : L.left;
+var gridRight = compact ? Math.max(58, L.right - 8) : L.right;
+var innerWidth = W - gridLeft - gridRight;
+var pxPerCategory = innerWidth / Math.max(1, categories.length);
+var pyBarWidth = Math.max(setting.sizePyBarMinWidth, Math.min(setting.sizePyBarMaxWidth, pxPerCategory * 0.33));
+var acBarWidth = Math.max(setting.sizeAcBarMinWidth, Math.min(setting.sizeAcBarMaxWidth, pyBarWidth * 0.78));
+var overlapGap = '-' + Math.round(setting.overlapRatio * 100) + '%';
+var waterfallWidth = Math.max(setting.waterfallBarMinWidth, Math.min(setting.waterfallBarMaxWidth, pxPerCategory * 0.46));
+var rateBarWidth = Math.max(setting.rateBarMinWidth, Math.min(setting.rateBarMaxWidth, pxPerCategory * 0.34));
+var enoughSpace = W >= setting.minChartWidth && H >= setting.minChartHeight && topHeight >= 160 && midHeight >= 85 && bottomHeight >= 150 && pxPerCategory >= 36;
+var subtitle = setting.subtitleTemplate.replace(/\{actual\}/g, String(acYear))
+  .replace(/\{previous\}/g, String(pyYear)).replace(/\{month\}/g, lastMonth === null ? '—' : String(lastMonth))
+  .replace(/\{metric\}/g, metricName);
+
+function monthTooltip(idx, heading) {
+  var ac = acMonthly[idx], py = pyMonthly[idx], d = monthlyDiff[idx], p = monthlyRate[idx];
+  var yd = deltaAccum[idx], yp = percent(yd, pyAccum[idx]);
+  return '<div style="min-width:' + setting.tooltipMinWidth + 'px;max-width:370px;font:12px/1.42 sans-serif;color:' + C.text + '">' +
+    '<div style="font-size:14px;font-weight:700;padding:0 0 8px;border-bottom:1px solid ' + C.gridLine + '">' +
+    esc(heading || (acYear + '年' + displayMonths[idx] + '月 · ' + metricName)) + '</div>' +
+    '<table style="border-collapse:collapse;width:100%;margin-top:5px"><thead><tr style="color:' + C.secondary + '">' +
+    '<th style="text-align:left;font-weight:400">情景</th><th style="text-align:right;font-weight:400">当月（' + esc(metricUnit) +
+    '）</th><th style="text-align:right;font-weight:400">1—' + displayMonths[idx] + '月累计</th></tr></thead>' +
+    '<tbody>' +
+    '<tr><td style="padding:5px 8px 3px 0;color:' + C.actual + '">● AC · ' + acYear + '</td><td style="text-align:right;font-weight:600">' + fmt(ac) + '</td><td style="text-align:right;font-weight:600">' + fmt(acAccum[idx]) + '</td></tr>' +
+    '<tr><td style="padding:5px 8px 3px 0;color:' + C.previous + '">● PY · ' + pyYear + '</td><td style="text-align:right;font-weight:600">' + fmt(py) + '</td><td style="text-align:right;font-weight:600">' + fmt(pyAccum[idx]) + '</td></tr>' +
+    '</tbody></table>' +
+    '<div style="border-top:1px solid ' + C.gridLine + ';margin-top:7px"></div>' +
+    '<table style="border-collapse:collapse;width:100%"><thead><tr style="color:' + C.secondary + '">' +
+    '<th style="text-align:left;font-weight:400">差异</th><th style="text-align:right;font-weight:400">增减额（' + esc(metricUnit) +
+    '）</th><th style="text-align:right;font-weight:400">增减率</th></tr></thead><tbody>' +
+    '<tr><td style="padding:5px 8px 3px 0">当月 △PY</td><td style="text-align:right;font-weight:700;color:' + directionColor(d) + '">' + signedText(d, false) + '</td><td style="text-align:right;font-weight:700;color:' + directionColor(p) + '">' + signedText(p, true) + '</td></tr>' +
+    '<tr><td style="padding:5px 8px 3px 0">累计 △PY</td><td style="text-align:right;font-weight:700;color:' + directionColor(yd) + '">' + signedText(yd, false) + '</td><td style="text-align:right;font-weight:700;color:' + directionColor(yp) + '">' + signedText(yp, true) + '</td></tr>' +
+    '</tbody></table></div>';
+}
+// 累计列与普通月份复用同一富文本表格；当月列显示截止月数据，累计列显示 YTD。
+function totalTooltip() {
+  return monthCount ? monthTooltip(monthCount - 1, '1—' + lastMonth + '月累计 · ' + metricName) : '';
+}
+function buildPairLabel(which) {
+  return categories.map(function(_, idx){
+    var val = which === 'AC' ? sizeAC[idx] : sizePY[idx];
+    return { value: val, label: { show: false } };
+  });
+}
+function makeGraphic() {
+  var g = [
+    { type: 'rect', silent: true, left: L.titleLeft, top: L.redDashTop, shape: { width: 20, height: 4 }, style: { fill: C.negative } },
+    graphicText(L.titleLeft, L.titleTop, setting.title, { font: 'bold ' + (compact ? 19 : 22) + 'px sans-serif', width: W - L.titleLeft * 2, overflow: 'truncate' }),
+    graphicText(L.titleLeft, L.subtitleTop, subtitle, { font: '12px sans-serif', fill: C.secondary, width: W - L.titleLeft * 2, overflow: 'truncate' })
+  ];
+  if (setting.showLegend && W > 760) {
+    var lx = L.titleLeft, ly = L.legendTop;
+    var legendX = lx;
+    [
+      ['PY', C.previous], ['AC', C.actual], ['增加', C.positive], ['减少', C.negative]
+    ].forEach(function(v){
+      g.push({ type: 'rect', silent: true, left: legendX, top: ly + 2, shape: { width: 11, height: 11 }, style: { fill: v[1], stroke: 'none' } });
+      g.push(graphicText(legendX + 16, ly - 1, v[0], { font: '11px sans-serif', fill: C.secondary }));
+      // 图例按文字宽度紧凑排列，不再固定 92px 一档。
+      var textWidth = /[^\x00-\x7F]/.test(v[0]) ? v[0].length * 11 : v[0].length * 7;
+      legendX += 16 + textWidth + setting.legendItemGap;
+    });
+  }
+  if (setting.showSectionTitles) {
+    g.push(graphicText(gridLeft, topMargin - L.sectionGap, '月度差异累计贡献 · △PY' + (metricUnit ? '（' + metricUnit + '）' : ''), { font: 'bold 12px sans-serif' }));
+    g.push(graphicText(gridLeft, midTop - L.sectionGap, '月度同比变化率 · △PY%（末列为累计同比）', { font: 'bold 12px sans-serif' }));
+    g.push(graphicText(gridLeft, bottomTop - L.sectionGap, '月度规模 · PY / AC' + (metricUnit ? '（' + metricUnit + '）' : ''), { font: 'bold 12px sans-serif' }));
+  }
+  if (setting.showTotalDivider && monthCount > 0 && innerWidth > 0) {
+    var sepX = gridLeft + innerWidth * monthCount / categories.length;
+    [
+      { start: topMargin - 6, end: topMargin + topHeight + 5 },
+      { start: midTop - 6, end: midTop + midHeight + 5 },
+      { start: bottomTop - 6, end: bottomTop + bottomHeight + 5 }
+    ].forEach(function(r){
+      g.push({ type: 'line', silent: true, shape: { x1: sepX, y1: r.start, x2: sepX, y2: r.end }, style: { stroke: C.gridLine, lineWidth: 1, lineDash: [4, 4] } });
+    });
+  }
+  // 最后一列独立缩放双柱：显式注明与月度规模不是同一 Y 轴尺度。
+  if (setting.showTotalSizeBars && setting.showTotalScaleHint && monthCount > 0 && innerWidth > 0) {
+    var totalCenterX = gridLeft + innerWidth * (monthCount + 0.5) / categories.length;
+    var totalHint = '独立尺度';
+    g.push(graphicText(totalCenterX - 20, bottomTop + 8, totalHint,
+      {font:'10px sans-serif',fill:C.secondary}));
+  }
+  if (setting.showPairLabels && monthCount > 0 && innerWidth > 0) {
+    for (var li = 0; li < monthCount; li++) {
+      var cx = gridLeft + innerWidth * (li + 0.5) / categories.length;
+      var topVal = Math.max(Number(acMonthly[li] || 0), Number(pyMonthly[li] || 0));
+      var yRatio = (topVal - barsAxis.min) / Math.max(eps, barsAxis.max - barsAxis.min);
+      var labelY = bottomTop + bottomHeight * (1 - yRatio) - 30;
+      var minY = bottomTop + 10;
+      var maxY = bottomTop + bottomHeight - 38;
+      labelY = Math.max(minY, Math.min(maxY, labelY));
+      var acText = 'AC ' + fmt(acMonthly[li]);
+      var pyText = 'PY ' + fmt(pyMonthly[li]);
+      var approxAcW = (compact ? 6.4 : 7.0) * acText.length;
+      var approxPyW = (compact ? 6.0 : 6.6) * pyText.length;
+      g.push(graphicText(cx - approxAcW / 2, labelY, acText, { font: 'bold ' + (compact ? 10 : 11) + 'px sans-serif', fill: C.actual }));
+      g.push(graphicText(cx - approxPyW / 2, labelY + 14, pyText, { font: (compact ? 10 : 11) + 'px sans-serif', fill: C.secondary }));
+    }
+  }
+  if (setting.showFooter) {
+    g.push(graphicText(L.footerLeft, H - L.footerBottom, '数据来源：' + sourceText, { font: '10px sans-serif', fill: C.secondary, width: Math.max(120, W - L.footerLeft * 2), overflow: 'truncate' }));
+    var note = '图表说明：上层 △PY 累计贡献，中层 △PY%，下层 PY/AC 重叠柱；累计规模柱独立缩放，不能与月度柱高比较。' + sourceNote;
+    g.push(graphicText(L.footerLeft, H - L.footerBottom + 18, note, { font: '10px sans-serif', fill: C.secondary, width: Math.max(120, W - L.footerLeft * 2), overflow: 'truncate' }));
+  }
+  return g;
+}
+
+if (errorText || !enoughSpace) {
+  option = {
+    backgroundColor: C.background,
+    animation: false,
+    graphic: makeGraphic().concat([
+      graphicText(Math.max(28, W * 0.13), Math.max(205, H * 0.47), errorText || '画布空间不足：请增大图表尺寸，或缩短展示月份。', {
+        font: 'bold 15px sans-serif', fill: C.negative, width: Math.max(240, W * 0.75), overflow: 'break', lineHeight: 22
+      })
+    ])
+  };
+} else {
+  var rateValues = monthlyRate.slice();
+  rateValues.push(setting.showTotalRateBar ? totalRate : null);
+  var rateSeriesData = rateValues.map(function(v, idx){
+    if (v === null || !isFinite(v)) return { value: null };
+    return {
+      value: v,
+      itemStyle: { color: directionColor(v) },
+      label: {
+        show: true,
+        position: v < -eps ? 'bottom' : 'top',
+        distance: 7,
+        formatter: arrowText(v, true),
+        fontSize: compact ? 10 : 11,
+        fontWeight: idx === monthCount ? 'bold' : 'normal',
+        color: directionColor(v)
+      }
+    };
+  });
+  option = {
+    backgroundColor: C.background,
+    animation: true,
+    animationDuration: 450,
+    animationEasing: 'cubicOut',
+    grid: [
+      { left: gridLeft, right: gridRight, top: topMargin, bottom: H - topMargin - topHeight, containLabel: false },
+      { left: gridLeft, right: gridRight, top: midTop, bottom: H - midTop - midHeight, containLabel: false },
+      { left: gridLeft, right: gridRight, top: bottomTop, bottom: H - bottomTop - bottomHeight, containLabel: false }
+    ],
+    graphic: makeGraphic(),
+    tooltip: {
+      trigger: 'axis', confine: true, appendToBody: false,
+      borderWidth: 1, borderColor: C.gridLine, backgroundColor: '#FFFFFF', padding: [11, 13],
+      textStyle: { color: C.text, fontSize: 12 },
+      extraCssText: 'box-shadow:0 5px 22px rgba(38,50,56,.11);border-radius:5px;',
+      axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(174,183,193,.09)' } },
+      formatter: function(params) {
+        var p = Array.isArray(params) ? params[0] : params;
+        if (!p || p.dataIndex === undefined || p.dataIndex === null) return '';
+        var idx = p.dataIndex;
+        if (idx === monthCount) return totalTooltip();
+        if (idx >= 0 && idx < monthCount) return monthTooltip(idx);
+        return '';
+      }
+    },
+    axisPointer: { link: [{ xAxisIndex: [0, 1, 2] }] },
+    xAxis: [
+      { type: 'category', gridIndex: 0, data: categories, axisTick: { show: false }, axisLine: { show: false }, axisLabel: { show: false }, splitLine: { show: false } },
+      { type: 'category', gridIndex: 1, data: categories, axisTick: { show: false }, axisLine: { show: false }, axisLabel: { show: false }, splitLine: { show: false } },
+      { type: 'category', gridIndex: 2, data: categories, axisTick: { show: false }, axisLine: { show: true, lineStyle: { color: C.gridLine, width: 1 } }, axisLabel: { show: true, interval: 0, margin: 12, color: C.text, fontSize: compact ? 10 : 11 }, splitLine: { show: false } }
+    ],
+    yAxis: [
+      { type: 'value', gridIndex: 0, min: bridgeAxis.min, max: bridgeAxis.max, interval: bridgeAxis.interval, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { show: setting.showAxisNumbers, color: C.secondary, fontSize: 10 }, splitLine: { show: setting.showGridLines, lineStyle: { color: C.gridLine, type: 'dashed' } } },
+      { type: 'value', gridIndex: 1, min: rateAxis.min, max: rateAxis.max, interval: rateAxis.interval, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { show: setting.showAxisNumbers, color: C.secondary, fontSize: 10, formatter: '{value}%' }, splitLine: { show: setting.showGridLines, lineStyle: { color: C.gridLine, type: 'dashed' } } },
+      { type: 'value', gridIndex: 2, min: barsAxis.min, max: barsAxis.max, interval: barsAxis.interval, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { show: setting.showAxisNumbers, color: C.secondary, fontSize: 10 }, splitLine: { show: setting.showGridLines, lineStyle: { color: C.gridLine, type: 'dashed' } } }
+    ],
+    series: [
+      {
+        name: '月度差异贡献 · △PY', type: 'custom', coordinateSystem: 'cartesian2d',
+        xAxisIndex: 0, yAxisIndex: 0, z: 5, data: rowsWaterfall.map(function(d){ return { value: d }; }), encode: { x: 0, y: [1, 2] },
+        renderItem: function(params, api) {
+          var index = api.value(0), start = api.value(1), end = api.value(2), delta = api.value(3), total = api.value(4) === 1;
+          var center = api.coord([index, 0])[0];
+          var yStart = api.coord([index, start])[1], yEnd = api.coord([index, end])[1];
+          var topY = Math.min(yStart, yEnd), barH = Math.abs(yStart - yEnd);
+          var lowH = Math.max(2, barH), barY = barH < 2 ? (yStart + yEnd) / 2 - 1 : topY;
+          var col = directionColor(delta);
+          var kids = [];
+          if (setting.showBridgeConnectors && !total && index < monthCount - 1) {
+            var nextCx = api.coord([index + 1, 0])[0];
+            kids.push({ type: 'line', silent: true, shape: { x1: center + waterfallWidth / 2, y1: yEnd, x2: nextCx - waterfallWidth / 2, y2: yEnd }, style: { stroke: C.previous, lineWidth: 1, lineDash: [4, 4] } });
+          }
+          kids.push({ type: 'rect', shape: { x: center - waterfallWidth / 2, y: barY, width: waterfallWidth, height: lowH }, style: { fill: col, stroke: total ? col : col, lineWidth: total ? 1.1 : 0 } });
+          var textY = delta >= -eps ? barY - L.labelDistance : barY + lowH + L.labelDistance;
+          textY = Math.max(params.coordSys.y + 12, Math.min(params.coordSys.y + params.coordSys.height - 12, textY));
+          kids.push({ type: 'text', silent: true, style: { x: center, y: textY, text: arrowText(delta, false), fill: col, font: (total ? 'bold ' : '') + (compact ? '11' : '12') + 'px sans-serif', align: 'center', verticalAlign: 'middle' } });
+          return { type: 'group', children: kids };
+        }
+      },
+      {
+        name: '月度同比变化率 · △PY%', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, z: 4,
+        barWidth: rateBarWidth, barGap: '0%', barCategoryGap: '36%', clip: true,
+        data: rateSeriesData, itemStyle: { color: C.positive }
+      },
+      {
+        name: 'PY', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, z: 2,
+        barWidth: pyBarWidth, barGap: overlapGap, barCategoryGap: '35%',
+        itemStyle: { color: C.previous }, data: buildPairLabel('PY')
+      },
+      {
+        name: 'AC', type: 'bar', xAxisIndex: 2, yAxisIndex: 2, z: 3,
+        barWidth: acBarWidth, barGap: overlapGap, barCategoryGap: '35%',
+        itemStyle: { color: C.actual }, data: buildPairLabel('AC')
+      },
+      {
+        // 累计列独立缩放，但仍置于与各月相同的横坐标单元。
+        // 不把累计金额写进普通 bar data，以免 1—9 月的柱子被压扁。
+        name: '累计规模 · AC/PY', type: 'custom', coordinateSystem: 'cartesian2d',
+        xAxisIndex: 2, yAxisIndex: 2, z: 4,
+        silent: false,
+        encode: { x: 0 },
+        data: setting.showTotalSizeBars && totalAC !== null && totalPY !== null
+          ? [{ value: [monthCount, totalPY, totalAC] }] : [],
+        renderItem: function(params, api) {
+          var idx = api.value(0);
+          var py = Number(api.value(1)), ac = Number(api.value(2));
+          var maxTotal = Math.max(py, ac, eps);
+          var centerX = api.coord([idx, 0])[0];
+          // 独立尺度下 AC 与 PY 的真实相对比例不变。
+          var fullHeight = params.coordSys.height * Math.max(0.20, Math.min(0.74, setting.totalBarHeightRatio));
+          var baseY = params.coordSys.y + params.coordSys.height;
+          var pyHeight = Math.max(1, py / maxTotal * fullHeight);
+          var acHeight = Math.max(1, ac / maxTotal * fullHeight);
+          var pyWidth = pyBarWidth, acWidth = acBarWidth;
+          var actualOverlap = Math.min(pyWidth, pyWidth * Math.max(0, Math.min(1, setting.overlapRatio)));
+          var groupWidth = pyWidth + acWidth - actualOverlap;
+          var startX = centerX - groupWidth / 2;
+          var acX = startX + pyWidth - actualOverlap;
+          var kids = [
+            {type:'rect',shape:{x:startX,y:baseY-pyHeight,width:pyWidth,height:pyHeight},
+              style:{fill:C.previous}},
+            {type:'rect',shape:{x:acX,y:baseY-acHeight,width:acWidth,height:acHeight},
+              style:{fill:C.actual}}
+          ];
+          // 两行标签基于更高柱体固定排列，避免两根柱顶独立定位造成互相压盖。
+          var topY = baseY - Math.max(pyHeight, acHeight) - 8;
+          kids.push({type:'text',silent:true,style:{
+            x:centerX,y:topY-13,text:'AC '+fmt(ac),fill:C.actual,
+            font:'bold '+(compact?10:11)+'px sans-serif',align:'center',verticalAlign:'middle'
+          }});
+          kids.push({type:'text',silent:true,style:{
+            x:centerX,y:topY,text:'PY '+fmt(py),fill:C.secondary,
+            font:(compact?10:11)+'px sans-serif',align:'center',verticalAlign:'middle'
+          }});
+          return {type:'group',children:kids};
+        }
+      }
+    ]
+  };
+}
