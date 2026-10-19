@@ -1,0 +1,608 @@
+/**
+ * C015 · IBCS C13 风格：统一尺度小多图矩阵（Small Multiples）
+ * 用法：直接粘贴至 Apache ECharts 官方编辑器的 JavaScript 面板。
+ * 特点：16 省 × 6 年；共享 Y 轴尺度；动态省份/年份；历史灰色、当期深色；完整年度 Tooltip。
+ * 数据：2020—2025 年 16 个省级地区现价 GDP，单位亿元；示例数据来自已确认案例 CSV。
+ * 说明：现价金额增长率不等于剔除物价变化后的实际 GDP 增速。
+ */
+
+// ============================================================================
+// 01 数据区域：每个字段对应一个平行一维数组；Power BI 用户仅需替换这里
+// ============================================================================
+var 年份 = [
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2020",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2021",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2022",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2023",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2024",
+  "2025",
+  "2025",
+  "2025",
+  "2025",
+  "2025",
+  "2025",
+  "2025",
+  "2025",
+  "2025",
+  "2025",
+  "2025",
+  "2025",
+  "2025",
+  "2025",
+  "2025",
+  "2025"
+];
+var 省份 = [
+  "广东",
+  "江苏",
+  "山东",
+  "浙江",
+  "四川",
+  "河南",
+  "湖北",
+  "福建",
+  "湖南",
+  "安徽",
+  "河北",
+  "陕西",
+  "江西",
+  "辽宁",
+  "云南",
+  "广西",
+  "广东",
+  "江苏",
+  "山东",
+  "浙江",
+  "四川",
+  "河南",
+  "湖北",
+  "福建",
+  "湖南",
+  "安徽",
+  "河北",
+  "陕西",
+  "江西",
+  "辽宁",
+  "云南",
+  "广西",
+  "广东",
+  "江苏",
+  "山东",
+  "浙江",
+  "四川",
+  "河南",
+  "湖北",
+  "福建",
+  "湖南",
+  "安徽",
+  "河北",
+  "陕西",
+  "江西",
+  "辽宁",
+  "云南",
+  "广西",
+  "广东",
+  "江苏",
+  "山东",
+  "浙江",
+  "四川",
+  "河南",
+  "湖北",
+  "福建",
+  "湖南",
+  "安徽",
+  "河北",
+  "陕西",
+  "江西",
+  "辽宁",
+  "云南",
+  "广西",
+  "广东",
+  "江苏",
+  "山东",
+  "浙江",
+  "四川",
+  "河南",
+  "湖北",
+  "福建",
+  "湖南",
+  "安徽",
+  "河北",
+  "陕西",
+  "江西",
+  "辽宁",
+  "云南",
+  "广西",
+  "广东",
+  "江苏",
+  "山东",
+  "浙江",
+  "四川",
+  "河南",
+  "湖北",
+  "福建",
+  "湖南",
+  "安徽",
+  "河北",
+  "陕西",
+  "江西",
+  "辽宁",
+  "云南",
+  "广西"
+];
+var GDP = [
+  113708.9,
+  104566.6,
+  74355.9,
+  67164.5,
+  49445.1,
+  54160.6,
+  43017.6,
+  43682.0,
+  41693.7,
+  38628.8,
+  36821.5,
+  26297.0,
+  25825.4,
+  25839.0,
+  25214.5,
+  22250.7,
+  127577.4,
+  119853.2,
+  84838.0,
+  76765.3,
+  55131.3,
+  57806.9,
+  50093.3,
+  49602.6,
+  45751.9,
+  43102.8,
+  41205.4,
+  30476.6,
+  29838.2,
+  28471.0,
+  27895.3,
+  25311.5,
+  132547.1,
+  124564.2,
+  89519.4,
+  80770.0,
+  57609.4,
+  58807.4,
+  53445.4,
+  52099.6,
+  47957.9,
+  45525.1,
+  43198.3,
+  33035.6,
+  31568.1,
+  29739.7,
+  29301.1,
+  26419.7,
+  137905.4,
+  130924.3,
+  94206.4,
+  85619.6,
+  61353.4,
+  60627.7,
+  56794.3,
+  54801.7,
+  50667.5,
+  48227.5,
+  45660.0,
+  33976.5,
+  32677.1,
+  31389.8,
+  30595.8,
+  27501.7,
+  141488.9,
+  136696.9,
+  98406.9,
+  90007.0,
+  64537.85,
+  63557.1,
+  59644.3,
+  57476.58,
+  53084.7,
+  50646.7,
+  47448.1,
+  35437.1,
+  34227.88,
+  32540.8,
+  31423.36,
+  28694.14,
+  145846.8,
+  142351.5,
+  103197.5,
+  94545.0,
+  67665.34,
+  66632.79,
+  62660.9,
+  60199.5,
+  55308.65,
+  52989.5,
+  49305.2,
+  36551.1,
+  36020.0,
+  33182.9,
+  32765.78,
+  29727.45
+];
+
+// ============================================================================
+// 02 参数设置：所有用户可修改项集中于 setting
+// ============================================================================
+var setting = {
+  title: '谁在领跑？一张图看清各地区GDP变化',
+  subtitle: '',                   // 副标题可选补充信息，默认留空以避免重复
+  regionScopeTemplate: 'GDP规模前{count}个省区（不含直辖市）', // 示例选样说明；替换 Power BI 数据时请同步修改
+  unit: '万亿元',              // 图上展示单位；原始输入是亿元
+  valueDivisor: 10000,      // 10000 亿元 = 1 万亿元
+  decimals: 2,
+  percentDecimals: 1,
+  periods: null,            // null = 自动按时间使用所有年份；也可设置 ['2021','2022',...]
+  regionOrder: null,        // null = 按最新年度 GDP 递减；也可传入省份名称顺序数组
+  latestPeriod: null,       // null = 最后一个年份
+  scaleMode: 'shared',      // 正式 IBCS C13 案例只使用全图统一尺度
+  showAllYearLabels: true,  // 所有小图显示简短年份；关闭则只显示首末年
+  showLatestValueOnBar: false, // 最新值已在卡片标题展示，默认不重复压盖柱顶
+  showCardBorders: true,
+  showTooltip: true,
+  animationDuration: 380,
+  font: 'Microsoft YaHei, Arial, sans-serif',
+  layout: {
+    left: 34, right: 30, top: 130, bottom: 76, // 均为像素
+    columns: 4,             // 标准 4×4；必要时根据宽高减少列数，空间不足则提示
+    columnGap: 15,
+    rowGap: 10,
+    headerHeight: 39,
+    plotBottomPadding: 22,
+    barMaxWidth: 20,
+    minCardHeight: 100,
+    minCardWidth: 188,      // 单张卡片最小宽度；低于此值不压缩标签
+    minPlotHeight: 54,     // 柱状图最小可读高度；不足时显示画布尺寸提示
+    fallbackWidth: 1280,
+    fallbackHeight: 850
+  },
+  colors: {
+    positive: '#239263',
+    negative: '#D9544D',
+    bar: '#BFC6CE',
+    barSecondary: '#D9DEE3',
+    history: '#AEB7C1',
+    latest: '#263238',
+    text: '#263238',
+    secondaryText: '#8493A2',
+    grid: '#E5E9ED',
+    background: 'transparent',
+    white: '#FFFFFF'
+  },
+  source: '数据来源：2020—2025 年各省 GDP 公开数据汇编（依据已确认案例数据，可能存在统计修订）',
+  description: '图表说明：深色为最新年度；GDP按当年价格计算；▲/▼表示相对基期的金额变化比例，未扣除价格因素，不代表实际GDP增速。'
+};
+
+// ============================================================================
+// 03 数据处理：校验、排序、动态对象数量、统一尺度和完整年度比较
+// ============================================================================
+var C = setting.colors, L = setting.layout;
+function isNil(v) { return v === null || v === undefined || String(v).trim() === ''; }
+function toNumber(v) { return isNil(v) ? null : Number(String(v).replace(/,/g, '')); }
+function escapeHtml(v) {
+  return String(v).replace(/[&<>"']/g, function(s) {
+    return {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[s];
+  });
+}
+function formatNumber(v, digits) {
+  if (v === null || v === undefined || !isFinite(v)) return '—';
+  return Number(v).toLocaleString('en-US', {
+    minimumFractionDigits: digits, maximumFractionDigits: digits
+  });
+}
+function money(v) { return v === null ? '—' : formatNumber(v / setting.valueDivisor, setting.decimals); }
+function pct(v) { return v === null ? '—' : (v > 0 ? '+' : '') + formatNumber(v, setting.percentDecimals) + '%'; }
+function arrow(v) { return v > 1e-8 ? '▲' : v < -1e-8 ? '▼' : '●'; }
+function deltaColor(v) { return v > 1e-8 ? C.positive : v < -1e-8 ? C.negative : C.secondaryText; }
+function timeSort(a,b) {
+  var x = Number(a), y = Number(b);
+  if (isFinite(x) && isFinite(y)) return x - y;
+  return a.localeCompare(b, 'zh-CN', {numeric: true});
+}
+function niceMax(v) {
+  if (!(v > 0)) return 1;
+  var exponent = Math.floor(Math.log10(v));
+  var size = Math.pow(10, exponent);
+  var unit = v / size;
+  var steps = [1,1.2,1.4,1.6,1.8,2,2.5,3,4,5,6,8,10];
+  for (var i=0; i<steps.length; i++) if (unit <= steps[i]) return steps[i]*size;
+  return 10*size;
+}
+if (!(setting.valueDivisor > 0)) throw Error('setting.valueDivisor 必须大于 0。');
+if (setting.scaleMode !== 'shared') throw Error('IBCS C13 的 scaleMode 必须为 shared，确保所有小图数值尺度一致。');
+if ([省份.length, GDP.length].some(function(n) {return n !== 年份.length;}))
+  throw Error('年份、省份、GDP 三个数组必须等长，且同一索引表示同一条记录。');
+if (!年份.length) throw Error('示例数据不能为空。');
+
+var allPeriods = Array.from(new Set(年份.map(function(x) { return String(x).trim(); }))).sort(timeSort);
+var chartPeriods = setting.periods === null ? allPeriods.slice() : setting.periods.map(String);
+if (new Set(chartPeriods).size !== chartPeriods.length) throw Error('setting.periods 存在重复年份。');
+chartPeriods.sort(timeSort);
+if (!chartPeriods.length || chartPeriods.some(function(y) {return allPeriods.indexOf(y) < 0;}))
+  throw Error('setting.periods 至少包含一个数据中存在的年份。');
+var latest = setting.latestPeriod === null ? chartPeriods[chartPeriods.length - 1] : String(setting.latestPeriod);
+if (chartPeriods.indexOf(latest) < 0) throw Error('latestPeriod 必须存在于选定的年份中。');
+
+var lookup = Object.create(null), regionsSet = new Set();
+for (var i = 0; i < 年份.length; i++) {
+  var year = String(年份[i]).trim(), region = String(省份[i]).trim();
+  var value = toNumber(GDP[i]);
+  if (!region || !year || value === null || !isFinite(value) || value < 0)
+    throw Error('第 ' + (i+1) + ' 条数据无效：年份、省份不能为空，GDP 必须为非负数字。');
+  var key = JSON.stringify([year, region]);
+  if (Object.prototype.hasOwnProperty.call(lookup, key))
+    throw Error('重复的年份+省份：' + year + ' / ' + region + '。请先在 Power BI 中汇总。');
+  lookup[key] = value;
+  regionsSet.add(region);
+}
+var regions = Array.from(regionsSet);
+if (Array.isArray(setting.regionOrder) && setting.regionOrder.length) {
+  regions.sort(function(a,b) {
+    var ia = setting.regionOrder.indexOf(a), ib = setting.regionOrder.indexOf(b);
+    return (ia < 0 ? Infinity : ia) - (ib < 0 ? Infinity : ib) || a.localeCompare(b, 'zh-CN');
+  });
+} else {
+  regions.sort(function(a,b) {
+    var va = lookup[JSON.stringify([latest,a])], vb = lookup[JSON.stringify([latest,b])];
+    return ((vb === undefined ? -Infinity : vb) - (va === undefined ? -Infinity : va)) || a.localeCompare(b,'zh-CN');
+  });
+}
+var records = regions.map(function(name) {
+  var values = chartPeriods.map(function(year) {
+    var k = JSON.stringify([year,name]);
+    return Object.prototype.hasOwnProperty.call(lookup,k) ? lookup[k] : null;
+  });
+  var firstValue = values[0];
+  var latestIndex = chartPeriods.indexOf(latest);
+  var latestValue = values[latestIndex];
+  var nominalChange = (chartPeriods.length > 1 && latest !== chartPeriods[0] && firstValue !== null && firstValue !== 0 && latestValue !== null)
+    ? (latestValue-firstValue)/Math.abs(firstValue)*100 : null;
+  return {name:name, values:values, latestValue:latestValue, change:nominalChange, latestIndex:latestIndex};
+});
+var maxGDP = records.reduce(function(m, r) {
+  return r.values.reduce(function(vMax,v) {return v !== null && v > vMax ? v : vMax;},m);
+},0);
+// 共用 Y 轴上限；至少预留约 12% 的柱顶空间。所有小图完全一致。
+var axisMax = niceMax(maxGDP * 1.08);
+var firstPeriod = chartPeriods[0];
+// 地区范围由用户设置模板生成；年份、对象数量来自实际输入，不在代码中写死。
+var regionScope = String(setting.regionScopeTemplate || '{count}个地区')
+  .replace(/\{latest\}/g, latest)
+  .replace(/\{count\}/g, String(records.length));
+// 用户可自由补充副标题字段；为空时不留下多余的分隔符。
+var subtitleText = [firstPeriod+'—'+latest, regionScope, String(setting.subtitle || '').trim()]
+  .filter(function(part) { return Boolean(part); }).join(' · ');
+
+// ============================================================================
+// 04 图表配置：像素 Grid、4×4 矩阵、统一轴与 IBCS 语义、富文本 Tooltip
+// ============================================================================
+var W = (typeof myChart !== 'undefined' && myChart && myChart.getWidth) ? myChart.getWidth() : L.fallbackWidth;
+var H = (typeof myChart !== 'undefined' && myChart && myChart.getHeight) ? myChart.getHeight() : L.fallbackHeight;
+if (!(W > 0)) W = L.fallbackWidth;
+if (!(H > 0)) H = L.fallbackHeight;
+// 根据实际宽高选列，而不是仅看宽度：先尝试 4 列，确保小图柱体不被压扁。
+var maxColumns = Math.min(Math.max(1, Math.floor(L.columns)), records.length);
+var minCardHeight = Math.max(L.minCardHeight, L.headerHeight + L.plotBottomPadding + L.minPlotHeight);
+var columns = 0, rowCount = 0, cardWidth = 0, cardHeight = 0;
+var suggestedHeight = Infinity;
+for (var candidate = maxColumns; candidate >= 1; candidate--) {
+  var cw = (W-L.left-L.right-L.columnGap*(candidate-1))/candidate;
+  if (cw < L.minCardWidth) continue;
+  var rows = Math.ceil(records.length/candidate);
+  var needed = L.top + L.bottom + rows*minCardHeight + (rows-1)*L.rowGap;
+  suggestedHeight = Math.min(suggestedHeight, needed);
+  var ch = (H-L.top-L.bottom-L.rowGap*(rows-1))/rows;
+  if (ch >= minCardHeight) {
+    columns = candidate; rowCount = rows; cardWidth = cw; cardHeight = ch;
+    break;
+  }
+}
+var layoutIsSafe = columns > 0;
+var compact = layoutIsSafe && cardHeight < L.minCardHeight;
+var topPad = compact ? Math.min(35,cardHeight*0.42) : L.headerHeight;
+var bottomPad = compact ? 18 : L.plotBottomPadding;
+var fontSize = cardWidth < 225 ? 10 : 12;
+var smallFontSize = cardWidth < 225 ? 8 : 10;
+var grids = [], xAxes = [], yAxes = [], series = [], graphics = [];
+
+function textGraphic(x,y,text,size,color,bold,align,width) {
+  return {type:'text',silent:true,z:9,style:{x:x,y:y,text:String(text),font:(bold?'bold ':'')+size+'px '+setting.font,
+    fill:color||C.text,align:align||'left',verticalAlign:'middle',width:width,overflow:'truncate'}};
+}
+function lineGraphic(x1,y1,x2,y2,color,width) {
+  return {type:'line',silent:true,z:2,shape:{x1:x1,y1:y1,x2:x2,y2:y2},style:{stroke:color||C.grid,lineWidth:width||1}};
+}
+function subtitleYear(year) { return String(year).slice(-2); }
+
+if (!layoutIsSafe) {
+  // 不强行绘制高度不足的小柱体；给 Power BI 用户明确的调整建议。
+  var minimumWidth = L.left+L.right+L.minCardWidth;
+  var warning = (suggestedHeight === Infinity)
+    ? '当前宽度 '+Math.round(W)+'px 过窄，建议至少 '+Math.ceil(minimumWidth)+'px。'
+    : '当前画布 '+Math.round(W)+' × '+Math.round(H)+'px；建议高度至少 '+Math.ceil(suggestedHeight)+'px。';
+  option = {
+    backgroundColor:C.background,
+    animation:false,
+    graphic:[
+      {type:'rect',silent:true,shape:{x:L.left,y:20,width:20,height:4},style:{fill:C.negative}},
+      textGraphic(L.left,49,setting.title,W<760?17:21,C.text,true,'left',Math.max(100,W-L.left-L.right)),
+      textGraphic(L.left,80,subtitleText,12,C.secondaryText,false,'left',Math.max(100,W-L.left-L.right)),
+      textGraphic(W/2,Math.max(150,H/2-18),'画布空间不足，无法清晰展示 '+records.length+' 张小图',Math.min(15,Math.max(11,W/38)),C.text,true,'center',Math.max(120,W-24)),
+      textGraphic(W/2,Math.max(177,H/2+12),warning,11,C.secondaryText,false,'center',Math.max(120,W-24)),
+      textGraphic(W/2,Math.max(201,H/2+36),'请增大视觉对象尺寸，或减少展示的地区数量。',11,C.secondaryText,false,'center',Math.max(120,W-24))
+    ],
+    series:[]
+  };
+} else {
+for (var j=0; j<records.length; j++) {
+  var r = records[j], row = Math.floor(j/columns), col = j%columns;
+  var x = L.left+col*(cardWidth+L.columnGap), y = L.top+row*(cardHeight+L.rowGap);
+  var chartLeft = x+8, chartRight = x+cardWidth-8;
+  var chartTop = y+topPad, chartBottom = y+cardHeight-bottomPad;
+  var chartHeight = Math.max(14,chartBottom-chartTop);
+  grids.push({left:Math.round(chartLeft),right:Math.round(W-chartRight),
+    top:Math.round(chartTop),bottom:Math.round(H-chartBottom),containLabel:false});
+  if (setting.showCardBorders) graphics.push({type:'rect',silent:true,z:0,
+    shape:{x:Math.round(x),y:Math.round(y),width:Math.round(cardWidth),height:Math.round(cardHeight),r:3},
+    style:{fill:'rgba(255,255,255,0)',stroke:C.grid,lineWidth:0.9}});
+  graphics.push(textGraphic(x+10,y+16,r.name,fontSize,C.text,true,'left',Math.max(55,cardWidth*0.43)));
+  var currentNumber = r.latestValue === null ? '—' : money(r.latestValue)+' '+setting.unit;
+  graphics.push(textGraphic(x+cardWidth-10,y+16,currentNumber,fontSize,C.text,true,'right',Math.max(70,cardWidth*0.54)));
+  var changeLabel = r.change === null ? '基期或当期数据不完整' :
+    '较'+firstPeriod+'年  '+arrow(r.change)+' '+formatNumber(Math.abs(r.change),setting.percentDecimals)+'%';
+  graphics.push(textGraphic(x+10,y+32,changeLabel,smallFontSize,
+    r.change===null?C.secondaryText:deltaColor(r.change),false,'left',cardWidth-20));
+  graphics.push(lineGraphic(chartLeft,chartBottom,chartRight,chartBottom,C.grid,0.8));
+  xAxes.push({type:'category',gridIndex:j,data:chartPeriods,boundaryGap:true,
+    axisLine:{show:false},axisTick:{show:false},splitLine:{show:false},
+    axisLabel:{interval:0,color:C.secondaryText,fontSize:cardWidth<225?8:9,margin:5,
+      formatter:function(v,ind) {
+        if (!setting.showAllYearLabels && ind!==0 && ind!==chartPeriods.length-1) return '';
+        return String(v).length===4 ? String(v).slice(-2) : String(v);
+      }}
+  });
+  yAxes.push({type:'value',gridIndex:j,min:0,max:axisMax,
+    axisLabel:{show:false},axisLine:{show:false},axisTick:{show:false},splitLine:{show:false}});
+  series.push({name:r.name,type:'bar',xAxisIndex:j,yAxisIndex:j,barMaxWidth:L.barMaxWidth,
+    barCategoryGap:'28%',z:3,animationDuration:setting.animationDuration,
+    emphasis:{focus:'series'},
+    data:r.values.map(function(v,index) {return {
+      value:v,
+      year:chartPeriods[index],rowIndex:j,
+      itemStyle:{color:chartPeriods[index]===latest?C.latest:C.history}
+    };}),
+    label:{show:setting.showLatestValueOnBar && !compact,position:'top',distance:2,
+      fontSize:9,color:C.text,formatter:function(p){return p.data.year===latest?money(p.value):'';}}
+  });
+}
+
+function tooltipText(p) {
+  var idx=p.data && p.data.rowIndex!==undefined?p.data.rowIndex:p.seriesIndex;
+  var r=records[idx];if(!r)return '';
+  var hoverYear = p.data && p.data.year !== undefined?String(p.data.year):latest;
+  var tr=function(label,value,change,selected) {
+    return '<tr style="background:'+(selected?'#F2F5F7':'transparent')+'">'+
+      '<td style="padding:5px 9px 5px 6px;color:'+C.secondaryText+'">'+escapeHtml(label)+'</td>'+
+      '<td style="padding:5px 9px;text-align:right;font-weight:'+(selected?'700':'500')+'">'+escapeHtml(value)+'</td>'+
+      '<td style="padding:5px 6px;text-align:right;color:'+(change===null?C.secondaryText:deltaColor(change))+'">'+
+        escapeHtml(change===null?'—':arrow(change)+' '+pct(change))+'</td></tr>';
+  };
+  var htmlRows='';
+  for(var i=0;i<chartPeriods.length;i++) {
+    var d=r.values[i], prev=i>0?r.values[i-1]:null;
+    var yoy=(d!==null&&prev!==null&&prev!==0)?(d-prev)/Math.abs(prev)*100:null;
+    htmlRows+=tr(chartPeriods[i],money(d),yoy,chartPeriods[i]===hoverYear);
+  }
+  return '<div style="min-width:275px;font-family:'+setting.font+';color:'+C.text+';line-height:1.5">'+
+    '<div style="font-size:14px;font-weight:700;margin-bottom:6px">'+escapeHtml(r.name)+' · '+escapeHtml(firstPeriod)+'—'+escapeHtml(latest)+'</div>'+
+    '<div style="font-size:11px;color:'+C.secondaryText+';margin-bottom:7px">GDP（'+escapeHtml(setting.unit)+'）</div>'+
+    '<table style="width:100%;border-collapse:collapse;font-size:12px">'+
+    '<thead><tr style="border-bottom:1px solid '+C.grid+'"><th style="text-align:left;padding:5px 6px">年份</th>'+ 
+    '<th style="text-align:right;padding:5px 6px">GDP</th><th style="text-align:right;padding:5px 6px">较上年金额变幅</th></tr></thead>'+htmlRows+'</table>'+ 
+    '<div style="border-top:1px solid '+C.grid+';margin-top:7px;padding-top:7px;font-weight:700;color:'+deltaColor(r.change)+'">'+
+    '较'+escapeHtml(firstPeriod)+'年金额变幅：'+escapeHtml(r.change===null?'—':arrow(r.change)+' '+pct(r.change))+'</div></div>';
+}
+
+// 标题、来源、说明：所有位置均按像素计算，不再重复标注统一尺度。
+graphics.push({type:'rect',silent:true,z:9,shape:{x:L.left,y:20,width:20,height:4},style:{fill:C.negative}});
+graphics.push(textGraphic(L.left,49,setting.title,W<760?17:21,C.text,true,'left',W-L.left-L.right));
+graphics.push(textGraphic(L.left,80,subtitleText,12,C.secondaryText,false,'left',W-L.left-L.right));
+graphics.push(textGraphic(L.left,H-48,setting.source,10,C.secondaryText,false,'left',W-L.left-L.right));
+graphics.push(textGraphic(L.left,H-28,setting.description,10,C.secondaryText,false,'left',W-L.left-L.right));
+
+option = {
+  backgroundColor:C.background,
+  animation:true,
+  grid:grids,
+  xAxis:xAxes,
+  yAxis:yAxes,
+  graphic:graphics,
+  tooltip:{trigger:'item',show:setting.showTooltip,confine:true,backgroundColor:C.white,
+    borderColor:C.grid,borderWidth:1,padding:[10,12],extraCssText:'box-shadow:0 3px 18px rgba(0,0,0,.08);',
+    textStyle:{color:C.text,fontSize:12},formatter:tooltipText},
+  series:series
+};
+} // layoutIsSafe

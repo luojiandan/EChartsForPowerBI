@@ -1,0 +1,404 @@
+﻿/**
+ * C016 | IBCS 风格 AC/PY 月度与累计双轴柱线组合图 | V3
+ * 直接粘贴到 ECharts 官方编辑器 JavaScript 区域运行；不需要 HTML。
+ * 图形：月度 PY 宽底柱、AC 窄前柱（宽度覆盖约 80%）；两条累计折线处于上方区域。
+ * 注意：左右 Y 轴独立且零点不同；独立分区只用于降低遮挡，不能跨轴比较图形高度。
+ * 示例数据源：中国汽车工业协会 2025/2026 年新能源汽车月度销量（万辆）。
+ * 此示例中 2025 年 1—9 月所列值累加为 1119.6，而公开官方累计为 1122.8；
+ * 图形只按输入月度值计算累计，不混入另一口径的累计值。
+ */
+
+// ============================================================================
+// 01 数据区域：Power BI 字段一一对应数组；行业名称/单位/来源仅在此区域声明
+// 修改数据数组即可重新计算。更换业务指标时，应同步修改以下三项数据元信息，
+// 因为 JavaScript 无法从数字推断业务名称、单位或真实来源。
+// ============================================================================
+var 数据元信息 = {
+  指标名称: '新能源汽车销量',
+  单位: '万辆',
+  来源: '中国汽车工业协会月度产销数据（工业和信息化部发布）',
+  口径备注: '本例2025年逐月累加为1,119.6万辆，官方单独公布的同期累计为1,122.8万辆。' // 可留空
+};
+var 年份 = [
+  '2025','2025','2025','2025','2025','2025','2025','2025','2025',
+  '2026','2026','2026','2026','2026','2026','2026','2026','2026'
+];
+var 月份 = [
+  '1','2','3','4','5','6','7','8','9',
+  '1','2','3','4','5','6','7','8','9'
+];
+var 度量值 = [
+  94.4,89.2,123.7,122.6,130.7,132.9,126.2,139.5,160.4,
+  94.5,76.5,125.2,134.4,149.6,164.3,156.1,164.3,182.3
+];
+
+// ============================================================================
+// 02 用户设置区域：所有可修改设置均集中在这里；无 PL 或行业专用计算变量
+// ============================================================================
+var setting = {
+  title: '月度与累计：实际和上年同期如何变化？',
+  unitDecimals: 1,
+  percentDecimals: 1,
+  footnote: '累计值由图中逐月数据直接相加；两轴刻度独立，不跨轴比较柱体与折线的相对高度。',
+  actualYear: 'auto',              // 自动取最后一个年份为 AC
+  previousYear: 'auto',            // 自动取 AC 前一个年份为 PY
+  cutoffMonth: 'previousMonth',    // 自动截至当前日历年的上一完整月；也可填 1~12 / 'all'
+  dataMonthLimit: 'available',     // 最新年份缺哪些月份就不延伸，禁止自动填 0
+  requireCompleteMonths: true,    // 月份断档时累计折线保持 null，不假装连续
+  showSummary: true,
+  showLastYTDLabels: true,
+  showMonthlyLastLabels: false,
+  showLegend: true,
+  showAxisNames: true,            // 用区域内标签代替容易混淆的双轴顶端标题
+  showBandDivider: true,           // 月度/累计区域之间的弱分隔线
+  showGridLines: true,            // 仅在下方月度区域绘制参考线
+  showYAxisLabels: true,
+  positiveIsGood: true,           // 若指标是成本等，设置为 false（颜色语义变更）
+  legendSelectedMode: false,
+  barWidth: 40,                   // PY 背景柱宽度（px）
+  barOverlap: 0.80,               // AC 前景柱覆盖 PY 的宽度比例：80%，两侧露出各约 10%
+  monthlyBandMaxFraction: 0.38,   // 月度最高柱不超过绘图区约 38% 的高度
+  ytdBandMinFraction: 0.52,       // 右轴累计折线最低点目标不低于约 52% 绘图区高度
+  chartWidthFallback: 1250,
+  chartHeightFallback: 760,
+  minChartWidth: 580,
+  minChartHeight: 470,
+  layout: {
+    left: 77,
+    right: 99,
+    top: 190,
+    bottom: 120,
+    smallTop: 183,
+    smallBottom: 116,
+    titleLeft: 32,
+    redDashTop: 17,
+    titleTop: 34,
+    subtitleTop: 73,
+    legendTop: 115,
+    footerLeft: 32,
+    footerBottom: 62,
+    axisNameGap: 26,
+    summaryMarginRight: 52,
+    summaryWidth: 190
+  },
+  colors: {
+    positive: '#239263',
+    negative: '#D9544D',
+    previous: '#AEB7C1',
+    actual: '#263238',
+    text: '#263238',
+    secondary: '#8493A2',
+    gridLine: '#E5E9ED',
+    background: 'transparent'
+  }
+};
+
+// ============================================================================
+// 03 数据处理：自动年度分组、月份截取、连续月份检查、YTD、动态尺度
+// ============================================================================
+var C = setting.colors;
+var L = setting.layout;
+// 数据元信息只在数据区声明，图表核心计算不包含任何行业特定名称。
+var metricName=String(数据元信息.指标名称 || '指标值');
+var metricUnit=String(数据元信息.单位 || '');
+var dataSource=String(数据元信息.来源 || '用户提供的数据');
+var dataNote=String(数据元信息.口径备注 || '');
+var width = (typeof myChart !== 'undefined' && myChart && myChart.getWidth)
+  ? myChart.getWidth() : setting.chartWidthFallback;
+var height = (typeof myChart !== 'undefined' && myChart && myChart.getHeight)
+  ? myChart.getHeight() : setting.chartHeightFallback;
+width = Math.max(1, Number(width) || setting.chartWidthFallback);
+height = Math.max(1, Number(height) || setting.chartHeightFallback);
+var small = width < 990;
+
+function fmt(v, decimals) {
+  if (v === null || v === undefined || !isFinite(Number(v))) return '—';
+  return Number(v).toLocaleString('zh-CN', {
+    minimumFractionDigits: decimals === undefined ? setting.unitDecimals : decimals,
+    maximumFractionDigits: decimals === undefined ? setting.unitDecimals : decimals
+  });
+}
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function numeric(v) {
+  return v !== null && v !== undefined && String(v).trim() !== '' && isFinite(Number(v));
+}
+var invalidInput = 年份.length !== 月份.length || 年份.length !== 度量值.length;
+var rows = [];
+if (!invalidInput) {
+  for (var i=0; i<年份.length; i++) {
+    var yy = Number(String(年份[i]).trim());
+    var mm = Number(String(月份[i]).replace('月','').trim());
+    if (!Number.isInteger(yy) || !Number.isInteger(mm) || mm<1 || mm>12 || !numeric(度量值[i])) continue;
+    rows.push({year:yy, month:mm, value:Number(度量值[i])});
+  }
+}
+var years = Array.from(new Set(rows.map(function(r){return r.year;}))).sort(function(a,b){return a-b;});
+var acYear = setting.actualYear==='auto' ? years[years.length-1] : Number(setting.actualYear);
+var pyYear = setting.previousYear==='auto' ? acYear-1 : Number(setting.previousYear);
+var mapAC={}, mapPY={};
+rows.forEach(function(r){
+  var map = r.year===acYear ? mapAC : r.year===pyYear ? mapPY : null;
+  if (map) map[r.month]=(map[r.month]===undefined?0:map[r.month])+r.value;
+});
+var now = new Date();
+var cutoff=12;
+if (setting.cutoffMonth==='previousMonth') {
+  if (Number(acYear)===now.getFullYear()) cutoff=now.getMonth();
+} else if (setting.cutoffMonth!=='all') {
+  cutoff=Math.max(1,Math.min(12,Math.floor(Number(setting.cutoffMonth)||12)));
+}
+var acAvailable=Math.max.apply(null,Object.keys(mapAC).map(Number).concat([0]));
+if (setting.dataMonthLimit==='available') cutoff=Math.min(cutoff,acAvailable);
+var months=[];
+for(var m=1; m<=cutoff; m++) months.push(m);
+var cats=months.map(function(m){return m+'月';});
+var acMonth=months.map(function(m){return mapAC[m]===undefined?null:mapAC[m];});
+var pyMonth=months.map(function(m){return mapPY[m]===undefined?null:mapPY[m];});
+function cumsum(arr){
+  var sum=0, complete=true;
+  return arr.map(function(v){
+    if(v===null) complete=false;
+    if (v!==null) sum+=v;
+    return (!complete && setting.requireCompleteMonths) ? null : sum;
+  });
+}
+var acYTD=cumsum(acMonth), pyYTD=cumsum(pyMonth);
+function lastIndex(arr){for(var q=arr.length-1;q>=0;q--)if(arr[q]!==null)return q;return -1;}
+var lastAC=lastIndex(acYTD), lastPY=lastIndex(pyYTD);
+var lastBoth=-1;
+for(var k=0;k<months.length;k++)if(acYTD[k]!==null && pyYTD[k]!==null)lastBoth=k;
+var latestMonth=lastBoth>=0?months[lastBoth]:(months.length?months[months.length-1]:null);
+var totalAC=lastBoth>=0?acYTD[lastBoth]:null;
+var totalPY=lastBoth>=0?pyYTD[lastBoth]:null;
+var diff=totalAC!==null && totalPY!==null?totalAC-totalPY:null;
+var rate=diff!==null && totalPY!==0?diff/Math.abs(totalPY)*100:null;
+function diffColor(v){
+  if(v===null || !isFinite(v) || Math.abs(v)<1e-9)return C.secondary;
+  return (v>0)===setting.positiveIsGood?C.positive:C.negative;
+}
+function diffText(v,pct){
+  if(v===null)return '—';
+  return (v>0?'▲ ':v<0?'▼ ':'')+fmt(Math.abs(v),pct?setting.percentDecimals:setting.unitDecimals)+(pct?'%':'');
+}
+function niceMax(value, steps) {
+  var target=Math.max(value,0.00001)/steps;
+  var magnitude=Math.pow(10,Math.floor(Math.log(target)/Math.LN10));
+  var cs=[1,2,2.5,3,5,10];
+  var step=10*magnitude;
+  for(var i=0;i<cs.length;i++)if(cs[i]*magnitude>=target-1e-10){step=cs[i]*magnitude;break;}
+  return {max:+(step*steps).toPrecision(12),interval:+step.toPrecision(12)};
+}
+var allMonth=acMonth.concat(pyMonth).filter(function(v){return v!==null && isFinite(v);});
+var allYTD=acYTD.concat(pyYTD).filter(function(v){return v!==null && isFinite(v);});
+var maxMonthly=Math.max.apply(null,allMonth.concat([1]));
+var maxYTD=Math.max.apply(null,allYTD.concat([1]));
+// 左轴从零起步，但人为多留顶部空间，让月度柱集中在下部，最高柱约 38% 高。
+var leftAxis=niceMax(maxMonthly/Math.max(.20,Math.min(.46,setting.monthlyBandMaxFraction)),5);
+// 右轴同时包含不可见的负半轴：0 线位于绘图区中间。
+// 正累计值本身未做加减/缩放，仍由右轴真实坐标映射；但上下两个轴的零点不同。
+var rightAxis=niceMax(maxYTD*1.08,5);
+var ytdAxisMax=rightAxis.max;
+var nonnegativeYTD=allYTD.filter(function(v){return v>=0;});
+var lowestYTD=nonnegativeYTD.length?Math.min.apply(null,nonnegativeYTD):0;
+var bandFloor=Math.max(0.51,Math.min(0.68,Number(setting.ytdBandMinFraction)||0.52));
+var proposedMin=(lowestYTD-bandFloor*ytdAxisMax)/(1-bandFloor);
+var ytdAxisMin=Math.min(0,Math.floor(proposedMin/rightAxis.interval)*rightAxis.interval);
+var leftFraction=maxMonthly/leftAxis.max;
+var minLineFraction=(lowestYTD-ytdAxisMin)/(ytdAxisMax-ytdAxisMin);
+// 为通用模板保护：如果数据有负数或两图形空间太挤，提示换用其他可视化类型。
+var inputHasNegative=allMonth.some(function(v){return v<0;}) || allYTD.some(function(v){return v<0;});
+var failure=invalidInput?'年份、月份、度量值三个输入数组的长度必须相同。':
+  !rows.length?'没有有效的年月及数值，请检查三个输入数组。':
+  !years.includes(acYear)?'缺少 AC 年度数据。':
+  !Object.keys(mapPY).length?'缺少上一年 PY 的月度数据。':
+  !months.length?'暂无已经完成的月份或有效月度数据。':
+  inputHasNegative?'此版上下分区组合图适用于非负金额/数量，不能直接表示负数月度值。':
+  (lastAC<0 || lastPY<0)?'AC/PY 累计数据缺失，请检查完整月份。':
+  null;
+var tooSmall=width<setting.minChartWidth || height<setting.minChartHeight;
+var fullSubtitle=acYear+' vs '+pyYear+' · 1—'+(latestMonth||'—')+'月 · '+metricName+
+  '月度与累计比较'+(metricUnit?'（'+metricUnit+'）':'');
+
+// 文字元素：文字定位全部使用明确的左边界，不通过右对齐覆盖容器边界。
+function textAt(x,y,t,style){
+  return {type:'text',silent:true,left:x,top:y,
+    style:Object.assign({text:String(t),fill:C.text,font:'12px sans-serif'},style||{})};
+}
+var graphics=[
+  {type:'rect',silent:true,left:L.titleLeft,top:L.redDashTop,
+    shape:{width:19,height:4},style:{fill:C.negative}},
+  textAt(L.titleLeft,L.titleTop,setting.title,{font:'bold '+(small?19:22)+'px sans-serif'}),
+  textAt(L.titleLeft,L.subtitleTop,fullSubtitle,{font:(small?11:12)+'px sans-serif',fill:C.secondary,
+    width:width-L.titleLeft*2,overflow:'truncate'}),
+  textAt(L.footerLeft,height-L.footerBottom,'数据来源：'+dataSource,
+    {font:'10px sans-serif',fill:C.secondary,width:Math.max(50,width-2*L.footerLeft),overflow:'break'}),
+  textAt(L.footerLeft,height-L.footerBottom+18,'图表说明：'+setting.footnote+(dataNote?' '+dataNote:''),
+    {font:'10px sans-serif',fill:C.secondary,width:Math.max(50,width-2*L.footerLeft),overflow:'break',lineHeight:14})
+];
+if(setting.showSummary && rate!==null && width>=900){
+  var summaryW=L.summaryWidth;
+  var summaryX=width-L.summaryMarginRight-summaryW;
+  var summaryStyle={width:summaryW,overflow:'truncate'};
+  graphics.push(textAt(summaryX,22,'截至'+latestMonth+'月累计同比',
+    Object.assign({font:'11px sans-serif',fill:C.secondary},summaryStyle)));
+  graphics.push(textAt(summaryX,42,diffText(rate,true),
+    Object.assign({font:'bold 18px sans-serif',fill:diffColor(diff)},summaryStyle)));
+}
+
+// 垂直空间：上半部分显示累计折线，下半部分显示月度柱；
+// 不改变金额，也不使用共享 Y 轴，分隔线始终在两种图形之间。
+var plotLeft=L.left;
+var plotRight=small?80:L.right;
+var plotTop=small?L.smallTop:L.top;
+var plotBottom=small?L.smallBottom:L.bottom;
+var plotWidth=Math.max(1,width-plotLeft-plotRight);
+var plotHeight=Math.max(1,height-plotTop-plotBottom);
+var bandDividerFraction=(leftFraction+minLineFraction)/2;
+var bandDividerY=Math.round(plotTop+plotHeight*(1-bandDividerFraction));
+function thinLineAt(y, opacity) {
+  return {type:'rect',silent:true,left:plotLeft,top:Math.round(y),
+    shape:{width:plotWidth,height:1},style:{fill:C.gridLine,opacity:opacity}};
+}
+// 参考线只画在月度柱所在的低位区间，不延伸到累计折线区。
+var visibleMonthlyTick= Math.ceil(maxMonthly/leftAxis.interval-1e-10)*leftAxis.interval;
+if(setting.showGridLines && !failure && !tooSmall){
+  for(var gv=leftAxis.interval;gv<=visibleMonthlyTick+1e-8;gv+=leftAxis.interval){
+    var gy=plotTop+plotHeight*(1-gv/leftAxis.max);
+    if(gy>bandDividerY+5) graphics.push(thinLineAt(gy,.42));
+  }
+}
+if(setting.showBandDivider && !failure && !tooSmall) graphics.push(thinLineAt(bandDividerY,.85));
+if(setting.showAxisNames && !failure && !tooSmall){
+  graphics.push(textAt(plotLeft+2,plotTop+9,'累计 · 右轴'+(metricUnit?'（'+metricUnit+'）':''),
+    {font:'11px sans-serif',fill:C.secondary}));
+  graphics.push(textAt(plotLeft+2,bandDividerY+10,'月度 · 左轴'+(metricUnit?'（'+metricUnit+'）':''),
+    {font:'11px sans-serif',fill:C.secondary}));
+}
+
+// ============================================================================
+// 04 ECharts option：同一 Grid、真实双轴、PY 宽底柱和 AC 窄前柱、上方累计折线
+// ============================================================================
+var monthlyPYName='月度 · '+pyYear+' PY';
+var monthlyACName='月度 · '+acYear+' AC';
+var ytdPYName='累计 · '+pyYear+' PY';
+var ytdACName='累计 · '+acYear+' AC';
+var pyBarWidth=small?Math.min(31,setting.barWidth):setting.barWidth;
+var overlap=Math.max(0.45,Math.min(.95,Number(setting.barOverlap)||0.80));
+var acBarWidth=Math.max(5,Math.round(pyBarWidth*overlap));
+// ECharts 组柱布局：等中心宽底柱 + 窄前柱，露出背景柱左右边缘。
+// 两根柱的宽度范围内，AC 覆盖 PY 宽度的 overlap 比例。
+var barGap=(-(1+overlap)*50)+'%';
+function barValues(arr,labelColor){
+  return arr.map(function(v,i){
+    if(!setting.showMonthlyLastLabels || i!==arr.length-1 || v===null)return v;
+    return {value:v,label:{show:true,position:'top',distance:5,fontSize:10,
+      color:labelColor,formatter:fmt(v)}};
+  });
+}
+function lineValues(arr,last,shortName,labelColor,loc){
+  return arr.map(function(v,i){
+    if(v===null || !setting.showLastYTDLabels || i!==last)return v;
+    return {value:v,label:{show:true,position:loc,distance:9,color:labelColor,
+      fontSize:11,fontWeight:600,backgroundColor:'rgba(255,255,255,.92)',padding:[3,4],
+      formatter:shortName+' YTD '+fmt(v)}};
+  });
+}
+var series=[
+  {name:monthlyPYName,type:'bar',xAxisIndex:0,yAxisIndex:0,
+    barWidth:pyBarWidth,barGap:barGap,z:2,itemStyle:{color:C.previous},
+    emphasis:{focus:'series'},data:barValues(pyMonth,C.secondary)},
+  {name:monthlyACName,type:'bar',xAxisIndex:0,yAxisIndex:0,
+    barWidth:acBarWidth,barGap:barGap,z:3,itemStyle:{color:C.actual},
+    emphasis:{focus:'series'},data:barValues(acMonth,C.text)},
+  {name:ytdPYName,type:'line',xAxisIndex:0,yAxisIndex:1,connectNulls:false,
+    smooth:false,symbol:'emptyCircle',symbolSize:5,showSymbol:true,z:7,
+    lineStyle:{color:C.previous,width:2,type:'dashed'},itemStyle:{color:C.previous},
+    emphasis:{focus:'series'},data:lineValues(pyYTD,lastPY,'PY',C.secondary,'bottom')},
+  {name:ytdACName,type:'line',xAxisIndex:0,yAxisIndex:1,connectNulls:false,
+    smooth:false,symbol:'circle',symbolSize:5,showSymbol:true,z:8,
+    lineStyle:{color:C.actual,width:2.6,type:'solid'},itemStyle:{color:C.actual},
+    emphasis:{focus:'series'},data:lineValues(acYTD,lastAC,'AC',C.text,'top')}
+];
+function tooltipFn(params){
+  var idx=params && params.length?params[0].dataIndex:-1;
+  if(idx<0||idx>=months.length)return '';
+  var unitHeader=metricUnit?'（'+esc(metricUnit)+'）':'';
+  var ac=acMonth[idx],py=pyMonth[idx],ay=acYTD[idx],pyy=pyYTD[idx];
+  var d=(ac!==null&&py!==null)?ac-py:null;
+  var yd=(ay!==null&&pyy!==null)?ay-pyy:null;
+  var p=d!==null&&py!==0?d/Math.abs(py)*100:null;
+  var yp=yd!==null&&pyy!==0?yd/Math.abs(pyy)*100:null;
+  function cellRow(n,a,b,color){
+    return '<tr><td style="padding:6px 9px 6px 0;color:'+color+'">'+esc(n)+
+      '</td><td style="text-align:right;padding:6px 8px">'+fmt(a)+
+      '</td><td style="text-align:right;padding:6px 0 6px 9px">'+fmt(b)+'</td></tr>';
+  }
+  function diffRow(n,a,b){
+    return '<tr><td style="padding:6px 9px 6px 0;color:'+C.secondary+'">'+esc(n)+
+      '</td><td style="text-align:right;padding:6px 8px;font-weight:600;color:'+diffColor(a)+'">'+diffText(a,false)+
+      '</td><td style="text-align:right;padding:6px 0 6px 9px;font-weight:600;color:'+diffColor(a)+'">'+diffText(b,true)+'</td></tr>';
+  }
+  return '<div style="min-width:295px;max-width:360px;font:12px/1.4 sans-serif;color:'+C.text+'">'+
+    '<div style="font-size:14px;font-weight:700;padding:0 0 9px;border-bottom:1px solid '+C.gridLine+'">'+
+    acYear+'年'+months[idx]+'月 · '+esc(metricName)+'</div>'+
+    '<table style="border-collapse:collapse;width:100%;margin-top:5px"><thead><tr style="color:'+C.secondary+'">'+
+    '<th style="text-align:left;font-weight:400">情景</th><th style="text-align:right;font-weight:400">当月（'+esc(metricUnit)+
+    '）</th><th style="text-align:right;font-weight:400">1—'+months[idx]+'月累计</th></tr></thead>'+
+    cellRow('● AC · '+acYear,ac,ay,C.actual)+cellRow('● PY · '+pyYear,py,pyy,C.previous)+
+    '</table><div style="border-top:1px solid '+C.gridLine+';margin-top:7px"></div>'+
+    '<table style="border-collapse:collapse;width:100%"><thead><tr style="color:'+C.secondary+'">'+
+    '<th style="text-align:left;font-weight:400">差异</th><th style="text-align:right;font-weight:400">增减额（'+esc(metricUnit)+
+    '）</th><th style="text-align:right;font-weight:400">增减率</th></tr></thead>'+
+    diffRow('当月 △PY',d,p)+diffRow('累计 △PY',yd,yp)+
+    '</table></div>';
+}
+option={
+  backgroundColor:C.background,
+  animationDuration:600,
+  animationDurationUpdate:300,
+  textStyle:{fontFamily:'Microsoft YaHei, PingFang SC, sans-serif',color:C.text},
+  graphic:graphics,
+  grid:{left:L.left,right:small?80:L.right,top:small?L.smallTop:L.top,
+    bottom:small?L.smallBottom:L.bottom,containLabel:false},
+  tooltip:{trigger:'axis',appendToBody:true,confine:true,renderMode:'html',
+    backgroundColor:'#FFFFFF',borderColor:C.gridLine,borderWidth:1,
+    padding:[12,14],extraCssText:'box-shadow:0 7px 24px rgba(38,50,56,.12);border-radius:6px;',
+    axisPointer:{type:'shadow',shadowStyle:{color:'rgba(174,183,193,.08)'}},
+    formatter:tooltipFn},
+  legend:{show:setting.showLegend,selectedMode:setting.legendSelectedMode,
+    top:L.legendTop,left:L.titleLeft,itemGap:small?11:20,itemWidth:17,itemHeight:9,
+    textStyle:{fontSize:small?10:11,color:C.text},
+    data:[monthlyPYName,monthlyACName,ytdPYName,ytdACName]},
+  xAxis:{type:'category',data:cats,boundaryGap:true,
+    axisLine:{lineStyle:{color:C.gridLine,width:1}},axisTick:{show:false},
+    axisLabel:{color:C.secondary,fontSize:11,margin:13},splitLine:{show:false}},
+  yAxis:[
+    {type:'value',name:'',
+      min:0,max:leftAxis.max,interval:leftAxis.interval,
+      axisLine:{show:false},axisTick:{show:false},
+      axisLabel:{show:setting.showYAxisLabels,color:C.secondary,fontSize:10,
+        formatter:function(v){return v<=visibleMonthlyTick+1e-8?fmt(v,0):'';}},
+      splitLine:{show:false}},
+    {type:'value',name:'',
+      min:ytdAxisMin,max:ytdAxisMax,interval:rightAxis.interval,
+      axisLine:{show:false},axisTick:{show:false},
+      // 下半区用于错开月度柱，不显示与累计业务无关的负数虚拟刻度。
+      axisLabel:{show:setting.showYAxisLabels,color:C.secondary,fontSize:10,
+        formatter:function(v){return v<rightAxis.interval-1e-8?'':fmt(v,0);}},
+      splitLine:{show:false}}
+  ],
+  series:series
+};
+if (failure || tooSmall) {
+  var message=failure||('当前画布 '+Math.round(width)+'×'+Math.round(height)+
+    '，建议至少 '+setting.minChartWidth+'×'+setting.minChartHeight+' px。');
+  option.series=[];
+  option.legend.show=false;
+  option.xAxis.show=false;
+  option.yAxis.forEach(function(y){y.show=false;});
+  option.graphic=graphics.concat([textAt('center',Math.round(height/2),message,
+    {font:'14px sans-serif',fill:C.secondary,width:Math.max(160,width-90),align:'center',overflow:'break'})]);
+}
