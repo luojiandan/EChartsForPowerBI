@@ -1,0 +1,7 @@
+﻿文件说明：
+1、图表代码.txt
+  - 这个记事本中的内容，可以直接复制到ECharts官方编辑器中运行查看效果
+  - 拷贝到ECharts for PowerBI中后，替换第1部分的示例数据即可
+  - 官方编辑器地址：https://echarts.apache.org/examples/zh/editor.html?c=line-simple
+
+2、该案例是基于折线图改造，对增加、减少通过颜色进行区分。

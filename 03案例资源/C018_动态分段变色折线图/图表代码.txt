@@ -1,0 +1,194 @@
+// C018 - Dynamic Segment Color Line Chart
+// ECharts official editor / ECharts for Power BI
+// Data: China automobile monthly retail volume, 2023-2025 (10,000 vehicles)
+// Source: https://autolink.sae-china.org/rankings/total
+
+// 01. 数据设置
+var years = [
+  '2023','2023','2023','2023','2023','2023','2023','2023','2023','2023','2023','2023',
+  '2024','2024','2024','2024','2024','2024','2024','2024','2024','2024','2024','2024',
+  '2025','2025','2025','2025','2025','2025','2025','2025','2025','2025','2025','2025'
+];
+var months = [
+  '01','02','03','04','05','06','07','08','09','10','11','12',
+  '01','02','03','04','05','06','07','08','09','10','11','12',
+  '01','02','03','04','05','06','07','08','09','10','11','12'
+];
+var values = [
+  119.2,130.5,148.7,152.2,164.6,181.8,170.8,186.3,195.5,197.5,202.8,231.2,
+  198.3,107.8,165.2,150.1,167.9,173.0,169.1,188.1,208.4,224.4,241.3,262.5,
+  178.8,139.7,194.8,176.9,196.4,210.1,186.7,203.3,226.3,227.0,224.3,227.3
+];
+
+// 02. 参数设置
+var setting = {
+  title: '中国汽车月度零售量：上涨与回落一目了然',
+  subtitle: '2023—2025年｜单位：万辆｜绿色表示环比增加，红色表示环比减少',
+  metricName: '汽车零售量',
+  unit: '万辆',
+  source: '数据来源：中国汽车工程学会汽车数据平台（全部车型·零售量）',
+  note: '图表说明：颜色表示相邻月份的环比变化；月度波动受季节性等因素影响。',
+  positiveColor: '#239263',
+  negativeColor: '#D9544D',
+  neutralColor: '#AEB7C1',
+  textColor: '#263238',
+  secondaryColor: '#8493A2',
+  gridColor: '#E5E9ED',
+  backgroundColor: 'transparent',
+  lineWidth: 3,
+  symbolSize: 6,
+  showSymbols: false, // false: only high / low / latest key points remain visible
+  showKeyLabels: true,
+  showYearDivider: true,
+  showArea: false,
+  tooltipAxisPointer: 'line',
+  tooltipSnap: true,
+  tooltipFollowMouse: true,
+  tooltipOffsetX: 18,
+  tooltipOffsetY: 16,
+  labelDecimals: 1,
+  changeDecimals: 1,
+  percentDecimals: 1,
+  animationDuration: 850,
+  grid: { left: 60, right: 28, top: 114, bottom: 91 }
+};
+
+// 03. VALIDATE / NORMALIZE
+if (years.length !== months.length || years.length !== values.length || values.length < 2) {
+  throw new Error('Input arrays must have equal lengths and contain at least two rows.');
+}
+var records = years.map(function (year, i) {
+  var value = Number(values[i]);
+  if (!Number.isFinite(value)) throw new Error('Invalid numeric value at index ' + i);
+  var month = String(months[i]).padStart(2, '0');
+  return { year: String(year), month: month, date: String(year) + '-' + month, value: value };
+});
+records.sort(function (a, b) { return a.date.localeCompare(b.date); });
+for (var i = 1; i < records.length; i++) {
+  if (records[i].date === records[i - 1].date) throw new Error('Duplicate period: ' + records[i].date);
+}
+var categories = records.map(function (r) { return r.date; });
+var nums = records.map(function (r) { return r.value; });
+var highIndex = nums.indexOf(Math.max.apply(null, nums));
+var lowIndex = nums.indexOf(Math.min.apply(null, nums));
+var lastIndex = nums.length - 1;
+function fmt(v, decimals) { return Number(v).toLocaleString('zh-CN', {minimumFractionDigits:decimals, maximumFractionDigits:decimals}); }
+function directionColor(diff) { return diff > 0 ? setting.positiveColor : diff < 0 ? setting.negativeColor : setting.neutralColor; }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+// 04. SEGMENT SERIES: each pair has its own independent color
+var series = [];
+for (var j = 1; j < nums.length; j++) {
+  var segment = new Array(nums.length).fill(null);
+  segment[j - 1] = nums[j - 1];
+  segment[j] = nums[j];
+  series.push({
+    name: 'Segment ' + j, type: 'line', data: segment, connectNulls: false,
+    showSymbol: false, silent: true, animation: true, smooth: false,
+    lineStyle: { width: setting.lineWidth, color: directionColor(nums[j] - nums[j - 1]), cap: 'round' },
+    emphasis: { disabled: true }, z: 3
+  });
+}
+
+// Continuous invisible line provides a stable category-axis tooltip anchor.
+// Segment series remain responsible for all visible colors.
+series.push({
+  name: '__axis_tooltip__', type: 'line', data: nums,
+  symbol: 'circle', symbolSize: Math.max(8, setting.symbolSize + 2),
+  showSymbol: false, silent: false, smooth: false,
+  lineStyle: { opacity: 0, width: 0 }, itemStyle: { opacity: 0 },
+  emphasis: { disabled: false, scale: 1.2, itemStyle: { color: setting.textColor, opacity: 1, borderColor: '#FFFFFF', borderWidth: 2 } }, z: 0
+});
+
+// Overlay point series handles optional labels and markers.
+series.push({
+  name: setting.metricName, type: 'scatter', data: nums,
+  symbolSize: function (p) {
+    var i = p.dataIndex;
+    var isKey = i === highIndex || i === lowIndex || i === lastIndex;
+    return (setting.showSymbols || isKey) ? setting.symbolSize : 0;
+  },
+  silent: true,
+  itemStyle: { color: function(p) { return p.dataIndex === 0 ? setting.neutralColor : directionColor(nums[p.dataIndex] - nums[p.dataIndex-1]); }, borderColor: '#FFFFFF', borderWidth: 1 },
+  label: {
+    show: setting.showKeyLabels, position: 'top', distance: 9,
+    formatter: function (p) {
+      var i = p.dataIndex;
+      if (i !== highIndex && i !== lowIndex && i !== lastIndex) return '';
+      return '{v|' + fmt(nums[i], setting.labelDecimals) + '}';
+    },
+    rich: { v: { color: setting.textColor, fontSize: 12, fontWeight: 700, backgroundColor: '#FFFFFF', padding: [3,4], borderRadius: 3 } }
+  },
+  z: 6
+});
+
+// 05. YEAR DIVIDERS AND TITLE/SOURCE
+var graphic = [
+  {type:'rect', left:20, top:21, shape:{width:19,height:4}, style:{fill:setting.negativeColor}},
+  {type:'text', left:20, top:34, style:{text:setting.title,fill:setting.textColor,font:'bold 20px sans-serif'}},
+  {type:'text', left:20, top:65, style:{text:setting.subtitle,fill:setting.secondaryColor,font:'12px sans-serif'}},
+  {type:'text', left:20, bottom:38, style:{text:setting.source,fill:setting.secondaryColor,font:'10px sans-serif'}},
+  {type:'text', left:20, bottom:21, style:{text:setting.note,fill:setting.secondaryColor,font:'10px sans-serif'}}
+];
+
+// 06. FINAL OPTION
+option = {
+  backgroundColor: setting.backgroundColor,
+  animationDuration: setting.animationDuration,
+  grid: setting.grid,
+  graphic: graphic,
+  tooltip: {
+    trigger: 'axis', triggerOn: 'mousemove|click', confine: true, appendToBody: false,
+    // Near the cursor by default; ECharts confines it to the chart boundary.
+    position: function (point, params, dom, rect, size) {
+      if (!setting.tooltipFollowMouse) return null;
+      var tw = size.contentSize[0], th = size.contentSize[1];
+      var vw = size.viewSize[0], vh = size.viewSize[1];
+      var x = point[0] + setting.tooltipOffsetX;
+      var y = point[1] + setting.tooltipOffsetY;
+      if (x + tw > vw - 6) x = point[0] - tw - setting.tooltipOffsetX;
+      if (y + th > vh - 6) y = point[1] - th - setting.tooltipOffsetY;
+      return [Math.max(6, Math.min(x, vw - tw - 6)), Math.max(6, Math.min(y, vh - th - 6))];
+    },
+    axisPointer: { type: setting.tooltipAxisPointer, snap: setting.tooltipSnap,
+      lineStyle: { color: setting.secondaryColor, width: 1, type: 'dashed' },
+      label: { show: false } },
+    backgroundColor: '#FFFFFF', borderColor: setting.gridColor, borderWidth: 1,
+    padding: [12,14], textStyle: {color:setting.textColor,fontSize:12},
+    formatter: function(params) {
+      var p = params.find(function(item) { return item.seriesName === '__axis_tooltip__'; });
+      if (!p) return '';
+      var i = p.dataIndex, curr = nums[i], previous = i > 0 ? nums[i-1] : null;
+      var diff = previous === null ? null : curr-previous;
+      var pct = previous === null || previous === 0 ? null : diff/Math.abs(previous)*100;
+      var c = diff === null ? setting.neutralColor : directionColor(diff);
+      var row = function(label, val, color) { return '<div style="display:flex;justify-content:space-between;gap:28px;margin-top:7px"><span style="color:#8493A2">'+label+'</span><b style="color:'+(color||'#263238')+'">'+val+'</b></div>'; };
+      var html = '<div style="min-width:205px;font-family:Arial,sans-serif">' +
+        '<div style="font-size:14px;font-weight:700;color:#263238;padding-bottom:7px;border-bottom:1px solid #E5E9ED">'+esc(categories[i])+'</div>' +
+        row(esc(setting.metricName),fmt(curr,setting.labelDecimals)+' '+esc(setting.unit));
+      if (previous !== null) {
+        html += row('上期',fmt(previous,setting.labelDecimals)+' '+esc(setting.unit));
+        html += row('环比增减额',(diff>0?'+':'')+fmt(diff,setting.changeDecimals)+' '+esc(setting.unit),c);
+        html += row('环比增长率',pct===null?'—':(pct>0?'+':'')+fmt(pct,setting.percentDecimals)+'%',c);
+      } else html += '<div style="color:#8493A2;margin-top:8px">首期无环比基期</div>';
+      return html+'</div>';
+    }
+  },
+  xAxis: {
+    type:'category', boundaryGap:false, data:categories,
+    axisLine:{lineStyle:{color:setting.gridColor}}, axisTick:{show:false},
+    axisPointer:{show:true,snap:setting.tooltipSnap},
+    axisLabel:{color:setting.secondaryColor,margin:13,interval:0,
+      formatter:function(v,i){return records[i].month==='01' ? records[i].year+'年' : (records[i].month==='07'?'7月':'');}
+    },
+    splitLine:{show:false}
+  },
+  yAxis: {
+    type:'value', scale:true, name:setting.unit, nameLocation:'end', nameGap:12,
+    nameTextStyle:{color:setting.secondaryColor,fontSize:11,align:'right'},
+    axisLine:{show:false}, axisTick:{show:false},
+    axisLabel:{color:setting.secondaryColor,formatter:function(v){return fmt(v,0);}},
+    splitLine:{show:true,lineStyle:{color:setting.gridColor,type:'dashed'}}
+  },
+  series: series
+};
