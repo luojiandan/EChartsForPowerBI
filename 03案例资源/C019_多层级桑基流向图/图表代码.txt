@@ -1,0 +1,462 @@
+﻿
+// 一、原始数据：三个平行一维数组，替换数据无需修改下面的节点配置逻辑
+// 注意：新增区域为按既有“其他市场”分摊的模拟值，并非官方分地区统计
+const sourceNodes = [
+  "中国",
+  "中国",
+  "中国",
+  "电气设备",
+  "电气设备",
+  "电气设备",
+  "电气设备",
+  "电气设备",
+  "电气设备",
+  "电气设备",
+  "电气设备",
+  "电气设备",
+  "电气设备",
+  "电气设备",
+  "机械设备",
+  "机械设备",
+  "机械设备",
+  "机械设备",
+  "机械设备",
+  "机械设备",
+  "机械设备",
+  "机械设备",
+  "机械设备",
+  "机械设备",
+  "机械设备",
+  "车辆及零部件",
+  "车辆及零部件",
+  "车辆及零部件",
+  "车辆及零部件",
+  "车辆及零部件",
+  "车辆及零部件",
+  "车辆及零部件",
+  "车辆及零部件",
+  "车辆及零部件",
+  "车辆及零部件",
+  "车辆及零部件"
+];
+const targetNodes = [
+  "电气设备",
+  "机械设备",
+  "车辆及零部件",
+  "美国",
+  "越南",
+  "日本",
+  "韩国",
+  "德国",
+  "亚洲其他市场",
+  "欧洲其他市场",
+  "中东市场",
+  "拉美市场",
+  "非洲市场",
+  "其他市场",
+  "美国",
+  "越南",
+  "日本",
+  "韩国",
+  "德国",
+  "亚洲其他市场",
+  "欧洲其他市场",
+  "中东市场",
+  "拉美市场",
+  "非洲市场",
+  "其他市场",
+  "美国",
+  "越南",
+  "日本",
+  "韩国",
+  "德国",
+  "亚洲其他市场",
+  "欧洲其他市场",
+  "中东市场",
+  "拉美市场",
+  "非洲市场",
+  "其他市场"
+];
+// 本示例统一使用“亿美元”，无需在 Tooltip 中再次显示原始千美元数值
+const flowValues = [
+  9258.93233990,
+  5984.00000000,
+  2159.79240140,
+  1250.22675230,
+  585.16360170,
+  365.52873190,
+  441.93438280,
+  337.49428340,
+  1506.86030110,
+  1318.50276340,
+  1130.14522580,
+  941.78768820,
+  753.43015050,
+  627.85845880,
+  1025.00000000,
+  286.00000000,
+  435.00000000,
+  382.00000000,
+  266.00000000,
+  861.60000000,
+  753.90000000,
+  646.20000000,
+  538.50000000,
+  430.80000000,
+  359.00000000,
+  203.68753820,
+  32.96240190,
+  64.75750210,
+  51.00752250,
+  63.50826240,
+  418.52860180,
+  366.21252660,
+  313.89645140,
+  261.58037610,
+  209.26430090,
+  174.38691750
+];
+
+// 二、用户设置：可修改标题、单位、布局与色板；无需填写具体节点名称
+const setting = {
+  caseCode: 'C019',
+  technicalName: '多层级桑基流向图',
+  communicationName: 'Power BI 桑基图：看懂中国商品出口流向',
+  yearLabel: '2024',
+  unit: '亿美元',
+  backgroundColor: 'transparent',
+  titleText: '中国三类商品的出口目的地分布（演示）',
+  subTitleText: '2024年｜中国 → 商品类别 → 出口市场｜单位：亿美元｜包含模拟数据',
+  sourceText: '数据来源：WITS / World Bank（HS85、HS87五国数据）；HS84及新增区域数据为模拟值。',
+  noteText: '图表说明：线宽表示出口额；区域细分为演示分配，非实际地区出口统计，不代表中国全部出口。',
+  nodeWidth: 18,
+  nodeGap: 12,
+  lineOpacity: 0.35,
+  lineCurveness: 0.5,
+  edgeColorMode: 'source',
+  sourceColor: '#8DA0AE',
+  intermediateColors: ['#5B8FF9', '#61DDAA', '#65789B', '#9270CA', '#73C0DE', '#EE6666'],
+  destinationColors: ['#4E79A7', '#59A14F', '#9C755F', '#F28E2B', '#E15759', '#76B7B2', '#B07AA1', '#EDC949', '#FF9DA7', '#86BC86', '#BFC6CE'],
+  intermediaryColorMode: 'category', // category=中间层各节点不同颜色；depth=同层同色
+  nodeLabelShow: true,
+  labelFontSize: 11,
+  nodeLabelColor: '#263238',
+  emphasisLineBlur: 0.06,
+  tooltipDecimals: 1,
+  layoutIterations: 64,
+  chartLeft: 24,
+  chartRight: 145,
+  chartTop: 110,
+  chartBottom: 76,
+  tooltipOffset: 16,
+  redMarkColor: '#D9544D',
+};
+
+// 四、辅助方法：数值格式化、节点与连线生成、流量汇总
+function roundTo(value, decimals) {
+  const factor = Math.pow(10, decimals);
+  return Math.round(value * factor) / factor;
+}
+
+function formatNumber(value, decimals) {
+  return echarts.format.addCommas(roundTo(value, decimals).toFixed(decimals));
+}
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, function (char) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char];
+  });
+}
+
+function buildNodes(links) {
+  const names = [];
+  const nameSet = new Set();
+  const incoming = new Map();
+  const outgoing = new Map();
+  const depth = new Map();
+  const inputOrder = [];
+  links.forEach(function (link) {
+    [link.source, link.target].forEach(function (name) {
+      if (!nameSet.has(name)) {
+        nameSet.add(name);
+        names.push(name);
+        incoming.set(name, 0);
+        outgoing.set(name, []);
+      }
+    });
+    incoming.set(link.target, incoming.get(link.target) + 1);
+    outgoing.get(link.source).push(link.target);
+  });
+
+  // 从无入边的根节点出发，以最长路径自动计算深度；不写死三层结构。
+  names.forEach(function (name) {
+    if (incoming.get(name) === 0) {
+      depth.set(name, 0);
+      inputOrder.push(name);
+    }
+  });
+  if (names.length && inputOrder.length === 0) {
+    throw new Error('桑基图存在环路或不存在起点：请检查来源节点和目标节点');
+  }
+  let processed = 0;
+  for (let head = 0; head < inputOrder.length; head++) {
+    const name = inputOrder[head];
+    processed++;
+    outgoing.get(name).forEach(function (target) {
+      depth.set(target, Math.max(depth.get(target) || 0, depth.get(name) + 1));
+      incoming.set(target, incoming.get(target) - 1);
+      if (incoming.get(target) === 0) inputOrder.push(target);
+    });
+  }
+  if (processed !== names.length) {
+    throw new Error('桑基图节点之间存在环路，请使用从起点到终点的有向无环流向数据');
+  }
+
+  const maxDepth = Math.max(0, ...Array.from(depth.values()));
+  const colorIndexByDepth = {};
+  const nodeMap = {};
+  names.forEach(function (name) {
+    const level = depth.get(name);
+    colorIndexByDepth[level] = colorIndexByDepth[level] || 0;
+    const colorIndex = colorIndexByDepth[level]++;
+    const palette = level === maxDepth ? setting.destinationColors : setting.intermediateColors;
+    const color = level === 0 ? setting.sourceColor :
+      palette[setting.intermediaryColorMode === 'depth' && level < maxDepth ? (level - 1) % palette.length : colorIndex % palette.length];
+    nodeMap[name] = { depth: level, color: color };
+  });
+  return {
+    nodes: names.map(function (name) {
+      return { name: name, depth: nodeMap[name].depth, itemStyle: { color: nodeMap[name].color } };
+    }),
+    nodeMap: nodeMap
+  };
+}
+
+function buildLinks(sources, targets, values) {
+  return sources.map(function (source, i) {
+    return {
+      source: source,
+      target: targets[i],
+      value: values[i],
+      lineStyle: {
+        opacity: setting.lineOpacity,
+        curveness: setting.lineCurveness,
+        color: 'source'
+      }
+    };
+  });
+}
+
+function computeNodeTotals(links) {
+  const inMap = {};
+  const outMap = {};
+  links.forEach(function (link) {
+    outMap[link.source] = (outMap[link.source] || 0) + link.value;
+    inMap[link.target] = (inMap[link.target] || 0) + link.value;
+  });
+  return { inMap: inMap, outMap: outMap };
+}
+
+// 五、预处理：检查数据、自动推导节点层级、构建连线和总量
+if (sourceNodes.length !== targetNodes.length || sourceNodes.length !== flowValues.length) {
+  throw new Error('三个原始数据数组的长度必须一致');
+}
+for (let i = 0; i < flowValues.length; i++) {
+  if (!String(sourceNodes[i]).trim() || !String(targetNodes[i]).trim()) {
+    throw new Error('流向第 ' + (i + 1) + ' 行存在空节点名称');
+  }
+  if (typeof flowValues[i] !== 'number' || !Number.isFinite(flowValues[i]) || flowValues[i] < 0) {
+    throw new Error('流向第 ' + (i + 1) + ' 行的流量必须是非负有限数值');
+  }
+}
+const links = buildLinks(sourceNodes, targetNodes, flowValues);
+const graph = buildNodes(links);
+const nodes = graph.nodes;
+const nodeInfo = graph.nodeMap;
+const nodeTotals = computeNodeTotals(links);
+// 只统计所有起始节点的出流量；多层连接不重复计入总量。
+const totalFlow = links.filter(function (d) { return nodeInfo[d.source].depth === 0; })
+  .reduce(function (sum, item) { return sum + item.value; }, 0);
+
+// 六、图表配置：标题、来源说明、Tooltip 与桑基图系列
+option = {
+  backgroundColor: setting.backgroundColor,
+  animationDuration: 900,
+  animationDurationUpdate: 600,
+  color: [setting.sourceColor].concat(setting.intermediateColors, setting.destinationColors),
+  title: {
+    text: setting.caseCode + ' ' + setting.technicalName,
+    subtext: '',
+    left: 24,
+    top: 18,
+    textStyle: {
+      color: '#263238',
+      fontSize: 20,
+      fontWeight: 700
+    },
+    subtextStyle: {
+      color: '#8493A2',
+      fontSize: 12,
+      lineHeight: 18
+    }
+  },
+  graphic: [
+    {
+      type: 'rect',
+      left: 24,
+      top: 10,
+      shape: { width: 20, height: 4 },
+      style: { fill: setting.redMarkColor }
+    },
+    {
+      type: 'text',
+      left: 24,
+      top: 63,
+      style: {
+        text: setting.titleText,
+        fill: '#263238',
+        font: '600 15px sans-serif'
+      }
+    },
+    {
+      type: 'text',
+      left: 24,
+      top: 84,
+      style: {
+        text: setting.subTitleText,
+        fill: '#8493A2',
+        font: '12px sans-serif'
+      }
+    },
+    {
+      type: 'text',
+      left: 24,
+      bottom: 30,
+      style: {
+        text: setting.sourceText,
+        fill: '#8493A2',
+        font: '11px sans-serif'
+      }
+    },
+    {
+      type: 'text',
+      left: 24,
+      bottom: 12,
+      style: {
+        text: setting.noteText,
+        fill: '#8493A2',
+        font: '11px sans-serif'
+      }
+    }
+  ],
+  tooltip: {
+    trigger: 'item',
+    renderMode: 'html',
+    confine: true,
+    appendToBody: false,
+    backgroundColor: '#FFFFFF',
+    borderColor: '#D9DEE3',
+    borderWidth: 1,
+    padding: [10, 12],
+    extraCssText: 'box-shadow: 0 2px 10px rgba(38,50,56,0.10);',
+    textStyle: { color: '#263238', fontSize: 12 },
+    position: function (point, params, dom, rect, size) {
+      const w = size.contentSize[0];
+      const h = size.contentSize[1];
+      const vw = size.viewSize[0];
+      const vh = size.viewSize[1];
+      const offset = setting.tooltipOffset;
+      let x = point[0] + offset;
+      let y = point[1] + offset;
+      if (x + w > vw - 4) x = point[0] - w - offset;
+      if (y + h > vh - 4) y = point[1] - h - offset;
+      return [Math.max(4, x), Math.max(4, y)];
+    },
+    formatter: function (params) {
+      const d = params.data || {};
+      const title = function (value) {
+        return '<div style="font-size:13px;font-weight:700;color:#263238;margin-bottom:7px;padding-bottom:7px;border-bottom:1px solid #E5E9ED">' + escapeHtml(value) + '</div>';
+      };
+      const row = function (label, value) {
+        return '<div style="display:flex;justify-content:space-between;gap:16px;line-height:22px;white-space:nowrap">' +
+          '<span style="color:#8493A2">' + escapeHtml(label) + '</span>' +
+          '<strong style="color:#263238;font-weight:600">' + escapeHtml(value) + '</strong></div>';
+      };
+      if (params.dataType === 'edge') {
+        const share = totalFlow === 0 ? 0 : (d.value / totalFlow * 100);
+        return '<div style="min-width:230px">' +
+          title(d.source + ' → ' + d.target) +
+          row('流量值', formatNumber(d.value, setting.tooltipDecimals) + ' ' + setting.unit) +
+          row('占总流量', formatNumber(share, 1) + '%') +
+          '</div>';
+      }
+      const name = d.name;
+      const inbound = nodeTotals.inMap[name] || 0;
+      const outbound = nodeTotals.outMap[name] || 0;
+      const nodeValue = Math.max(inbound, outbound);
+      const share = totalFlow === 0 ? 0 : (nodeValue / totalFlow * 100);
+      const nodeDepth = nodeInfo[name].depth;
+      const lastDepth = Math.max.apply(null, nodes.map(function (n) { return n.depth; }));
+      const levelText = nodeDepth === 0 ? '起始节点' : (nodeDepth === lastDepth ? '终点节点' : '中间节点');
+      return '<div style="min-width:220px">' +
+        title(name) +
+        row('节点类型', levelText) +
+        row('关联流量', formatNumber(nodeValue, setting.tooltipDecimals) + ' ' + setting.unit) +
+        row('占总流量', formatNumber(share, 1) + '%') +
+        row('流入', formatNumber(inbound, setting.tooltipDecimals) + ' ' + setting.unit) +
+        row('流出', formatNumber(outbound, setting.tooltipDecimals) + ' ' + setting.unit) +
+        '</div>';
+    }
+  },
+  series: [
+    {
+      type: 'sankey',
+      left: setting.chartLeft,
+      right: setting.chartRight,
+      top: setting.chartTop,
+      bottom: setting.chartBottom,
+      data: nodes,
+      links: links,
+      draggable: false,
+      nodeWidth: setting.nodeWidth,
+      nodeGap: setting.nodeGap,
+      layoutIterations: setting.layoutIterations,
+      emphasis: {
+        focus: 'adjacency'
+      },
+      lineStyle: {
+        color: setting.edgeColorMode,
+        curveness: setting.lineCurveness,
+        opacity: setting.lineOpacity
+      },
+      itemStyle: {
+        borderWidth: 0,
+        shadowBlur: 0
+      },
+      label: {
+        show: setting.nodeLabelShow,
+        color: setting.nodeLabelColor,
+        fontSize: setting.labelFontSize,
+        fontWeight: 600,
+        formatter: function (params) {
+          const name = params.name;
+          const inbound = nodeTotals.inMap[name] || 0;
+          const outbound = nodeTotals.outMap[name] || 0;
+          const nodeValue = Math.max(inbound, outbound);
+          return name + '\n' + formatNumber(nodeValue, 0) + ' ' + setting.unit;
+        }
+      },
+      edgeLabel: {
+        show: false
+      },
+      select: {
+        disabled: true
+      },
+      blur: {
+        lineStyle: {
+          opacity: setting.emphasisLineBlur
+        }
+      }
+    }
+  ]
+};
