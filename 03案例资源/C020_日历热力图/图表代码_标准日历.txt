@@ -1,0 +1,477 @@
+﻿// C020 标准月历热力图 v0.1.3
+
+// 一、原始数据：两个平行一维数组，可直接替换为 Power BI 字段
+// 以下数值为模拟数据，并非西安2025年真实气温记录
+const dates = [
+  "2025-01-01", "2025-01-02", "2025-01-03", "2025-01-04", "2025-01-05", "2025-01-06", "2025-01-07", "2025-01-08", "2025-01-09",
+  "2025-01-10", "2025-01-11", "2025-01-12", "2025-01-13", "2025-01-14", "2025-01-15", "2025-01-16", "2025-01-17", "2025-01-18",
+  "2025-01-19", "2025-01-20", "2025-01-21", "2025-01-22", "2025-01-23", "2025-01-24", "2025-01-25", "2025-01-26", "2025-01-27",
+  "2025-01-28", "2025-01-29", "2025-01-30", "2025-01-31", "2025-02-01", "2025-02-02", "2025-02-03", "2025-02-04", "2025-02-05",
+  "2025-02-06", "2025-02-07", "2025-02-08", "2025-02-09", "2025-02-10", "2025-02-11", "2025-02-12", "2025-02-13", "2025-02-14",
+  "2025-02-15", "2025-02-16", "2025-02-17", "2025-02-18", "2025-02-19", "2025-02-20", "2025-02-21", "2025-02-22", "2025-02-23",
+  "2025-02-24", "2025-02-25", "2025-02-26", "2025-02-27", "2025-02-28", "2025-03-01", "2025-03-02", "2025-03-03", "2025-03-04",
+  "2025-03-05", "2025-03-06", "2025-03-07", "2025-03-08", "2025-03-09", "2025-03-10", "2025-03-11", "2025-03-12", "2025-03-13",
+  "2025-03-14", "2025-03-15", "2025-03-16", "2025-03-17", "2025-03-18", "2025-03-19", "2025-03-20", "2025-03-21", "2025-03-22",
+  "2025-03-23", "2025-03-24", "2025-03-25", "2025-03-26", "2025-03-27", "2025-03-28", "2025-03-29", "2025-03-30", "2025-03-31",
+  "2025-04-01", "2025-04-02", "2025-04-03", "2025-04-04", "2025-04-05", "2025-04-06", "2025-04-07", "2025-04-08", "2025-04-09",
+  "2025-04-10", "2025-04-11", "2025-04-12", "2025-04-13", "2025-04-14", "2025-04-15", "2025-04-16", "2025-04-17", "2025-04-18",
+  "2025-04-19", "2025-04-20", "2025-04-21", "2025-04-22", "2025-04-23", "2025-04-24", "2025-04-25", "2025-04-26", "2025-04-27",
+  "2025-04-28", "2025-04-29", "2025-04-30", "2025-05-01", "2025-05-02", "2025-05-03", "2025-05-04", "2025-05-05", "2025-05-06",
+  "2025-05-07", "2025-05-08", "2025-05-09", "2025-05-10", "2025-05-11", "2025-05-12", "2025-05-13", "2025-05-14", "2025-05-15",
+  "2025-05-16", "2025-05-17", "2025-05-18", "2025-05-19", "2025-05-20", "2025-05-21", "2025-05-22", "2025-05-23", "2025-05-24",
+  "2025-05-25", "2025-05-26", "2025-05-27", "2025-05-28", "2025-05-29", "2025-05-30", "2025-05-31", "2025-06-01", "2025-06-02",
+  "2025-06-03", "2025-06-04", "2025-06-05", "2025-06-06", "2025-06-07", "2025-06-08", "2025-06-09", "2025-06-10", "2025-06-11",
+  "2025-06-12", "2025-06-13", "2025-06-14", "2025-06-15", "2025-06-16", "2025-06-17", "2025-06-18", "2025-06-19", "2025-06-20",
+  "2025-06-21", "2025-06-22", "2025-06-23", "2025-06-24", "2025-06-25", "2025-06-26", "2025-06-27", "2025-06-28", "2025-06-29",
+  "2025-06-30", "2025-07-01", "2025-07-02", "2025-07-03", "2025-07-04", "2025-07-05", "2025-07-06", "2025-07-07", "2025-07-08",
+  "2025-07-09", "2025-07-10", "2025-07-11", "2025-07-12", "2025-07-13", "2025-07-14", "2025-07-15", "2025-07-16", "2025-07-17",
+  "2025-07-18", "2025-07-19", "2025-07-20", "2025-07-21", "2025-07-22", "2025-07-23", "2025-07-24", "2025-07-25", "2025-07-26",
+  "2025-07-27", "2025-07-28", "2025-07-29", "2025-07-30", "2025-07-31", "2025-08-01", "2025-08-02", "2025-08-03", "2025-08-04",
+  "2025-08-05", "2025-08-06", "2025-08-07", "2025-08-08", "2025-08-09", "2025-08-10", "2025-08-11", "2025-08-12", "2025-08-13",
+  "2025-08-14", "2025-08-15", "2025-08-16", "2025-08-17", "2025-08-18", "2025-08-19", "2025-08-20", "2025-08-21", "2025-08-22",
+  "2025-08-23", "2025-08-24", "2025-08-25", "2025-08-26", "2025-08-27", "2025-08-28", "2025-08-29", "2025-08-30", "2025-08-31",
+  "2025-09-01", "2025-09-02", "2025-09-03", "2025-09-04", "2025-09-05", "2025-09-06", "2025-09-07", "2025-09-08", "2025-09-09",
+  "2025-09-10", "2025-09-11", "2025-09-12", "2025-09-13", "2025-09-14", "2025-09-15", "2025-09-16", "2025-09-17", "2025-09-18",
+  "2025-09-19", "2025-09-20", "2025-09-21", "2025-09-22", "2025-09-23", "2025-09-24", "2025-09-25", "2025-09-26", "2025-09-27",
+  "2025-09-28", "2025-09-29", "2025-09-30", "2025-10-01", "2025-10-02", "2025-10-03", "2025-10-04", "2025-10-05", "2025-10-06",
+  "2025-10-07", "2025-10-08", "2025-10-09", "2025-10-10", "2025-10-11", "2025-10-12", "2025-10-13", "2025-10-14", "2025-10-15",
+  "2025-10-16", "2025-10-17", "2025-10-18", "2025-10-19", "2025-10-20", "2025-10-21", "2025-10-22", "2025-10-23", "2025-10-24",
+  "2025-10-25", "2025-10-26", "2025-10-27", "2025-10-28", "2025-10-29", "2025-10-30", "2025-10-31", "2025-11-01", "2025-11-02",
+  "2025-11-03", "2025-11-04", "2025-11-05", "2025-11-06", "2025-11-07", "2025-11-08", "2025-11-09", "2025-11-10", "2025-11-11",
+  "2025-11-12", "2025-11-13", "2025-11-14", "2025-11-15", "2025-11-16", "2025-11-17", "2025-11-18", "2025-11-19", "2025-11-20",
+  "2025-11-21", "2025-11-22", "2025-11-23", "2025-11-24", "2025-11-25", "2025-11-26", "2025-11-27", "2025-11-28", "2025-11-29",
+  "2025-11-30", "2025-12-01", "2025-12-02", "2025-12-03", "2025-12-04", "2025-12-05", "2025-12-06", "2025-12-07", "2025-12-08",
+  "2025-12-09", "2025-12-10", "2025-12-11", "2025-12-12", "2025-12-13", "2025-12-14", "2025-12-15", "2025-12-16", "2025-12-17",
+  "2025-12-18", "2025-12-19", "2025-12-20", "2025-12-21", "2025-12-22", "2025-12-23", "2025-12-24", "2025-12-25", "2025-12-26",
+  "2025-12-27", "2025-12-28", "2025-12-29", "2025-12-30", "2025-12-31"
+];
+
+const values = [
+  4.8, 5.6, 7.2, 9.8, 9.2, 9.6, 5.8, 4.6, 4.4, 0.9, 2.7, 1.8, 3.8, 2.8,
+  6.4, 5.5, 5.9, 5.7, 7.8, 6.5, 4.1, 1.9, -0.6, 0.3, -0.5, -2.2, 1.3, 2.8,
+  2.9, 4.0, 3.7, 7.1, 5.8, 1.0, -0.4, 0.6, -1.2, -1.4, -0.7, 0.1, 4.9, 4.8,
+  8.4, 5.5, 7.2, 8.9, 7.8, 6.1, 2.0, 1.0, 2.1, 1.2, 5.4, 5.9, 7.6, 11.2,
+  10.0, 12.7, 11.0, 9.7, 9.7, 6.4, 7.6, 5.5, 4.1, 4.9, 7.5, 10.5, 9.8, 10.6,
+  11.8, 14.4, 9.7, 10.1, 10.6, 8.4, 7.8, 4.4, 6.0, 9.2, 11.3, 10.4, 13.6, 13.6,
+  14.1, 14.3, 14.4, 9.1, 9.2, 8.9, 7.7, 9.7, 8.7, 10.9, 15.8, 16.2, 15.8, 19.8,
+  18.7, 19.1, 14.5, 14.2, 13.1, 15.8, 16.2, 17.0, 15.9, 19.1, 21.6, 22.6, 24.7, 22.5,
+  23.6, 23.9, 19.0, 18.2, 18.9, 20.3, 18.8, 18.9, 22.8, 23.7, 24.6, 27.2, 27.2, 28.2,
+  26.5, 25.6, 22.2, 23.1, 21.2, 21.9, 22.5, 22.7, 26.3, 27.2, 27.0, 29.8, 29.5, 27.1,
+  27.8, 25.1, 23.5, 21.9, 23.7, 22.5, 24.6, 25.5, 28.5, 32.4, 30.1, 30.8, 32.1, 29.7,
+  31.3, 26.6, 28.0, 26.5, 26.8, 29.0, 31.7, 34.6, 36.2, 34.3, 37.4, 36.1, 34.7, 35.8,
+  33.2, 31.1, 31.4, 31.6, 32.7, 32.8, 35.4, 37.5, 40.1, 39.7, 37.7, 38.2, 36.3, 35.8,
+  33.5, 30.1, 30.6, 32.8, 32.0, 33.7, 35.9, 38.9, 36.9, 37.3, 37.8, 35.2, 34.0, 30.5,
+  31.8, 31.8, 32.4, 30.2, 32.1, 34.1, 37.1, 36.7, 37.2, 36.0, 35.1, 36.5, 32.4, 32.7,
+  30.1, 33.2, 34.1, 32.9, 35.7, 37.3, 37.9, 38.0, 40.9, 38.2, 36.5, 34.5, 34.9, 34.2,
+  33.2, 34.7, 35.0, 36.7, 34.9, 37.7, 37.8, 37.7, 36.5, 34.8, 34.5, 31.1, 32.1, 28.8,
+  29.1, 28.9, 31.9, 32.6, 34.9, 36.4, 33.2, 32.7, 33.5, 28.8, 30.1, 27.2, 25.2, 26.0,
+  27.7, 28.4, 29.6, 30.5, 31.1, 29.6, 29.4, 28.5, 27.4, 26.1, 25.9, 25.1, 23.0, 25.4,
+  25.0, 25.6, 26.8, 27.1, 31.5, 30.0, 29.4, 28.6, 25.9, 22.9, 24.9, 20.8, 23.6, 22.4,
+  25.0, 23.5, 24.4, 28.7, 26.3, 27.3, 25.4, 22.7, 22.6, 18.0, 16.5, 16.0, 16.8, 18.7,
+  18.5, 19.8, 20.9, 19.8, 20.5, 18.4, 19.5, 14.7, 13.4, 12.9, 12.7, 13.0, 14.4, 15.1,
+  15.6, 14.2, 17.2, 16.4, 14.4, 13.8, 12.2, 12.3, 8.4, 8.6, 10.1, 10.2, 10.3, 12.6,
+  15.6, 16.3, 15.3, 15.5, 12.7, 14.2, 9.5, 10.0, 8.3, 7.5, 7.0, 9.6, 8.4, 10.5,
+  13.5, 13.2, 11.5, 11.5, 12.4, 9.3, 8.9, 5.8, 5.3, 3.6, 5.8, 5.8, 9.5, 9.2,
+  8.6, 8.0, 7.5, 6.2, 6.7, 2.0, 2.5, -0.9, -0.2, -0.2, 1.7, 1.8, 5.2, 4.0,
+  8.2
+];
+
+// 二、用户设置：所有可调整的样式与文本均集中在这里
+const setting = {
+  caseCode: 'C020',
+  technicalName: '多风格日历热力图 · 标准月历',
+  titleText: '一年中的冷热变化，藏在每天的颜色里',
+  subTitleText: '逐日最高气温｜单位：℃｜模拟演示数据',
+  metricName: '日最高气温',
+  unit: '℃',
+  year: 'auto',                 // auto 自动使用最新年份
+  weekStart: 1,                // 1 星期一；0 星期日
+  showDayNumbers: true,
+  showWeekdayLabels: true,
+  showLegend: true,
+  showRangeCounts: true,       // 在月份标题右侧显示天数、右上角显示全年合计
+  legendHoverStats: true,      // 鼠标悬停在色阶条时临时显示对应温度区间的天数
+  legendHoverDataSize: 3,      // 悬停高亮区间的数值宽度（与 visualMap.hoverLinkDataSize 一致）
+  legendHoverStep: 0.2,       // 鼠标移动时的统计刷新精度，防止过密重复更新
+  legendHandleDecimals: 1,     // 图例滑块手柄数值精度，与右上角范围统计保持一致
+  colorRangeMode: 'auto',     // auto：根据当前年份数据；manual：使用下方固定范围
+  colorMin: -5,              // colorRangeMode 为 manual 时生效
+  colorMax: 45,
+  legendSelectionMode: 'full',  // full：默认选中全部；manual：使用下面的默认选中范围
+  legendSelectedMin: 30,       // 仅 legendSelectionMode 为 manual 时生效
+  legendSelectedMax: 45,
+  legendOutOfRangeColor: '#E5E9ED', // 未选中日期的淡灰色
+  colorStops: ['#3D75B3', '#8CC9CE', '#E9D77B', '#F1A35C', '#D9544D'],
+  emptyColor: '#EFF2F4',
+  backgroundColor: 'transparent',
+  textColor: '#263238',
+  subTextColor: '#8493A2',
+  redMarkColor: '#D9544D',
+  monthColumns: 4,           // 常规画布首选 4×3 布局
+  wideMonthColumns: 6,       // 宽而矮的容器可自动使用 6×2 布局
+  responsive: true,
+  chartLeft: 24,
+  chartRight: 24,
+  chartTop: 132,
+  chartBottom: 110,
+  cellGap: 2,                 // 日期格之间的间隔（px）
+  monthColumnGap: 26,       // 相邻月份之间的横向间距（px），不随容器宽度无限增大
+  monthRowGap: 18,          // 相邻月份行的间距（px）
+  maxCellSize: 28,         // 日期格最大边长（px），防止超宽容器中过大
+  monthHeaderHeight: 35,
+  showPanelBorders: false,
+  tooltipDecimals: 1,
+  tooltipOffset: 14,          // Tooltip 与鼠标间距（px）
+  tooltipMinWidth: 160,      // Tooltip 最小宽度（px）
+  sourceText: '数据来源：模拟数据，仅供图表开发演示；正式应用请替换为可核验的逐日数据。',
+  noteText: '图表说明：每格代表一天，按周横排；全年采用统一色阶，颜色表示指标值大小。'
+};
+
+// 三、数据校验与日期处理：从输入自动识别年份、月份、星期
+function parseDate(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return [value.getFullYear(), String(value.getMonth()+1).padStart(2, '0'), String(value.getDate()).padStart(2, '0')].join('-');
+  }
+  const str = String(value == null ? '' : value).trim();
+  const m = /^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:[ T].*)?$/.exec(str);
+  if (!m) throw new Error('日期格式应为 YYYY-MM-DD：' + str);
+  const y=+m[1], mo=+m[2], d=+m[3];
+  const dt=new Date(y,mo-1,d);
+  if (dt.getFullYear()!==y || dt.getMonth()+1!==mo || dt.getDate()!==d) throw new Error('无效日期：'+str);
+  return y+'-'+String(mo).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+}
+function formatNum(value, decimals) {
+  return Number(value).toLocaleString('zh-CN', {minimumFractionDigits:decimals, maximumFractionDigits:decimals});
+}
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+if (dates.length !== values.length) throw new Error('日期与数值数组长度不一致');
+if (!dates.length) throw new Error('日期数组不能为空');
+const dateMap = new Map();
+for (let i=0;i<dates.length;i++) {
+  const date=parseDate(dates[i]);
+  if (dateMap.has(date)) throw new Error('日期重复：'+date);
+  const value=(values[i]===null || values[i]==='') ? null : Number(values[i]);
+  if (value!==null && !Number.isFinite(value)) throw new Error('无效数值：'+date);
+  dateMap.set(date,value);
+}
+const availableYears=Array.from(new Set(Array.from(dateMap.keys()).map(function(d){ return +d.slice(0,4); })));
+const selectedYear=setting.year==='auto' ? Math.max.apply(null,availableYears) : Number(setting.year);
+if (!availableYears.includes(selectedYear)) throw new Error('数据中不存在年份：'+selectedYear);
+const yearValues=Array.from(dateMap.entries()).filter(function(d){return +d[0].slice(0,4)===selectedYear && d[1]!==null;}).map(function(d){return d[1];});
+if (!yearValues.length) throw new Error('当前年份没有有效数值');
+if (!['auto', 'manual'].includes(setting.colorRangeMode)) throw new Error('colorRangeMode 仅支持 auto 或 manual');
+let minValue = setting.colorRangeMode === 'auto' ? Math.min.apply(null, yearValues) : Number(setting.colorMin);
+let maxValue = setting.colorRangeMode === 'auto' ? Math.max.apply(null, yearValues) : Number(setting.colorMax);
+if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) throw new Error('色阶范围无效');
+// 所有日期数值相同时，为自动色阶提供非零范围
+if (minValue === maxValue && setting.colorRangeMode === 'auto') {
+  minValue -= 1;
+  maxValue += 1;
+}
+if (maxValue <= minValue) throw new Error('色阶上限必须大于下限');
+if (!['full','manual'].includes(setting.legendSelectionMode)) throw new Error('legendSelectionMode 仅支持 full 或 manual');
+const selectedMin = setting.legendSelectionMode === 'manual' ? Math.max(minValue, Number(setting.legendSelectedMin)) : minValue;
+const selectedMax = setting.legendSelectionMode === 'manual' ? Math.min(maxValue, Number(setting.legendSelectedMax)) : maxValue;
+if (!Number.isFinite(selectedMin) || !Number.isFinite(selectedMax) || selectedMin > selectedMax) throw new Error('图例默认选中范围无效');
+if (![0,1].includes(setting.weekStart)) throw new Error('weekStart 仅支持 0 或 1');
+
+// 四、日期预处理：按照真实日期生成每日记录，布局在渲染时随容器计算
+const heatmapData=[];
+const dayNames=setting.weekStart===1 ? ['一','二','三','四','五','六','日'] : ['日','一','二','三','四','五','六'];
+for(let mi=0;mi<12;mi++) {
+  const month=mi+1;
+  const firstOffset=(new Date(selectedYear,mi,1).getDay()-setting.weekStart+7)%7;
+  const days=new Date(selectedYear,month,0).getDate();
+  for(let day=1;day<=days;day++) {
+    const index=firstOffset+day-1;
+    const date=selectedYear+'-'+String(month).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+    const val=dateMap.has(date) ? dateMap.get(date) : null;
+    heatmapData.push({
+      value:[heatmapData.length,val],date:date,day:day,month:month,
+      weekday:index%7,week:Math.floor(index/7),missing:val===null
+    });
+  }
+}
+
+// 五、区间统计：按图例选中范围统计每月和全年有效数据天数
+let selectedRange = [selectedMin, selectedMax]; // 拖动手柄后保存的持久选区
+let hoverRange = null;                      // 悬停时临时预览；离开后恢复持久选区
+function currentRange() { return hoverRange || selectedRange; }
+function countSelectedDays(range) {
+  const monthly = Array(12).fill(0);
+  let total = 0;
+  let valid = 0;
+  heatmapData.forEach(function (d) {
+    const value = d.value[1];
+    if (d.missing || !Number.isFinite(value)) return;
+    valid++;
+    if (value >= range[0] && value <= range[1]) {
+      monthly[d.month - 1]++;
+      total++;
+    }
+  });
+  return { monthly: monthly, total: total, valid: valid };
+}
+function annualCountText() {
+  const range = currentRange();
+  const counts = countSelectedDays(range);
+  return formatNum(range[0], 1) + setting.unit + '～' +
+    formatNum(range[1], 1) + setting.unit + '｜全年 ' + counts.total + ' 天';
+}
+
+// 六、响应式布局：根据日期格实际宽高紧凑排列月历，并将整体居中
+function getCalendarLayout(coord) {
+  const gap = Math.max(0, Number(setting.cellGap) || 0);
+  const colGap = Math.max(0, Number(setting.monthColumnGap) || 0);
+  const rowGap = Math.max(0, Number(setting.monthRowGap) || 0);
+  const labelH = Math.max(0, Number(setting.monthHeaderHeight) || 0);
+  const maxSize = Math.max(1, Number(setting.maxCellSize) || 28);
+  const preferredCols = Math.max(1, Math.min(12, Math.floor(Number(setting.monthColumns) || 4)));
+  const maxCols = Math.max(preferredCols, Math.min(12, Math.floor(Number(setting.wideMonthColumns) || 6)));
+  let cols = preferredCols;
+  let bestSize = -1;
+
+  // 选择不会越界且日期格尽量大的列数，兼容不同 Power BI 容器尺寸
+  function candidateFor(columnCount) {
+    const rows = Math.ceil(12 / columnCount);
+    const eachWidth = (coord.width - (columnCount - 1) * colGap) / columnCount;
+    const eachHeight = (coord.height - (rows - 1) * rowGap) / rows;
+    const byWidth = (eachWidth - 6 * gap) / 7;
+    const byHeight = (eachHeight - labelH - 5 * gap) / 6;
+    return Math.floor(Math.min(byWidth, byHeight, maxSize));
+  }
+
+  if (setting.responsive) {
+    // 优先考虑能整齐排满 12 个月的列数；同样大小时保留用户首选列数
+    const candidates = [1, 2, 3, 4, 6, 12].filter(function(c) { return c <= maxCols; });
+    if (!candidates.includes(preferredCols)) candidates.push(preferredCols);
+    candidates.forEach(function(candidate) {
+      const candidateSize = candidateFor(candidate);
+      if (candidateSize > bestSize ||
+        (candidateSize === bestSize && candidate === preferredCols)) {
+        bestSize = candidateSize;
+        cols = candidate;
+      }
+    });
+  }
+  const rows = Math.ceil(12 / cols);
+  const size = Math.max(1, candidateFor(cols));
+  const monthWidth = 7 * size + 6 * gap;
+  const monthHeight = labelH + 6 * size + 5 * gap;
+  const totalWidth = cols * monthWidth + (cols - 1) * colGap;
+  const totalHeight = rows * monthHeight + (rows - 1) * rowGap;
+  return {
+    cols: cols, rows: rows, size: size, gap: gap, labelH: labelH,
+    monthWidth: monthWidth, monthHeight: monthHeight,
+    colGap: colGap, rowGap: rowGap,
+    startX: coord.x + (coord.width - totalWidth) / 2,
+    startY: coord.y + (coord.height - totalHeight) / 2
+  };
+}
+
+// 七、图表配置：可拖动范围图例、富文本 Tooltip、响应式月历单元格
+option = {
+  backgroundColor:setting.backgroundColor,
+  animation:false,
+  title:{text:setting.caseCode+' '+setting.technicalName,left:24,top:18,
+    textStyle:{color:setting.textColor,fontSize:20,fontWeight:700}},
+  graphic:[
+    {type:'rect',left:24,top:10,shape:{width:20,height:4},style:{fill:setting.redMarkColor},silent:true},
+    {type:'text',left:24,top:64,style:{text:setting.titleText,fill:setting.textColor,font:'600 15px sans-serif'},silent:true},
+    {type:'text',left:24,top:86,style:{text:selectedYear+'年｜'+setting.subTitleText,fill:setting.subTextColor,font:'12px sans-serif'},silent:true},
+    {id:'annualRangeCount',type:'text',right:24,top:105,invisible:!setting.showRangeCounts,
+      style:{text:annualCountText(),fill:setting.textColor,font:'12px sans-serif',textAlign:'right'},silent:true},
+    {type:'text',left:24,bottom:32,style:{text:setting.sourceText,fill:setting.subTextColor,font:'11px sans-serif'},silent:true},
+    {type:'text',left:24,bottom:14,style:{text:setting.noteText,fill:setting.subTextColor,font:'11px sans-serif'},silent:true}
+  ],
+  grid:{left:setting.chartLeft,right:setting.chartRight,top:setting.chartTop,bottom:setting.chartBottom,show:false},
+  xAxis:{type:'value',min:0,max:1,show:false},
+  yAxis:{type:'value',min:0,max:1,show:false},
+  visualMap:{type:'continuous',show:setting.showLegend,min:minValue,max:maxValue,dimension:1,seriesIndex:[0],
+    calculable:true,realtime:true,hoverLink:true,hoverLinkDataSize:setting.legendHoverDataSize,
+    // 滑块手柄数值与右上角范围统计统一保留 1 位小数，避免整数显示造成误差感
+    precision:setting.legendHandleDecimals,
+    formatter:function(value){return formatNum(value,setting.legendHandleDecimals)+setting.unit;},
+    range:[selectedMin,selectedMax],orient:'horizontal',left:'center',bottom:53,itemWidth:12,itemHeight:190,
+    text:['',''], // 隐藏色阶两端固定标签，保留手柄上方的动态数值
+    textStyle:{color:setting.subTextColor,fontSize:11},inRange:{color:setting.colorStops},
+    outOfRange:{color:setting.legendOutOfRangeColor}},
+  // Tooltip：高对比度 HTML 内容，自动避让画布边缘并尽量减少对相邻日期的遮挡
+  tooltip:{
+    trigger:'item',
+    renderMode:'html',
+    confine:true,
+    appendToBody:false,
+    backgroundColor:'#FFFFFF',
+    borderColor:'#D9DEE3',
+    borderWidth:1,
+    padding:[9,11],
+    textStyle:{color:'#263238',fontSize:12},
+    extraCssText:'opacity:1 !important;color:#263238 !important;box-shadow:0 3px 12px rgba(38,50,56,0.14);pointer-events:none;',
+    position:function(point,params,dom,rect,size){
+      const width=size.contentSize[0];
+      const height=size.contentSize[1];
+      const viewWidth=size.viewSize[0];
+      const viewHeight=size.viewSize[1];
+      const offset=setting.tooltipOffset;
+      // 优先显示在鼠标上方；上方空间不足则切换到下方
+      let x=point[0]-width/2;
+      let y=point[1]-height-offset;
+      if(y<4) y=point[1]+offset;
+      // 靠近左右边界时自动向内移动
+      x=Math.max(4,Math.min(x,Math.max(4,viewWidth-width-4)));
+      y=Math.max(4,Math.min(y,Math.max(4,viewHeight-height-4)));
+      return [x,y];
+    },
+    formatter:function(params){
+      if(params.componentSubType!=='custom'||!params.data||!params.data.date) return '';
+      const d=params.data;
+      const a=d.date.split('-').map(Number);
+      const weekday=['星期日','星期一','星期二','星期三','星期四','星期五','星期六'][new Date(a[0],a[1]-1,a[2]).getDay()];
+      return '<div style="min-width:'+setting.tooltipMinWidth+'px;opacity:1;color:#263238;">'+
+        '<div style="font-size:13px;font-weight:700;color:#263238;line-height:20px;padding-bottom:6px;border-bottom:1px solid #E5E9ED">'+escapeHtml(d.date+' '+weekday)+'</div>'+
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:7px;line-height:20px">'+
+        '<span style="color:#8493A2;font-size:12px">'+escapeHtml(setting.metricName)+'</span>'+
+        '<strong style="color:#263238;font-size:12px;font-weight:700">'+escapeHtml(d.missing?'暂无数据':formatNum(d.value[1],setting.tooltipDecimals)+' '+setting.unit)+'</strong></div></div>';
+    }
+  },
+  series:[{
+    id:'calendarDays',type:'custom',coordinateSystem:'cartesian2d',name:setting.metricName,
+    dimensions:['序号',setting.metricName],encode:{value:1,tooltip:1},
+    renderItem:function(params,api){
+      const d=heatmapData[api.value(0)];
+      if(!d) return null;
+      const coord=params.coordSys;
+      const layout=getCalendarLayout(coord);
+      const monthIndex=d.month-1;
+      const col=monthIndex%layout.cols;
+      const row=Math.floor(monthIndex/layout.cols);
+      const panelX=layout.startX+col*(layout.monthWidth+layout.colGap);
+      const panelY=layout.startY+row*(layout.monthHeight+layout.rowGap);
+      const monthWidth=layout.monthWidth;
+      const startX=panelX;
+      const startY=panelY+layout.labelH;
+      const x=startX+d.weekday*(layout.size+layout.gap);
+      const y=startY+d.week*(layout.size+layout.gap);
+      const size=layout.size;
+      const children=[];
+      // 每月首日顺带绘制月标题和星期标题，避免固定画布坐标
+      if(d.day===1) {
+        children.push({type:'text',style:{x:startX,y:panelY+7,text:d.month+'月',
+          fill:setting.textColor,font:'600 14px sans-serif'},silent:true});
+        if (setting.showRangeCounts) {
+          const monthlyCount = countSelectedDays(currentRange()).monthly[monthIndex];
+          children.push({type:'text',style:{
+            x:startX+monthWidth, y:panelY+7,
+            text:monthlyCount+'天',
+            textAlign:'right',
+            fill:monthlyCount===0?setting.subTextColor:setting.textColor,
+            font:'12px sans-serif'
+          },silent:true});
+        }
+        if(setting.showWeekdayLabels) dayNames.forEach(function(name,i){
+          children.push({type:'text',style:{x:startX+i*(size+layout.gap)+size/2,
+            y:startY-12,text:name,fill:setting.subTextColor,
+            font:'10px sans-serif',textAlign:'center'},silent:true});
+        });
+      }
+      children.push({type:'rect',shape:{x:x,y:y,width:size,height:size},
+        style:{fill:d.missing?setting.emptyColor:(api.visual('color')||setting.emptyColor),stroke:'#FFFFFF',lineWidth:1},
+        emphasis:{style:{stroke:'#263238',lineWidth:1.5,shadowBlur:5,shadowColor:'rgba(38,50,56,.25)'}}});
+      if(setting.showDayNumbers && size>=13) children.push({type:'text',style:{x:x+size/2,y:y+size/2,
+        text:String(d.day),fill:setting.textColor,font:(size<17?'8px':'9px')+' sans-serif',
+        textAlign:'center',textVerticalAlign:'middle'},silent:true});
+      return {type:'group',children:children};
+    },
+    data:heatmapData,
+    z:3
+  }]
+};
+
+// 八、交互联动：拖动图例更新持久选区，悬停图例临时预览附近数值的天数
+// 依赖 ECharts 实例。ECharts 官方编辑器默认使用 myChart；Power BI 需在获取实例后调用绑定函数。
+function bindCalendarRangeCounts(chartInstance) {
+  if (!setting.showRangeCounts || !chartInstance || typeof chartInstance.on !== 'function') return;
+  const zr = chartInstance.getZr && chartInstance.getZr();
+  if (!zr) return;
+
+  // 重新执行脚本时解绑旧监听，避免重复执行与内存泄漏
+  const old = chartInstance.__c020InteractionHandlers;
+  if (old) {
+    chartInstance.off('datarangeselected', old.range);
+    zr.off('mousemove', old.move);
+    zr.off('globalout', old.leave);
+  }
+
+  function updateCounts() {
+    chartInstance.setOption({
+      graphic: [{id:'annualRangeCount', style:{text:annualCountText()}}],
+      series: [{id:'calendarDays', data:heatmapData.slice()}]
+    }, {lazyUpdate:false});
+  }
+
+  // 持久筛选：拖动两端手柄时立即统计选区天数
+  const onRangeSelected = function (event) {
+    if (!event || !Array.isArray(event.selected) || event.selected.length < 2) return;
+    const low = Math.max(minValue, Math.min(Number(event.selected[0]), Number(event.selected[1])));
+    const high = Math.min(maxValue, Math.max(Number(event.selected[0]), Number(event.selected[1])));
+    if (!Number.isFinite(low) || !Number.isFinite(high) || low > high) return;
+    selectedRange = [low, high];
+    hoverRange = null;
+    updateCounts();
+  };
+
+  // 悬停预览：连续型 visualMap 为横向、底部居中布局。
+  // 使用与色阶一致的数值范围及悬停带宽，统计用户目前指向的温度附近天数。
+  let lastHoverKey = '';
+  const onMouseMove = function (event) {
+    if (!setting.legendHoverStats || !setting.showLegend) return;
+    const width = chartInstance.getWidth();
+    const height = chartInstance.getHeight();
+    const barLength = 190;
+    const barCenterX = width / 2;
+    // 连续型 visualMap bottom 为 53，横向色条高度为 12；给手柄适当余量。
+    const barCenterY = height - 53 - 12;
+    const x = Number(event.offsetX);
+    const y = Number(event.offsetY);
+    const inside = Number.isFinite(x) && Number.isFinite(y) &&
+      x >= barCenterX - barLength / 2 - 3 && x <= barCenterX + barLength / 2 + 3 &&
+      Math.abs(y - barCenterY) <= 19;
+    if (!inside) {
+      if (hoverRange !== null) {
+        hoverRange = null;
+        lastHoverKey = '';
+        updateCounts();
+      }
+      return;
+    }
+    const position = Math.max(0, Math.min(1, (x - (barCenterX-barLength/2)) / barLength));
+    const centerValue = minValue + position * (maxValue-minValue);
+    const half = Math.max(0.001, Number(setting.legendHoverDataSize) || 3) / 2;
+    const step = Math.max(0.01, Number(setting.legendHoverStep) || 0.2);
+    const centerRounded = Math.round(centerValue/step)*step;
+    const low = Math.max(minValue, centerRounded-half);
+    const high = Math.min(maxValue, centerRounded+half);
+    const key = low.toFixed(3)+'|'+high.toFixed(3);
+    if (key === lastHoverKey) return;
+    lastHoverKey = key;
+    hoverRange = [low, high];
+    updateCounts();
+  };
+  const onGlobalOut = function () {
+    if (hoverRange === null) return;
+    hoverRange = null;
+    lastHoverKey = '';
+    updateCounts();
+  };
+
+  chartInstance.on('datarangeselected', onRangeSelected);
+  zr.on('mousemove', onMouseMove);
+  zr.on('globalout', onGlobalOut);
+  chartInstance.__c020InteractionHandlers = {range:onRangeSelected, move:onMouseMove, leave:onGlobalOut};
+}
+if (typeof myChart !== 'undefined') bindCalendarRangeCounts(myChart);
