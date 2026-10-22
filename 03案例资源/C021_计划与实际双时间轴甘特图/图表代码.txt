@@ -1,0 +1,709 @@
+﻿// C021 计划与实际双时间轴甘特图 
+// 一套通用模板：原始数据均为平行一维数组；任务、阶段、时间窗口均由用户数据驱动。
+// 直接用于 ECharts 官方编辑器的 JS 面板，无需 HTML / DOM / 其他脚本。
+
+
+// 一、测试数据
+const phases = [
+  "需求规划", 
+  "需求规划", 
+  "需求规划", 
+  "需求规划", 
+  "方案设计", 
+  "方案设计", 
+  "方案设计", 
+  "方案设计", 
+  "功能开发", 
+  "功能开发", 
+  "功能开发", 
+  "功能开发", 
+  "功能开发", 
+  "质量测试", 
+  "质量测试", 
+  "质量测试", 
+  "质量测试", 
+  "质量测试", 
+  "验收交付", 
+  "验收交付"
+];
+
+const taskNames = [
+  "业务需求调研", 
+  "关键用户访谈", 
+  "需求评审与确认", 
+  "需求范围冻结", 
+  "系统架构设计", 
+  "交互原型设计", 
+  "数据库模型设计", 
+  "UI设计验收", 
+  "后端服务开发", 
+  "前端页面开发", 
+  "用户权限模块", 
+  "数据导入模块", 
+  "报表分析模块", 
+  "接口联调", 
+  "集成测试", 
+  "性能测试", 
+  "安全测试", 
+  "缺陷回归", 
+  "用户验收测试", 
+  "正式上线"
+];
+
+const planStarts = [
+  "2026-04-01", 
+  "2026-04-04", 
+  "2026-04-15", 
+  "2026-04-22", 
+  "2026-04-23", 
+  "2026-04-23", 
+  "2026-04-28", 
+  "2026-05-09", 
+  "2026-05-14", 
+  "2026-05-17", 
+  "2026-05-20", 
+  "2026-06-01", 
+  "2026-06-12", 
+  "2026-06-24", 
+  "2026-07-01", 
+  "2026-07-12", 
+  "2026-07-15", 
+  "2026-07-19", 
+  "2026-08-03", 
+  "2026-08-16"
+];
+
+const planEnds = [
+  "2026-04-10", 
+  "2026-04-14", 
+  "2026-04-18", 
+  "2026-04-22", 
+  "2026-05-04", 
+  "2026-05-08", 
+  "2026-05-10", 
+  "2026-05-16", 
+  "2026-06-19", 
+  "2026-06-27", 
+  "2026-06-10", 
+  "2026-06-24", 
+  "2026-07-10", 
+  "2026-07-15", 
+  "2026-07-22", 
+  "2026-07-26", 
+  "2026-07-30", 
+  "2026-08-05", 
+  "2026-08-12", 
+  "2026-08-16"
+];
+
+const actualStarts = [
+  "2026-04-01", 
+  "2026-04-05", 
+  "2026-04-16", 
+  "2026-04-23", 
+  "2026-04-24", 
+  "2026-04-23", 
+  "2026-05-02", 
+  "2026-05-11", 
+  "2026-05-18", 
+  "2026-05-20", 
+  "2026-05-21", 
+  "2026-06-03", 
+  "2026-06-15", 
+  "2026-07-02", 
+  "2026-07-07", 
+  "2026-07-14", 
+  "2026-07-18", 
+  "2026-07-20", 
+  "", 
+  ""
+];
+
+const actualEnds = [
+  "2026-04-12", 
+  "2026-04-13", 
+  "2026-04-20", 
+  "2026-04-23", 
+  "2026-05-06", 
+  "2026-05-07", 
+  "2026-05-14", 
+  "2026-05-16", 
+  "2026-06-24", 
+  "2026-07-05", 
+  "2026-06-09", 
+  "2026-06-27", 
+  "", 
+  "", 
+  "", 
+  "", 
+  "", 
+  "", 
+  "", 
+  ""
+];
+
+const completionRates = [
+  100, 
+  100, 
+  100, 
+  100, 
+  100, 
+  100, 
+  100, 
+  100, 
+  100, 
+  100, 
+  100, 
+  100, 
+  75, 
+  80, 
+  60, 
+  35, 
+  20, 
+  10, 
+  0, 
+  0
+];
+
+const taskTypes = [
+  "任务", 
+  "任务", 
+  "任务", 
+  "里程碑", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "任务", 
+  "里程碑"
+];
+
+// 二、用户设置：展示文本、配色、阶段折叠、缩放与布局
+const setting = {
+  caseCode: 'C021',
+  title: '计划、实际与延期，一张甘特图看清',
+  subtitle: '计划工期与实际执行时间叠加｜完成率为独立进度指标',
+  asOfDate: 'auto',              // auto: 输入中的最新实际发生日期；完全没有实际日期时使用今天
+  sourceText: '数据来源：当前示例为模拟数据；替换数据后请填写可核验的数据来源。',
+  noteText: '图表说明：阶段、任务、状态逐行对应；灰条=计划，细色条=实际；红色=延期，蓝灰=进行中，绿色=按期。',
+  backgroundColor: 'transparent',
+  grid: {left: 426, right: 24, top: 166, bottom: 112}, // 单 Grid；左侧阶段/任务/状态三栏，右侧时间轴
+  phaseColumnWidth: 64,
+  taskColumnWidth: 138,
+  phaseColumnGap: 14,
+  statusColumnWidth: 142,       // 状态/进度紧邻任务列；长文本截断，详细信息由 Tooltip 呈现
+  statusColumnGap: 12,
+  leftLabelGap: 12,             // 状态列到时间轴的距离
+  showRowBanding: true,        // 跨三列+时间轴的淡色隔行底纹，强化任务行关联
+  rowBandColor: 'rgba(132,147,162,0.045)',
+  showColumnHeaders: true,
+  showStageSeparators: true,
+  phaseCollapsible: true,
+  initiallyCollapsedPhases: [],  // 填入任意阶段名称，例如 ['阶段A']；空数组表示全部展开
+  stageSummaryText: '阶段汇总',
+  enableChartPan: true,         // 在主体图表中按住左键拖动时间轴
+  zoomWheelModifier: 'ctrl',    // Ctrl+滚轮缩放，避免与报表页面滚动冲突
+  enableWheelPan: false,
+  showDataZoom: true,
+  zoomBarHeight: 10,
+  showSnapshotLine: true,
+  planBarHeight: 14,
+  actualBarHeight: 7,
+  milestoneSize: 11,
+  taskLabelFontSize: 11,
+  statusLabelFontSize: 11,
+  maxTaskRowHeight: 31,        // 折叠时减少空白，每行高度上限
+  datePaddingDays: 7,
+  crossYearDateStyle: 'auto', // auto：跨年标签带年份；always：总显示年份；never：始终不显示年份
+  colors: {
+    positive: '#239263', negative: '#D9544D',
+    bar: '#BFC6CE', barSecondary: '#D9DEE3', barReference: '#AEB7C1',
+    inProgress: '#65789B', background: 'transparent',
+    text: '#263238', textSecondary: '#8493A2', gridLine: '#E5E9ED'
+  }
+};
+
+// 三、输入校验与日期处理：阶段名称、日期和任务数量均不写死
+const DAY_MS = 24 * 60 * 60 * 1000;
+function parseDay(value, field, label, allowBlank) {
+  if (value === null || value === undefined || String(value).trim() === '') {
+    if (allowBlank) return null;
+    throw new Error('“' + label + '”的' + field + '不能为空');
+  }
+  let raw;
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    raw = [value.getFullYear(), String(value.getMonth()+1).padStart(2,'0'),
+      String(value.getDate()).padStart(2,'0')].join('-');
+  } else {
+    raw = String(value).trim().slice(0,10).replace(/\//g,'-');
+  }
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(raw);
+  if (!m) throw new Error('“'+label+'”的'+field+'格式无效：'+String(value));
+  const y=+m[1],mo=+m[2],d=+m[3];
+  const ms=Date.UTC(y,mo-1,d), test=new Date(ms);
+  if (test.getUTCFullYear()!==y || test.getUTCMonth()!==mo-1 || test.getUTCDate()!==d)
+    throw new Error('“'+label+'”的'+field+'不是有效日期：'+raw);
+  return ms;
+}
+function dayText(ms) {
+  if (ms===null || ms===undefined) return '—';
+  const d=new Date(ms);
+  return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'-'+String(d.getUTCDate()).padStart(2,'0');
+}
+function countDays(start,end) {return start===null||end===null ? null : Math.round((end-start)/DAY_MS)+1;}
+function escapeHtml(v) {
+  return String(v==null?'':v).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+function readableNumber(value) {return value===null?'—':(Number.isInteger(value)?String(value):value.toFixed(1));}
+function optionalColumn(arr,name,length,blank) {
+  if (!Array.isArray(arr)) throw new Error(name+'必须是数组');
+  if (arr.length===0) return Array(length).fill(blank);
+  if (arr.length!==length) throw new Error(name+'数组长度与任务名称不一致');
+  return arr;
+}
+if (!Array.isArray(taskNames) || !taskNames.length) throw new Error('任务名称必须是非空一维数组');
+const count=taskNames.length;
+if (!Array.isArray(planStarts)||!Array.isArray(planEnds)||planStarts.length!==count||planEnds.length!==count)
+  throw new Error('计划开始和计划结束数组必须与任务名称长度一致');
+const phaseValues=optionalColumn(phases,'phases',count,'');
+const actualStartValues=optionalColumn(actualStarts,'actualStarts',count,'');
+const actualEndValues=optionalColumn(actualEnds,'actualEnds',count,'');
+const progressValues=optionalColumn(completionRates,'completionRates',count,null);
+const typeValues=optionalColumn(taskTypes,'taskTypes',count,'任务');
+const rawTasks=taskNames.map(function(name,i){
+  const text=String(name==null?'':name).trim();
+  if (!text) throw new Error('第'+(i+1)+'行任务名称为空');
+  const start=parseDay(planStarts[i],'计划开始',text,false);
+  const end=parseDay(planEnds[i],'计划结束',text,false);
+  if (start>end) throw new Error('任务“'+text+'”计划结束早于开始');
+  const actualStart=parseDay(actualStartValues[i],'实际开始',text,true);
+  const actualEnd=parseDay(actualEndValues[i],'实际结束',text,true);
+  if (actualEnd!==null&&(actualStart===null||actualEnd<actualStart))
+    throw new Error('任务“'+text+'”的实际结束与实际开始不匹配');
+  const isBlank=progressValues[i]===null||progressValues[i]===undefined||String(progressValues[i]).trim()==='';
+  const progress=isBlank ? (actualEnd!==null?100:null) : Number(progressValues[i]);
+  if (progress!==null&&(!Number.isFinite(progress)||progress<0||progress>100))
+    throw new Error('任务“'+text+'”的完成率必须在0～100之间');
+  const type=String(typeValues[i]==null?'':typeValues[i]).trim().toLowerCase();
+  const isMilestone=type==='里程碑'||type==='milestone';
+  if(isMilestone&&start!==end) throw new Error('里程碑“'+text+'”的计划开始、结束须相同');
+  const phase=String(phaseValues[i]==null?'':phaseValues[i]).trim()||'未分组';
+  return {index:i,name:text,phase:phase,planStart:start,planEnd:end,
+    actualStart:actualStart,actualEnd:actualEnd,progress:progress,isMilestone:isMilestone};
+});
+// 以所有可观察到的实际日期推断快照日；没有实际记录时取今天，用户也可手动指定。
+const observedDates=[];
+rawTasks.forEach(function(t){
+  if(t.actualStart!==null) observedDates.push(t.actualStart);
+  if(t.actualEnd!==null) observedDates.push(t.actualEnd);
+});
+const today=new Date();
+const todayUtc=Date.UTC(today.getFullYear(),today.getMonth(),today.getDate());
+const asOf=setting.asOfDate==='auto'
+  ? (observedDates.length?Math.max.apply(null,observedDates):todayUtc)
+  : parseDay(setting.asOfDate,'统计基准日','图表',false);
+const tasks=rawTasks.map(function(t){
+  if(t.actualStart!==null&&t.actualStart>asOf)
+    throw new Error('任务“'+t.name+'”实际开始时间晚于统计基准日');
+  if(t.actualEnd!==null&&t.actualEnd>asOf)
+    throw new Error('任务“'+t.name+'”实际结束时间晚于统计基准日');
+  // 任务是否完成，实际结束日优先；进度=100但未填实际结束日时视为待补记录
+  const completed=t.actualEnd!==null;
+  const lateDays=completed?Math.max(0,Math.round((t.actualEnd-t.planEnd)/DAY_MS))
+    : Math.max(0,Math.round((asOf-t.planEnd)/DAY_MS));
+  let state,color;
+  if(completed) {state=lateDays>0?'延期完成':'按期完成';color=lateDays>0?setting.colors.negative:setting.colors.positive;}
+  else if(lateDays>0) {state=t.actualStart===null?'逾期未启动':'已延期';color=setting.colors.negative;}
+  else if(t.actualStart!==null) {state='进行中';color=setting.colors.inProgress;}
+  else {state='未开始';color=setting.colors.barReference;}
+  return Object.assign({},t,{completed:completed,lateDays:lateDays,state:state,color:color});
+});
+// 阶段数量与任务排序全部从输入生成；即使相同阶段不连续，也会归到该阶段。
+const groups=[];
+const groupMap=new Map();
+tasks.forEach(function(t){
+  if(!groupMap.has(t.phase)){
+    const g={key:'phase-'+groups.length,name:t.phase,tasks:[]};
+    groupMap.set(t.phase,g);groups.push(g);
+  }
+  groupMap.get(t.phase).tasks.push(t);
+});
+const totals={total:tasks.length,milestones:tasks.filter(t=>t.isMilestone).length,
+  completed:tasks.filter(t=>t.completed).length,
+  active:tasks.filter(t=>!t.completed&&t.actualStart!==null).length,
+  notStarted:tasks.filter(t=>!t.completed&&t.actualStart===null).length,
+  overdue:tasks.filter(t=>t.lateDays>0).length};
+if(totals.completed+totals.active+totals.notStarted!==totals.total)
+  throw new Error('执行状态统计内部错误');
+const times=[asOf];
+tasks.forEach(function(t){times.push(t.planStart,t.planEnd);
+  if(t.actualStart!==null)times.push(t.actualStart);
+  if(t.actualEnd!==null)times.push(t.actualEnd);
+});
+const fullMin=Math.min.apply(null,times)-setting.datePaddingDays*DAY_MS;
+const fullMax=Math.max.apply(null,times)+(setting.datePaddingDays+2)*DAY_MS;
+if(fullMax<=fullMin)throw new Error('时间范围无效');
+
+// 四、动态行与阶段汇总：折叠保留汇总条，统计口径不随折叠变化
+const collapsed=new Set((Array.isArray(setting.initiallyCollapsedPhases)?setting.initiallyCollapsedPhases:[])
+  .map(function(v){return String(v);}));
+function groupSummary(group){
+  const tt=group.tasks,started=tt.filter(t=>t.actualStart!==null),ended=tt.filter(t=>t.actualEnd!==null);
+  const dates=tt.map(t=>t.planStart),ends=tt.map(t=>t.planEnd);
+  const known=tt.filter(t=>t.progress!==null);
+  const average=known.length?Math.round(known.reduce((s,t)=>s+t.progress,0)/known.length):null;
+  const overdue=tt.filter(t=>t.lateDays>0).length;
+  return {phase:group.name,name:setting.stageSummaryText+'（'+tt.length+'项）',
+    isSummary:true,group:group,planStart:Math.min.apply(null,dates),planEnd:Math.max.apply(null,ends),
+    actualStart:started.length?Math.min.apply(null,started.map(t=>t.actualStart)):null,
+    actualEnd:ended.length===tt.length?Math.max.apply(null,ended.map(t=>t.actualEnd)):null,
+    progress:average,overdue:overdue,completed:ended.length===tt.length,
+    color:overdue>0?setting.colors.negative:(ended.length===tt.length?setting.colors.positive:setting.colors.inProgress)};
+}
+function makeRows(){
+  const rows=[];
+  groups.forEach(function(g){
+    const folded=collapsed.has(g.name);
+    if(folded) rows.push({kind:'summary',task:groupSummary(g),group:g});
+    else g.tasks.forEach(t=>rows.push({kind:'task',task:t,group:g}));
+  });
+  // 保留折叠后的汇总行，确保阶段可以重新展开，且不会丢失阶段时间跨度。
+  return rows.map(function(r,i){return Object.assign({},r,{rowIndex:i});});
+}
+let visibleRows=makeRows();
+// 时间窗口只由底部缩放条和图表内鼠标交互控制，折叠不会重置窗口。
+let zoomPercent=[0,100];
+// 跨年标签依据用户数据的真实时间范围生成，不依赖演示年份。
+const crossesYear = new Date(fullMin).getUTCFullYear() !== new Date(fullMax).getUTCFullYear();
+if (!['auto','always','never'].includes(setting.crossYearDateStyle))
+  throw new Error('crossYearDateStyle 仅支持 auto、always 或 never');
+
+// 五、绘图辅助：计划/实际不混淆；聚合时间条与任务 Tooltip 均为通用计算
+function rectClipped(x0,x1,y,h,coord){
+  const l=Math.max(coord.x,Math.min(x0,x1)),r=Math.min(coord.x+coord.width,Math.max(x0,x1));
+  return r>l?{x:l,y:y,width:r-l,height:h,r:Math.min(4,h/2)}:null;
+}
+function addDiamond(children,x,cy,size,color,coord,outlined){
+  if(x<coord.x-5||x>coord.x+coord.width+5)return;
+  const h=size/2;
+  children.push({type:'polygon',shape:{points:[[x,cy-h],[x+h,cy],[x,cy+h],[x-h,cy]]},
+    style:{fill:color,stroke:outlined?setting.colors.text:'#fff',lineWidth:outlined?1.2:.8}});
+}
+function taskStatus(t){
+  const p=t.progress===null?'进度未提供':readableNumber(t.progress)+'%';
+  if(t.lateDays>0)return (t.actualStart===null?'逾期未启动':'延期')+' +'+t.lateDays+'天 · '+p;
+  if(t.completed)return '按期 · '+p;
+  if(t.actualStart!==null)return '进行中 · '+p;
+  return '未开始'+(t.progress===null?'':' · '+p);
+}
+function summaryStatus(t){
+  return (t.overdue?'延期 '+t.overdue+'项':'无延期')+' · '+(t.progress===null?'进度未提供':'均进度 '+t.progress+'%');
+}
+function tooltipRow(label,value,valueColor){
+  const color=valueColor||setting.colors.text;
+  return '<div style="display:flex;justify-content:space-between;gap:18px;line-height:22px">'+
+    '<span style="font-size:12px;color:#8493A2">'+escapeHtml(label)+'</span>'+
+    '<strong style="font-size:12px;color:'+color+';font-weight:600;text-align:right">'+escapeHtml(value)+'</strong></div>';
+}
+// 阶段汇总 Tooltip 独立于任务 Tooltip；展开及折叠时均使用本阶段全部任务计算。
+function phaseTooltip(group){
+  const members=group.tasks, t=groupSummary(group);
+  const allDone=members.filter(x=>x.completed).length;
+  const actualDates=members.filter(x=>x.actualStart!==null).map(x=>x.actualStart);
+  const header='<div style="font-size:13px;font-weight:700;border-bottom:1px solid #E5E9ED;padding-bottom:6px;margin-bottom:6px">'+
+    escapeHtml(group.name+' · '+setting.stageSummaryText)+'</div>';
+  return '<div style="min-width:260px;color:#263238">'+header+
+    tooltipRow('阶段任务',members.length+' 项')+
+    tooltipRow('已完成 / 进行中 / 未开始',allDone+' / '+members.filter(x=>!x.completed&&x.actualStart!==null).length+' / '+members.filter(x=>!x.completed&&x.actualStart===null).length)+
+    tooltipRow('延期风险',t.overdue+' 项',t.overdue>0?setting.colors.negative:null)+
+    tooltipRow('计划跨度',dayText(t.planStart)+' ～ '+dayText(t.planEnd))+
+    tooltipRow('最早实际启动',actualDates.length?dayText(Math.min.apply(null,actualDates)):'—')+
+    tooltipRow('平均完成率',t.progress===null?'未提供':t.progress+'%')+
+    tooltipRow('统计基准日',dayText(asOf))+'</div>';
+}
+function ganttTooltip(params){
+  // phaseLabels 拥有独立数据项；阶段标题悬停不再映射为第一项任务。
+  const phaseIndex=params&&params.data&&params.data.phaseIndex;
+  if(Number.isInteger(phaseIndex)&&groups[phaseIndex])return phaseTooltip(groups[phaseIndex]);
+  const idx=params&&params.data&&params.data.rowIndex;
+  if(!Number.isInteger(idx)||!visibleRows[idx])return '';
+  const row=visibleRows[idx],t=row.task;
+  if(row.kind==='summary')return phaseTooltip(row.group);
+  const header='<div style="font-size:13px;font-weight:700;border-bottom:1px solid #E5E9ED;padding-bottom:6px;margin-bottom:6px">'+escapeHtml(t.name)+'</div>';
+  const last=t.actualEnd===null&&t.actualStart!==null?asOf:t.actualEnd;
+  const actual=t.actualStart===null?'尚未开始':dayText(t.actualStart)+' ～ '+
+    (t.actualEnd===null?dayText(asOf)+'（执行中）':dayText(t.actualEnd));
+  return '<div style="min-width:260px;color:#263238">'+header+
+    tooltipRow('所属阶段',t.phase)+tooltipRow('任务类型',t.isMilestone?'里程碑':'普通任务')+
+    tooltipRow('计划日期',dayText(t.planStart)+' ～ '+dayText(t.planEnd))+
+    tooltipRow('计划工期',countDays(t.planStart,t.planEnd)+' 天')+
+    tooltipRow('实际执行',actual)+
+    (t.actualStart===null?'':tooltipRow('已历经时间',countDays(t.actualStart,last)+' 天'))+
+    tooltipRow('完成率',t.progress===null?'未提供':readableNumber(t.progress)+'%')+
+    '<div style="display:flex;justify-content:space-between;gap:18px;line-height:22px"><span style="font-size:12px;color:#8493A2">任务状态</span><strong style="color:'+t.color+';font-size:12px">'+escapeHtml(t.state)+'</strong></div>'+
+    (t.lateDays>0?tooltipRow(t.completed?'实际延期':'截至基准日延期',t.lateDays+' 天',setting.colors.negative):'')+
+    tooltipRow('统计基准日',dayText(asOf))+'</div>';
+}
+
+// 六、动态 ECharts 配置：一张 Grid，阶段左栏独立，折叠后使用阶段汇总时间条
+function chartSize(){
+  if(typeof myChart!=='undefined'&&myChart&&typeof myChart.getHeight==='function')
+    return {width:myChart.getWidth(),height:myChart.getHeight()};
+  return {width:1200,height:820};
+}
+function layoutForRows(){
+  const h=chartSize().height;
+  const maxAvailable=Math.max(80,h-setting.grid.top-setting.grid.bottom);
+  const desired=Math.max(1,visibleRows.length)*setting.maxTaskRowHeight;
+  const gridHeight=Math.min(maxAvailable,Math.max(74,desired));
+  return {height:gridHeight,bottom:Math.max(setting.grid.bottom,h-setting.grid.top-gridHeight)};
+}
+function textTick(value) {
+  const d=new Date(value), m=d.getUTCMonth()+1, day=d.getUTCDate();
+  const withYear=setting.crossYearDateStyle==='always' ||
+    (setting.crossYearDateStyle==='auto' && crossesYear);
+  // 同一时间刻度仍以日为精度；跨年时明确显示年份，避免 12 月/1 月混淆。
+  return withYear ? d.getUTCFullYear()+'/'+m+'/'+day : m+'/'+day;
+}
+function chartOptions(){
+  const geo=layoutForRows(),size=chartSize();
+  const headText='任务 '+totals.total+' 项（含里程碑 '+totals.milestones+' 项） · 执行：已完成 '+totals.completed+
+    ' / 进行中 '+totals.active+' / 未开始 '+totals.notStarted+' · 风险：延期 '+totals.overdue+' 项 · 截至 '+dayText(asOf);
+  const graphics=[
+    {type:'rect',left:24,top:10,shape:{width:20,height:4},style:{fill:setting.colors.negative},silent:true},
+    {type:'text',left:24,top:98,silent:true,style:{text:headText,font:'12px sans-serif',fill:setting.colors.textSecondary}},
+    {type:'text',left:24,bottom:33,silent:true,style:{text:setting.sourceText,font:'11px sans-serif',fill:setting.colors.textSecondary}},
+    {type:'text',left:24,bottom:15,silent:true,style:{text:setting.noteText,font:'11px sans-serif',fill:setting.colors.textSecondary}}
+  ];
+  const isZoom=setting.showDataZoom;
+  const zs=[{type:'inside',xAxisIndex:0,filterMode:'none',zoomOnMouseWheel:setting.zoomWheelModifier,
+    moveOnMouseMove:setting.enableChartPan,moveOnMouseWheel:setting.enableWheelPan,
+    preventDefaultMouseMove:true,start:zoomPercent[0],end:zoomPercent[1]}];
+  if(isZoom)zs.push({type:'slider',xAxisIndex:0,filterMode:'none',height:setting.zoomBarHeight,
+    bottom:Math.max(63,geo.bottom-40),showDetail:false,showDataShadow:false,brushSelect:false,
+    handleSize:'100%',borderColor:setting.colors.gridLine,
+    backgroundColor:'rgba(229,233,237,0.48)',fillerColor:'rgba(174,183,193,0.36)',
+    handleStyle:{color:setting.colors.barReference,borderColor:setting.colors.barReference,borderWidth:1},
+    moveHandleSize:0,textStyle:{color:setting.colors.textSecondary,fontSize:10},
+    start:zoomPercent[0],end:zoomPercent[1]});
+  return {
+    backgroundColor:setting.backgroundColor,animationDurationUpdate:280,animationDuration:350,
+    title:{text:setting.title,subtext:setting.subtitle,left:24,top:18,
+      textStyle:{color:setting.colors.text,fontSize:20,fontWeight:700},
+      subtextStyle:{color:setting.colors.textSecondary,fontSize:12,lineHeight:20}},
+    graphic:graphics,
+    grid:{left:setting.grid.left,right:setting.grid.right,top:setting.grid.top,bottom:geo.bottom,containLabel:false},
+    tooltip:{trigger:'item',renderMode:'html',confine:true,appendToBody:false,
+      borderColor:'#D9DEE3',borderWidth:1,backgroundColor:'#fff',padding:[9,12],
+      textStyle:{color:setting.colors.text,fontSize:12},
+      extraCssText:'box-shadow:0 3px 12px rgba(38,50,56,.12)',formatter:ganttTooltip,
+      position:function(p,params,dom,rect,s){return [Math.max(4,Math.min(p[0]+14,s.viewSize[0]-s.contentSize[0]-4)),
+        Math.max(4,Math.min(p[1]+10,s.viewSize[1]-s.contentSize[1]-4))];}},
+    xAxis:{type:'time',min:fullMin,max:fullMax,
+      minInterval:DAY_MS,
+      axisLine:{lineStyle:{color:setting.colors.barReference}},axisTick:{show:false},
+      axisLabel:{color:setting.colors.textSecondary,fontSize:11,hideOverlap:true,formatter:textTick},
+      splitLine:{show:true,lineStyle:{color:setting.colors.gridLine,type:'dashed',width:1}}},
+    yAxis:{type:'category',inverse:true,data:visibleRows.map((r,i)=>String(i)),
+      axisTick:{show:false},axisLine:{show:false},splitLine:{show:false},axisLabel:{show:false}},
+    dataZoom:zs,
+    series:[
+      {id:'taskTimeline',name:'计划与实际',type:'custom',coordinateSystem:'cartesian2d',clip:false,z:3,
+        renderItem:function(params,api){
+          const idx=Number(api.value(0)),row=visibleRows[idx];
+          if(!row)return null;
+          const t=row.task,group=row.group,coord=params.coordSys;
+          const cy=api.coord([t.planStart,idx])[1],rowHeight=coord.height/visibleRows.length;
+          const children=[];
+          const statusX=coord.x-setting.leftLabelGap-setting.statusColumnWidth;
+          const taskX=statusX-setting.statusColumnGap-setting.taskColumnWidth;
+          const phaseX=taskX-setting.phaseColumnGap-setting.phaseColumnWidth;
+          const groupStart=idx===0 || visibleRows[idx-1].group!==group;
+          // 采用跨阶段、任务、状态和时间轴的一整行浅色底纹，无需读者左右寻找对应项。
+          if(setting.showRowBanding && idx%2===1){
+            children.push({type:'rect',silent:true,shape:{x:phaseX-7,y:cy-rowHeight/2,width:coord.x+coord.width-(phaseX-7),height:rowHeight},
+              style:{fill:setting.rowBandColor}});
+          }
+          if(setting.showStageSeparators&&idx>0&&groupStart){
+            const sep=cy-rowHeight/2;
+            children.push({type:'line',silent:true,shape:{x1:phaseX,y1:sep,x2:coord.x+coord.width,y2:sep},
+              style:{stroke:setting.colors.gridLine,lineWidth:1.2}});
+          }
+          // 阶段标题交给独立 phaseLabels 系列，避免阶段悬停误触发任务 Tooltip。
+          if(groupStart){
+            if(setting.showColumnHeaders&&idx===0){
+              children.push({type:'text',silent:true,style:{x:phaseX,y:coord.y-24,text:'阶段 ▾',
+                font:'11px sans-serif',fill:setting.colors.textSecondary}});
+              children.push({type:'text',silent:true,style:{x:taskX,y:coord.y-24,text:'任务',
+                font:'11px sans-serif',fill:setting.colors.textSecondary}});
+              children.push({type:'text',silent:true,style:{x:statusX,y:coord.y-24,text:'状态 / 进度',
+                font:'11px sans-serif',fill:setting.colors.textSecondary}});
+            }
+          }
+          children.push({type:'text',silent:true,style:{x:taskX,y:cy,text:t.name,
+            width:setting.taskColumnWidth,overflow:'truncate',textVerticalAlign:'middle',
+            font:(row.kind==='summary'?'600 ':'')+setting.taskLabelFontSize+'px sans-serif',
+            fill:row.kind==='summary'?setting.colors.text:setting.colors.text}});
+          if(row.kind==='task'&&t.isMilestone){
+            const px=api.coord([t.planStart,idx])[0];
+            addDiamond(children,px,cy,setting.milestoneSize,setting.colors.barReference,coord,false);
+            if(t.actualEnd!==null){
+              const ax=api.coord([t.actualEnd,idx])[0];
+              if(Math.abs(ax-px)>2)children.push({type:'line',shape:{x1:px,y1:cy,x2:ax,y2:cy},
+                style:{stroke:t.color,lineWidth:1.5,lineDash:[3,3]}});
+              addDiamond(children,ax,cy,setting.milestoneSize-1,t.color,coord,true);
+            }
+          } else {
+            const p0=api.coord([t.planStart,idx])[0],p1=api.coord([t.planEnd+DAY_MS,idx])[0];
+            const box=rectClipped(p0,p1,cy-setting.planBarHeight/2,setting.planBarHeight,coord);
+            if(box)children.push({type:'rect',shape:box,style:{fill:setting.colors.barSecondary}});
+            if(t.actualStart!==null){
+              const actualFinish=row.kind==='summary'?asOf:(t.actualEnd===null?asOf:t.actualEnd);
+              // 汇总条实际结束取开始以来最后观测到的日期；不将计划未来日期误画为实际。
+              const activeEnd=row.kind==='summary' && t.actualEnd!==null?t.actualEnd:actualFinish;
+              const a0=api.coord([t.actualStart,idx])[0],a1=api.coord([activeEnd+DAY_MS,idx])[0];
+              const act=rectClipped(a0,a1,cy-setting.actualBarHeight/2,setting.actualBarHeight,coord);
+              if(act)children.push({type:'rect',shape:act,style:{fill:t.color}});
+            }
+          }
+          // 状态不再远离任务出现在甘特图区右侧，而是固定在任务名称的右边。
+          children.push({type:'text',silent:true,style:{x:statusX,y:cy,
+            text:row.kind==='summary'?summaryStatus(t):taskStatus(t),
+            width:setting.statusColumnWidth,overflow:'truncate',
+            textVerticalAlign:'middle',font:setting.statusLabelFontSize+'px sans-serif',fill:t.color}});
+          return {type:'group',children:children};
+        },
+        encode:{y:0},data:visibleRows.map(function(row,i){return {rowIndex:i,value:[i,row.task.planStart,row.task.planEnd]};})},
+      // 与任务自定义系列分离：阶段标签拥有自己的 tooltip 数据项及鼠标命中范围。
+      // 标题点击仍由 ZRender 像素命中处理，不依赖子元素 info 透传。
+      {id:'phaseLabels',name:'阶段',type:'custom',coordinateSystem:'cartesian2d',clip:false,z:9,
+        renderItem:function(params,api){
+          const first=Number(api.value(0)),row=visibleRows[first];
+          if(!row)return null;
+          const group=row.group,coord=params.coordSys;
+          let last=first;
+          while(last+1<visibleRows.length && visibleRows[last+1].group===group)last++;
+          const yFirst=api.coord([fullMin,first])[1];
+          const yLast=api.coord([fullMin,last])[1];
+          const center=(yFirst+yLast)/2;
+          const statusX=coord.x-setting.leftLabelGap-setting.statusColumnWidth;
+          const taskX=statusX-setting.statusColumnGap-setting.taskColumnWidth;
+          const phaseX=taskX-setting.phaseColumnGap-setting.phaseColumnWidth;
+          return {type:'group',children:[
+            {type:'rect',name:'phaseHit',cursor:'pointer',
+              shape:{x:phaseX-5,y:center-13,width:setting.phaseColumnWidth+8,height:26},
+              style:{fill:'rgba(255,255,255,0.001)'},silent:false},
+            {type:'text',name:'phaseText',cursor:'pointer',
+              style:{x:phaseX+1,y:center,text:(collapsed.has(group.name)?'▸ ':'▾ ')+group.name,
+                textVerticalAlign:'middle',width:setting.phaseColumnWidth,overflow:'truncate',
+                font:'600 '+setting.taskLabelFontSize+'px sans-serif',fill:setting.colors.text},
+              silent:false}
+          ]};
+        },
+        encode:{y:0},
+        data:groups.map(function(group,phaseIndex){
+          const first=visibleRows.findIndex(function(row){return row.group===group;});
+          return {phaseIndex:phaseIndex,value:[first,fullMin]};
+        })},
+      {id:'snapshotLine',name:'统计基准日',type:'custom',coordinateSystem:'cartesian2d',
+        silent:true,tooltip:{show:false},clip:false,z:8,
+        renderItem:function(params,api){
+          if(!setting.showSnapshotLine)return null;
+          const c=params.coordSys,x=api.coord([asOf,0])[0];
+          if(x<c.x||x>c.x+c.width)return null;
+          return {type:'group',children:[
+            {type:'line',shape:{x1:x,y1:c.y,x2:x,y2:c.y+c.height},
+              style:{stroke:setting.colors.negative,lineWidth:1.3,lineDash:[5,4],opacity:.8}},
+            {type:'text',style:{x:x+4,y:c.y-7,text:'统计基准日',font:'11px sans-serif',fill:setting.colors.negative}}
+          ]};
+        },data:[[asOf,0]]}
+    ]
+  };
+}
+
+// 七、交互：阶段列使用 ZRender 像素命中；保留底部滑块与图内缩放
+function activeChart(){return typeof myChart!=='undefined'&&myChart&&typeof myChart.setOption==='function'?myChart:null;}
+function readZoom(chart){
+  try{
+    const dz=chart.getOption().dataZoom;
+    if(Array.isArray(dz)&&dz.length){
+      const z=dz[0],lo=Number(z.start),hi=Number(z.end);
+      if(Number.isFinite(lo)&&Number.isFinite(hi)&&lo>=0&&hi<=100&&hi>lo)return [lo,hi];
+    }
+  }catch(e){}
+  return zoomPercent;
+}
+function redraw(){
+  const chart=activeChart();if(!chart)return;
+  const cfg=chartOptions();
+  // 使用 notMerge 替换旧可见行、坐标轴与阶段标记；保留 zoomPercent 与 collapsed 状态。
+  chart.setOption(cfg,{notMerge:true,lazyUpdate:false});
+  option=cfg;
+}
+function togglePhase(phaseName){
+  if(!setting.phaseCollapsible)return;
+  const chart=activeChart();if(chart)zoomPercent=readZoom(chart);
+  if(collapsed.has(phaseName))collapsed.delete(phaseName);else collapsed.add(phaseName);
+  visibleRows=makeRows();redraw();
+}
+// 折叠点击必须命中鼠标真实位置，而非依赖 custom series 子元素的 info 透传。
+// ECharts 的 series click 参数主要面向数据项，不能稳定读取 renderItem 中任意子元素的 info。
+// 使用 ZRender 全局点击事件 + 当前可见分组的像素区域；对 canvas/svg 均通用。
+function locatePhaseByPoint(chart, x, y) {
+  if (!setting.phaseCollapsible || !Number.isFinite(x) || !Number.isFinite(y) || !visibleRows.length) return null;
+  // 与 renderItem 中三栏坐标共用相同配置，调整列宽也不会使折叠点击错位。
+  const phaseX = setting.grid.left - setting.leftLabelGap - setting.statusColumnWidth -
+    setting.statusColumnGap - setting.taskColumnWidth -
+    setting.phaseColumnGap - setting.phaseColumnWidth;
+  if (x < phaseX - 7 || x > phaseX + setting.phaseColumnWidth + 5) return null;
+  // 当前任务行高度由折叠状态及容器尺寸决定；重新计算避免 resize 后点击错位。
+  const rowHeight = layoutForRows().height / visibleRows.length;
+  let first = 0;
+  while (first < visibleRows.length) {
+    const group = visibleRows[first].group;
+    let last = first;
+    while (last + 1 < visibleRows.length && visibleRows[last + 1].group === group) last++;
+    // category 轴 inverse:true：第 i 行中心 = gridTop + (i + 0.5) × rowHeight。
+    const centerY = setting.grid.top + (first + last + 1) * rowHeight / 2;
+    if (Math.abs(y - centerY) <= 15) return group.name;
+    first = last + 1;
+  }
+  return null;
+}
+function bindGanttInteractions(chart){
+  if (!chart || typeof chart.on !== 'function') return;
+  const zr = typeof chart.getZr === 'function' ? chart.getZr() : null;
+  const old = chart.__c021Handlers;
+  // 清除之前版本的 click/zoom 和 ZRender 监听，防止脚本重新执行后重复折叠。
+  if (old) {
+    if (old.click) chart.off('click', old.click);
+    if (old.zoom) chart.off('datazoom', old.zoom);
+    if (zr && old.zrClick) zr.off('click', old.zrClick);
+  }
+  function onZoom(){zoomPercent=readZoom(chart);}
+  function onZrClick(event){
+    // offsetX / offsetY 为 ZRender 相对当前画布的像素坐标。
+    const x=Number(event && event.offsetX), y=Number(event && event.offsetY);
+    const phaseName=locatePhaseByPoint(chart,x,y);
+    if (phaseName!==null) togglePhase(phaseName);
+  }
+  chart.on('datazoom',onZoom);
+  if (zr && typeof zr.on === 'function') zr.on('click',onZrClick);
+  chart.__c021Handlers={zoom:onZoom,zrClick:onZrClick};
+}
+
+// 八、输出：官方编辑器直接识别 option；已有图表实例时绑定点击和缩放监听
+option=chartOptions();
+if(typeof myChart!=='undefined')bindGanttInteractions(myChart);
