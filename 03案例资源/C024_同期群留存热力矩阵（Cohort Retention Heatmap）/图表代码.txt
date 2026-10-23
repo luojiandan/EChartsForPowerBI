@@ -1,0 +1,367 @@
+﻿// C024｜同期群留存热力矩阵（Cohort Retention Heatmap） 
+// 直接粘贴到 ECharts 官方编辑器 JS 面板；在 Power BI 中替换三条平行一维数组即可更新矩阵。
+// 业务数据（批次、月份、客户数等）仅出现在原始输入数组中；统计、颜色、尺寸均从数组计算。
+// 数据来源、指标名称及单位属于元数据，无法从纯数字自动推断；更换数据后应核对 setting 中的说明。
+
+// ==================== 01 数据 ====================
+// 每个索引代表一条“初始月份 × 后续月序 × 活跃对象数”记录；M0 数量即该批初始规模。
+// 非 M0 的缺失记录：若该月属于已确认观察范围，视为 0；超过观察范围则显示“未观察”。
+// Power BI：可将三数组分别替换为 dataArr.dataObjects[i].values（i 以报表真实字段顺序为准）。
+var 同期群月份 = [
+  '2010-12', '2010-12', '2010-12', '2010-12', '2010-12', '2010-12', '2010-12', '2010-12', '2010-12', '2010-12', '2010-12', '2010-12',
+  '2011-01', '2011-01', '2011-01', '2011-01', '2011-01', '2011-01', '2011-01', '2011-01', '2011-01', '2011-01', '2011-01',
+  '2011-02', '2011-02', '2011-02', '2011-02', '2011-02', '2011-02', '2011-02', '2011-02', '2011-02', '2011-02',
+  '2011-03', '2011-03', '2011-03', '2011-03', '2011-03', '2011-03', '2011-03', '2011-03', '2011-03',
+  '2011-04', '2011-04', '2011-04', '2011-04', '2011-04', '2011-04', '2011-04', '2011-04',
+  '2011-05', '2011-05', '2011-05', '2011-05', '2011-05', '2011-05', '2011-05',
+  '2011-06', '2011-06', '2011-06', '2011-06', '2011-06', '2011-06',
+  '2011-07', '2011-07', '2011-07', '2011-07', '2011-07',
+  '2011-08', '2011-08', '2011-08', '2011-08',
+  '2011-09', '2011-09', '2011-09',
+  '2011-10', '2011-10',
+  '2011-11'
+];
+
+var 观察期序号 = [
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+  0, 1, 2, 3, 4, 5, 6, 7, 8,
+  0, 1, 2, 3, 4, 5, 6, 7,
+  0, 1, 2, 3, 4, 5, 6,
+  0, 1, 2, 3, 4, 5,
+  0, 1, 2, 3, 4,
+  0, 1, 2, 3,
+  0, 1, 2,
+  0, 1,
+  0
+];
+
+var 活跃数量 = [
+  76, 7, 4, 7, 9, 5, 4, 7, 4, 2, 7, 15,
+  72, 12, 16, 14, 16, 11, 11, 9, 8, 15, 18,
+  125, 20, 20, 23, 27, 20, 20, 19, 19, 23,
+  179, 32, 39, 36, 40, 27, 37, 36, 43,
+  106, 26, 21, 21, 19, 25, 19, 27,
+  111, 26, 27, 18, 24, 23, 29,
+  108, 25, 23, 29, 22, 30,
+  101, 21, 30, 28, 35,
+  107, 28, 32, 28,
+  188, 51, 71,
+  221, 70,
+  191
+];
+
+// ==================== 02 可修改的全部设置 ====================
+var setting = {
+  // 业务说明属于可替换元数据，不参与运算；改数据时应同步核对来源和标签。
+  title: '同期群留存热力矩阵',
+  subTitle: '',                          // 留空：自动显示输入的同期群范围、批次数量
+  sourceText: 'UCI Online Retail II（基于完整交易历史识别首次购买）', // 此处仅为示例数据的真实来源
+  noteText: '',                          // 留空：自动生成通用统计口径说明
+  baseLabel: '首购客户数',
+  activeLabel: '当期活跃数量',
+  periodLabel: '首购月份',
+  activityLabel: '观察月份',
+  rateLabel: '月度留存率',
+  countUnit: '',                         // 例如“人”“户”；默认无单位，适用任意计数对象
+  periodPrefix: 'M',                   // 仅在 periodLabelMode='code' 时使用
+  periodLabelMode: 'relative',         // relative=当月/1个月后；code=M0/M1；标签不改变统计口径
+  firstPeriodText: '当月',
+  afterPeriodSuffix: '个月后',
+  maxMonths: 0,                          // 0=按数据自动推算列数；正数=限制显示最大月数
+  maxCohorts: 0,                         // 0=全部批次；正数=仅显示最近 N 批
+  observationEndPeriod: '',              // 空=依据输入的最晚观察月份；可显式填写 YYYY-MM
+  maxColorPercent: null,                // null=非 M0 观察值自动计算；正数=手动覆盖
+  showCellLabels: true,
+  percentDecimals: 1,
+  cellGap: 3,
+  hoverBorderWidth: 1.5,
+  showChangeInTooltip: true,
+  grid: {left: 197, right: 36, top: 158, bottom: 72},
+  rowLabelLayout: {periodWidth: 80, countWidth: 45, margin: 12}, // 左侧标签与表头共享列宽；均为布局值，非业务数据
+  titleLeft: 26,
+  palette: {
+    positive: '#239263',
+    negative: '#D9544D',
+    text: '#263238',
+    textSecondary: '#8493A2',
+    gridLine: '#E5E9ED',
+    hoverBorder: '#718A9E',
+    m0: '#E7EDF1',
+    future: '#F3F5F6',
+    low: '#EDF7F1',
+    high: '#239263',
+    white: '#FFFFFF'
+  },
+  hoverBg: 'rgba(35,146,99,0.024)',      // 极浅行列引导；不可与有效留存着色混淆
+  fontFamily: 'Microsoft YaHei, Arial, sans-serif'
+};
+
+// ==================== 03 通用数据清洗和留存计算 ====================
+var validLength = 同期群月份.length === 观察期序号.length && 观察期序号.length === 活跃数量.length;
+if (!validLength) {
+  console.warn('[C024] 输入数组长度不一致，无法正确匹配数据。');
+}
+
+function normalizePeriod(value) {
+  // 支持 YYYY-MM、YYYY/MM、YYYYMM、YYYY-MM-DD、ISO 日期及 Date 对象。
+  if (Object.prototype.toString.call(value)==='[object Date]') {
+    if (isNaN(value.getTime())) return null;
+    return String(value.getFullYear())+'-'+('0'+(value.getMonth()+1)).slice(-2);
+  }
+  var s = String(value == null ? '' : value).trim();
+  var m = /^(\d{4})[-\/]?(\d{1,2})(?:[-\/]\d{1,2}(?:[ T].*)?)?$/.exec(s);
+  if (!m) return null;
+  var year = Number(m[1]);
+  var month = Number(m[2]);
+  return month >= 1 && month <= 12 ? String(year) + '-' + ('0' + month).slice(-2) : null;
+}
+function monthSerial(period) {
+  var p = normalizePeriod(period);
+  if (!p) return null;
+  return Number(p.slice(0,4)) * 12 + Number(p.slice(5,7)) - 1;
+}
+function serialToPeriod(serial) {
+  var year = Math.floor(serial / 12);
+  var month = serial - year * 12 + 1;
+  return String(year) + '-' + ('0' + month).slice(-2);
+}
+function cleanNumber(value) {
+  if (value === null || value === '' || typeof value === 'undefined') return null;
+  var n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+function pctText(value) {
+  return Number(value).toFixed(setting.percentDecimals) + '%';
+}
+function observationLabel(step) {
+  // 列是相对首期的观察月序：相同列不一定是相同的自然月。
+  if (setting.periodLabelMode === 'code') return String(setting.periodPrefix || 'M') + step;
+  return step === 0 ? setting.firstPeriodText : String(step) + setting.afterPeriodSuffix;
+}
+function formatCount(value) {
+  return Number(value).toLocaleString('zh-CN', {maximumFractionDigits: 0});
+}
+function escapeHtml(textValue) {
+  return String(textValue).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+function hexToRgb(hex) {
+  var h = String(hex).replace('#','');
+  if (h.length === 3) h = h.split('').map(function(x){return x+x;}).join('');
+  return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];
+}
+function blendHex(from,to,position) {
+  var t = Math.max(0, Math.min(1, position));
+  var a=hexToRgb(from), b=hexToRgb(to);
+  return '#' + a.map(function(x,i){return ('0'+Math.round(x+(b[i]-x)*t).toString(16)).slice(-2);}).join('');
+}
+
+var rowData = {};
+var allPeriodSerials = [];
+var invalidRows = 0;
+var len = validLength ? 同期群月份.length : 0;
+for (var i=0;i<len;i++) {
+  var period = normalizePeriod(同期群月份[i]);
+  var step = Number(观察期序号[i]);
+  var active = cleanNumber(活跃数量[i]);
+  if (!period || !Number.isInteger(step) || step < 0 || active === null) { invalidRows++; continue; }
+  if (!rowData[period]) rowData[period] = {};
+  if (Object.prototype.hasOwnProperty.call(rowData[period], step)) {
+    // 防止同一期重复数据被简单相加，导致已去重客户数重复计算。
+    console.warn('[C024] 同一同期群与月序出现重复记录：'+period+' '+String(setting.periodPrefix)+step+'；保留最后一条。');
+  }
+  rowData[period][step] = active;
+  allPeriodSerials.push(monthSerial(period) + step);
+}
+var allCohorts = Object.keys(rowData).filter(function(x){return rowData[x][0] > 0;}).sort();
+var cohorts = setting.maxCohorts > 0 ? allCohorts.slice(-Math.floor(setting.maxCohorts)) : allCohorts;
+var latestObserved = allPeriodSerials.length ? Math.max.apply(null,allPeriodSerials) : null;
+var customObservationEnd = setting.observationEndPeriod ? monthSerial(setting.observationEndPeriod) : null;
+if (customObservationEnd !== null) latestObserved = customObservationEnd;
+var earliestCohort = cohorts.length ? monthSerial(cohorts[0]) : null;
+var maxPossibleMonths = latestObserved === null || earliestCohort === null ? 0 : latestObserved - earliestCohort + 1;
+var displayLimit = Number(setting.maxMonths)>0 ? Math.floor(Number(setting.maxMonths)) : maxPossibleMonths;
+var monthCount = Math.max(0, Math.min(displayLimit, maxPossibleMonths));
+var columns = Array.from({length:monthCount},function(_,i){return observationLabel(i);});
+var cells = [];
+var retentionForScale = [];
+for (var r=0;r<cohorts.length;r++) {
+  var c = cohorts[r];
+  var base = rowData[c][0];
+  for (var j=0;j<monthCount;j++) {
+    var observed = latestObserved !== null && monthSerial(c) + j <= latestObserved;
+    var activeCount = observed ? (Object.prototype.hasOwnProperty.call(rowData[c],j) ? rowData[c][j] : 0) : null;
+    // 留存按同批初始对象口径计算。活跃数量超出初始规模，提醒用户校验去重口径。
+    if (observed && activeCount > base) {
+      console.warn('[C024] 观察期活跃数量超过初始数量，请检查数据去重和同期群口径：'+c+' '+j);
+    }
+    var rate = observed ? 100 * activeCount / base : null;
+    if (observed && j>0) retentionForScale.push(rate);
+    cells.push({row:r,col:j,cohort:c,base:base,active:activeCount,rate:rate,observed:observed,calendarPeriod:serialToPeriod(monthSerial(c)+j)});
+  }
+}
+var actualMax = retentionForScale.length ? Math.max.apply(null,retentionForScale) : 0;
+// “好读”的动态色阶刻度（1/2/5 × 10^n）；无任何业务数据上限常量。
+function niceColorStep(maxValue) {
+  if (!(maxValue>0)) return 1;
+  var raw = maxValue / 7;
+  var base = Math.pow(10, Math.floor(Math.log10(raw)));
+  var ratio = raw / base;
+  return (ratio<=1?1:ratio<=2?2:ratio<=5?5:10)*base;
+}
+var colorStep = niceColorStep(actualMax);
+var autoMax = actualMax > 0 ? Math.ceil(actualMax / colorStep - 1e-10) * colorStep : colorStep;
+autoMax = Math.round(autoMax*1e9)/1e9;
+var scaleMax = Number.isFinite(Number(setting.maxColorPercent)) && setting.maxColorPercent !== null && Number(setting.maxColorPercent) > 0 ? Number(setting.maxColorPercent) : autoMax;
+function cellFill(cell) {
+  if (!cell.observed) return setting.palette.future;
+  if (cell.col===0) return setting.palette.m0;
+  return blendHex(setting.palette.low,setting.palette.high,Math.pow(Math.min(1,cell.rate/scaleMax),0.75));
+}
+function cellLabelColor(cell) {
+  if (!cell.observed) return setting.palette.textSecondary;
+  if (cell.col===0) return setting.palette.text;
+  return cell.rate/scaleMax >= 0.60 ? setting.palette.white : setting.palette.text;
+}
+var matrixSeriesData = cells.map(function(cell){
+  return {
+    value: [cell.col,cell.row,cell.rate],
+    cohort:cell.cohort,
+    base:cell.base,
+    active:cell.active,
+    rate:cell.rate,
+    calendarPeriod:cell.calendarPeriod,
+    observed:cell.observed,
+    index:cell.col,
+    itemStyle:{color:cellFill(cell),borderColor:setting.palette.white,borderWidth:setting.cellGap},
+    label:{color:cellLabelColor(cell),show:setting.showCellLabels && cell.observed,fontWeight:cell.col===0?600:500},
+    emphasis:cell.observed?{itemStyle:{borderColor:setting.palette.hoverBorder,borderWidth:setting.hoverBorderWidth,shadowBlur:0}}:{disabled:true}
+  };
+});
+
+// ==================== 04 富文本 Tooltip ====================
+function tableLine(label,value,emphasisColor) {
+  var c=emphasisColor||setting.palette.text;
+  return '<div style="display:flex;justify-content:space-between;gap:28px;margin-top:8px;white-space:nowrap">'
+    + '<span style="color:'+setting.palette.textSecondary+'">'+escapeHtml(label)+'</span>'
+    + '<strong style="font-weight:600;color:'+c+'">'+escapeHtml(value)+'</strong></div>';
+}
+function tooltipFormatter(params) {
+  var d=params.data || {};
+  if (!d.cohort) return '';
+  var title = '<div style="font-size:13px;font-weight:700;color:'+setting.palette.text+';padding-bottom:8px;border-bottom:1px solid '+setting.palette.gridLine+'">'
+    + escapeHtml(d.cohort)+' · '+escapeHtml(observationLabel(d.index))+' '+escapeHtml(setting.rateLabel)+'明细</div>';
+  if (!d.observed) return '<div style="min-width:230px">'+title+'<div style="margin-top:10px;color:'+setting.palette.textSecondary+'">尚未到观察期，不等于 0% 留存。</div></div>';
+  var changeLine = '';
+  if (setting.showChangeInTooltip && d.index>0) {
+    var prev = rowData[d.cohort][d.index-1];
+    if (typeof prev==='undefined') prev=0;
+    var pp=(d.active-prev)*100/d.base;
+    var textValue = (pp>0?'▲ +':pp<0?'▼ ':'')+pp.toFixed(1)+' 个百分点';
+    var clr=pp>0?setting.palette.positive:pp<0?setting.palette.negative:setting.palette.textSecondary;
+    changeLine=tableLine('较上一观察期变化',textValue,clr);
+  }
+  return '<div style="min-width:244px;font-size:12px;line-height:1.5">'+title
+    + tableLine(setting.periodLabel,d.cohort)
+    + tableLine(setting.activityLabel,d.calendarPeriod)
+    + tableLine(setting.baseLabel,formatCount(d.base)+(setting.countUnit?' '+setting.countUnit:''))
+    + tableLine(setting.activeLabel,formatCount(d.active)+(setting.countUnit?' '+setting.countUnit:''))
+    + tableLine(setting.rateLabel,pctText(d.rate),setting.palette.positive)
+    + changeLine
+    + '<div style="font-size:10px;border-top:1px solid '+setting.palette.gridLine+';margin-top:11px;padding-top:7px;color:'+setting.palette.textSecondary+'">'
+    + (d.index===0?'首期为同期群初始规模，按定义为 100%。':'以初始规模为分母；各观察月份独立计算。')
+    + '</div></div>';
+}
+function placeTooltip(point,params,dom,rect,size) {
+  var x=point[0]+17,y=point[1]+15;
+  if (x+size.contentSize[0]>size.viewSize[0]-8) x=point[0]-size.contentSize[0]-16;
+  if (y+size.contentSize[1]>size.viewSize[1]-7) y=size.viewSize[1]-size.contentSize[1]-7;
+  return [Math.max(5,x),Math.max(5,y)];
+}
+
+// ==================== 05 标题、分组标签、图例与来源 ====================
+var minText = cohorts.length ? cohorts[0] : '';
+var maxText = cohorts.length ? cohorts[cohorts.length-1] : '';
+var subtitleText = setting.subTitle || (minText+'—'+maxText+' ｜ '+cohorts.length+' 个同期群 ｜ '+setting.rateLabel);
+// 左侧两列共用同一组宽度、边距，避免表头与 yAxis 明细标签出现水平错位。
+var rowLabelLayout = setting.rowLabelLayout;
+var rowLabelRight = setting.grid.left - rowLabelLayout.margin;
+var rowLabelLeft = rowLabelRight - rowLabelLayout.periodWidth - rowLabelLayout.countWidth;
+var graphItems = [
+  {type:'rect',left:setting.titleLeft,top:22,shape:{width:20,height:4},style:{fill:setting.palette.negative},silent:true},
+  {type:'text',left:setting.titleLeft,top:33,style:{text:setting.title,font:'bold 21px '+setting.fontFamily,fill:setting.palette.text},silent:true},
+  {type:'text',left:setting.titleLeft,top:71,style:{text:subtitleText,font:'12px '+setting.fontFamily,fill:setting.palette.textSecondary},silent:true},
+  // 两个独立列标题，跟随行标签几何尺寸自动对齐，不再靠空格控制位置。
+  {type:'group',left:rowLabelLeft,top:128,silent:true,children:[
+    {type:'text',x:0,y:0,style:{text:setting.periodLabel,align:'left',font:'bold 11px '+setting.fontFamily,fill:setting.palette.textSecondary}},
+    {type:'text',x:rowLabelLayout.periodWidth+rowLabelLayout.countWidth,y:0,style:{text:setting.baseLabel,align:'right',font:'bold 11px '+setting.fontFamily,fill:setting.palette.textSecondary}}
+  ]},
+  {type:'text',left:20,bottom:28,style:{text:'数据来源：'+(setting.sourceText||'未提供，请补充可核查来源'),font:'10px '+setting.fontFamily,fill:setting.palette.textSecondary},silent:true},
+  {type:'text',left:20,bottom:11,style:{text:'图表说明：'+(setting.noteText||'留存率＝当期活跃数量÷初始数量；当月＝100%；浅灰格＝尚未观察。'),font:'10px '+setting.fontFamily,fill:setting.palette.textSecondary},silent:true}
+];
+var legendChildren = [
+  {type:'text',x:0,y:3,style:{text:'低留存',fill:setting.palette.textSecondary,font:'10px '+setting.fontFamily}},
+  {type:'text',x:150,y:3,style:{text:'高留存',fill:setting.palette.textSecondary,font:'10px '+setting.fontFamily}},
+  {type:'rect',x:199,y:2,shape:{width:11,height:11},style:{fill:setting.palette.m0}},
+  {type:'text',x:215,y:3,style:{text:observationLabel(0),fill:setting.palette.textSecondary,font:'10px '+setting.fontFamily}},
+  {type:'rect',x:246,y:2,shape:{width:11,height:11},style:{fill:setting.palette.future}},
+  {type:'text',x:262,y:3,style:{text:'未观察',fill:setting.palette.textSecondary,font:'10px '+setting.fontFamily}}
+];
+for(var stop=0;stop<8;stop++){
+  legendChildren.push({type:'rect',x:43+stop*13,y:1,shape:{width:13,height:12},style:{fill:blendHex(setting.palette.low,setting.palette.high,stop/7)}});
+}
+graphItems.push({type:'group',right:setting.grid.right,top:111,children:legendChildren,silent:true});
+
+// ==================== 06 ECharts option（不依赖额外 HTML 或 DOM） ====================
+option = {
+  backgroundColor:'transparent',
+  animationDuration:380,
+  textStyle:{fontFamily:setting.fontFamily},
+  grid:{left:setting.grid.left,right:setting.grid.right,top:setting.grid.top,bottom:setting.grid.bottom,containLabel:false},
+  graphic:graphItems,
+  xAxis:{
+    type:'category',position:'top',data:columns,
+    axisLine:{show:false},axisTick:{show:false},splitLine:{show:false},
+    axisLabel:{color:setting.palette.textSecondary,fontSize:11,fontWeight:600,margin:15,interval:0},
+    axisPointer:{show:true,type:'shadow',shadowStyle:{color:setting.hoverBg}}
+  },
+  yAxis:{
+    type:'category',inverse:true,data:cohorts,
+    axisLine:{show:false},axisTick:{show:false},splitLine:{show:false},
+    axisLabel:{
+      margin:rowLabelLayout.margin,
+      color:setting.palette.text,fontSize:11,
+      formatter:function(value){
+        var count = rowData[value] ? rowData[value][0] : 0;
+        return '{date|'+value+'}{size|'+formatCount(count)+'}';
+      },
+      rich:{date:{width:rowLabelLayout.periodWidth,align:'left',color:setting.palette.text,fontSize:11},size:{width:rowLabelLayout.countWidth,align:'right',color:setting.palette.text,fontWeight:600,fontSize:11}}
+    },
+    axisPointer:{show:true,type:'shadow',shadowStyle:{color:setting.hoverBg}}
+  },
+  tooltip:{
+    trigger:'item',confine:true,appendToBody:false,
+    borderColor:'#DFE5E8',borderWidth:1,backgroundColor:'#FFFFFF',
+    padding:[11,13],extraCssText:'box-shadow:0 4px 16px rgba(32,56,79,0.14);border-radius:5px;',
+    formatter:tooltipFormatter,position:placeTooltip
+  },
+  series:[{
+    name:setting.rateLabel,type:'heatmap',coordinateSystem:'cartesian2d',
+    data:matrixSeriesData,progressive:0,
+    label:{show:setting.showCellLabels,formatter:function(p){
+      var d=p.data||{};
+      if (!d.observed || d.rate==null) return '';
+      return pctText(d.rate);
+    },fontSize:11},
+    itemStyle:{borderWidth:setting.cellGap,borderColor:setting.palette.white},
+    emphasis:{scale:false},
+    select:{disabled:true}
+  }]
+};
+
+if (invalidRows) console.warn('[C024] 已跳过无效数据行 '+invalidRows+' 条。');
+if (!cohorts.length) console.warn('[C024] 未识别有效同期群；M0 必须提供大于 0 的客户数量。');
+
