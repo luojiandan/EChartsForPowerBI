@@ -1,0 +1,284 @@
+﻿/*
+ * C025｜SPC 单值—移动极差控制图（I-MR）
+ * v0.1.3｜精简展示文案与 Tooltip、修复单位/小标题间距；保留 v0.1.2 控制线精度修复。
+ *
+ * 示例数据真实来源：UCI Condition monitoring of hydraulic systems (DOI: 10.24432/C5CW21)
+ * 文件：VS1.txt，2187–2205 行；profile.txt 同行。
+ * VS1 原始每行 60 个振动速度读数（1 Hz），这里逐行计算算术均值，单位 mm/s。
+ * profile 五个标签在上述 19 个连续周期中均为 [100,100,0,90,0]。
+ * 样本来自实验台；stable flag=0 表示测试条件稳定，不等于 SPC 过程已经统计受控。
+ * 仅作教学探索；前10个周期估计控制限的样本数不足，不能直接用于生产决策。
+ * I-MR: NIST https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc322.htm
+ * 数据版权：Helwig, Pignanelli, Schütze (2015), UCI, CC BY 4.0。
+ */
+
+// ===================== 1. 数据 =====================
+// 示例值逐条取自 UCI VS1.txt 第2187–2205行，每行60秒振动数据的算术平均值。
+// Power BI 使用时：根据实际字段顺序，将每个数组替换为 dataArr.dataObjects[i].values。
+var 观测序号 = [2187, 2188, 2189, 2190, 2191, 2192, 2193, 2194, 2195, 2196, 2197, 2198, 2199, 2200, 2201, 2202, 2203, 2204, 2205];
+var 观测数值 = [0.547483, 0.548450, 0.546333, 0.549417, 0.552883, 0.551367, 0.549500, 0.551733, 0.553383, 0.550417, 0.552767, 0.550067, 0.549300, 0.551517, 0.550833, 0.547483, 0.545233, 0.537017, 0.546583];
+
+// ===================== 2. 用户可修改的全部设置 =====================
+var setting = {
+  title: '液压测试台：哪些振动波动值得关注？',
+  subtitle: '同一工况下的连续测试循环 · I-MR 过程控制图',
+  measureName: '每循环平均振动速度',
+  categoryName: '测试循环',
+  unit: 'mm/s',
+  sourceText: 'UCI Condition monitoring of hydraulic systems（VS1.txt、profile.txt；DOI: 10.24432/C5CW21）',
+  scopeText: '每循环60秒均值；同一工况连续监测',
+  footnoteText: '控制限非规格限；信号不等于设备故障。',
+  // 基线必须由业务确认。演示使用前10个观测点，严格意义上基线数量偏少。
+  baselineCount: 10,
+  minBaselineForCaution: 20,
+  sortMode: 'auto',            // auto：纯数字按大小、ISO日期按时间，其余保持输入顺序；input：始终按传入顺序
+  // 对有序监测序列：单点超过 I 控制限、连续 N 点在中心线同侧、MR 超上限。
+  checkIOutside: true,
+  checkSameSide: true,
+  sameSideCount: 8,
+  checkMRHigh: true,
+  d2: 1.128,                 // 移动极差窗口为2时的统计常数
+  D4: 3.267,
+  digits: 4,
+  tooltipDigits: 5,
+  // 界面尺寸：优先使用编辑器提供的 myChart.getHeight()；不可获取时用 fallbackHeight。
+  fallbackHeight: 680,
+  layout: { left: 78, right: 96, top: 175, panelGap: 48, bottom: 109 },
+  colors: {
+    positive: '#239263',
+    warning: '#D9544D',
+    data: '#AEB7C1',
+    dataAux: '#BFC6CE',
+    main: '#263238',
+    secondary: '#8493A2',
+    grid: '#E5E9ED',
+    bg: 'transparent'
+  }
+};
+
+// ===================== 3. 校验、排序与统计计算（不写入具体业务年份或名称） =====================
+function htmlEscape(value) {
+  return String(value).replace(/[&<>"']/g, function (ch) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+  });
+}
+function asFiniteNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : NaN;
+  if (typeof value !== 'string' || !value.trim()) return NaN;
+  var str = value.trim().replace(/,/g, '');
+  if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(str)) return NaN;
+  var x = Number(str);
+  return Number.isFinite(x) ? x : NaN;
+}
+function toOrderValue(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return { kind: 'number', value: value };
+  var str = String(value).trim();
+  if (/^[+-]?\d+(?:\.\d+)?$/.test(str)) return { kind: 'number', value: Number(str) };
+  // 限定 ISO 日期，防止将普通文本分类“1”等误识别成日期。
+  if (/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?$/.test(str)) {
+    var ts = Date.parse(str.replace(' ', 'T'));
+    if (Number.isFinite(ts)) return { kind: 'date', value: ts };
+  }
+  return { kind: 'text', value: str };
+}
+function prepareInput(ids, values) {
+  if (!Array.isArray(ids) || !Array.isArray(values)) throw Error('观测序号与观测数值都必须是一维数组。');
+  if (ids.length !== values.length) throw Error('字段数组长度不一致：观测序号 ' + ids.length + ' 条、观测数值 ' + values.length + ' 条。请确认 Power BI 明细粒度和字段绑定。');
+  if (ids.length < 4) throw Error('至少需要4条有效观测值来绘制教学用 I-MR 控制图。');
+  var unique = new Set();
+  var rows = ids.map(function (id, i) {
+    if (id === null || id === undefined || String(id).trim() === '') throw Error('第 ' + (i + 1) + ' 条观测序号为空。');
+    var key = String(id).trim();
+    if (unique.has(key)) throw Error('重复观测序号：' + key + '。请确认 Power BI 未汇总/重复记录；无法安全计算移动极差。');
+    unique.add(key);
+    var value = asFiniteNumber(values[i]);
+    if (!Number.isFinite(value)) throw Error('观测 ' + key + ' 的数值无效：' + String(values[i]));
+    return { id: key, value: value, sort: toOrderValue(id), originalIndex: i };
+  });
+  if (setting.sortMode !== 'auto' && setting.sortMode !== 'input') throw Error('sortMode 只能是 auto 或 input。');
+  if (setting.sortMode === 'auto' && rows.every(function (r) { return r.sort.kind === rows[0].sort.kind && r.sort.kind !== 'text'; })) {
+    rows.sort(function (a, b) { return a.sort.value - b.sort.value || a.originalIndex - b.originalIndex; });
+    for (var j = 1; j < rows.length; j++) {
+      if (rows[j].sort.value === rows[j - 1].sort.value) throw Error('排序后出现同一观测位置：' + rows[j].id + '。');
+    }
+  }
+  return rows;
+}
+function calculateIMR(rows) {
+  var n = rows.length;
+  var k = Number(setting.baselineCount);
+  if (!Number.isInteger(k) || k < 4 || k > n) throw Error('baselineCount 必须是4到记录总数之间的整数，当前为 ' + setting.baselineCount + '。');
+  if (!Number.isFinite(setting.d2) || setting.d2 <= 0 || !Number.isFinite(setting.D4) || setting.D4 <= 0) throw Error('SPC 统计常数 d2/D4 必须为正数。');
+  if (!Number.isInteger(setting.sameSideCount) || setting.sameSideCount < 2) throw Error('sameSideCount 必须是至少为2的整数。');
+  var xs = rows.map(function (r) { return r.value; });
+  var mr = xs.map(function (x, i) { return i === 0 ? null : Math.abs(x - xs[i - 1]); });
+  var mean = xs.slice(0, k).reduce(function (a, b) { return a + b; }, 0) / k;
+  var mrbar = mr.slice(1, k).reduce(function (a, b) { return a + b; }, 0) / (k - 1);
+  if (!(mrbar > 0)) throw Error('基线移动极差均值为0，不能据此得到有效的3σ控制限，请选择有真实过程波动的基线。');
+  var sigma = mrbar / setting.d2;
+  var ucl = mean + 3 * sigma;
+  var lcl = mean - 3 * sigma;
+  var mrUcl = setting.D4 * mrbar;
+  var sameSideRun = 0;
+  var oldSign = 0;
+  var signals = xs.map(function (x, i) {
+    var sign = x > mean ? 1 : (x < mean ? -1 : 0);
+    sameSideRun = sign !== 0 && sign === oldSign ? sameSideRun + 1 : (sign === 0 ? 0 : 1);
+    oldSign = sign;
+    return {
+      iOutside: setting.checkIOutside && (x > ucl || x < lcl),
+      sameSide: setting.checkSameSide && sameSideRun >= setting.sameSideCount,
+      mrOutside: setting.checkMRHigh && mr[i] !== null && mr[i] > mrUcl,
+      sideRunLength: sameSideRun,
+      sideDirection: sign
+    };
+  });
+  return { mean: mean, mrbar: mrbar, sigma: sigma, ucl: ucl, lcl: lcl, mrUcl: mrUcl, mr: mr, signals: signals, k: k,
+    numI: signals.filter(function (s) { return s.iOutside; }).length,
+    numRun: signals.filter(function (s) { return s.sameSide; }).length,
+    numMR: signals.filter(function (s) { return s.mrOutside; }).length };
+}
+function numberLabel(value, digits) { return Number(value).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits }); }
+
+// ===================== 4. ECharts option =====================
+function createOption() {
+  var rows = prepareInput(观测序号, 观测数值);
+  var s = calculateIMR(rows);
+  var col = setting.colors;
+  var h = (typeof myChart !== 'undefined' && myChart && typeof myChart.getHeight === 'function') ? myChart.getHeight() : setting.fallbackHeight;
+  if (!Number.isFinite(h) || h < 460) h = Math.max(460, Number(setting.fallbackHeight) || 680);
+  var L = setting.layout;
+  var available = h - L.top - L.bottom - L.panelGap;
+  var iH = Math.round(available * 0.65);
+  var mrH = available - iH;
+  var mrTop = L.top + iH + L.panelGap;
+  var labels = rows.map(function (r) { return r.id; });
+  var values = rows.map(function (r) { return r.value; });
+  var minVal = Math.min.apply(null, values.concat([s.lcl, s.mean, s.ucl]));
+  var maxVal = Math.max.apply(null, values.concat([s.lcl, s.mean, s.ucl]));
+  var pad = Math.max((maxVal - minVal) * 0.13, Math.abs(s.sigma) * 0.2);
+  var mrMax = Math.max.apply(null, s.mr.slice(1).concat([s.mrUcl])) * 1.23;
+  var sourceNote = '数据来源：' + setting.sourceText;
+  var baselineNote = '基线前' + s.k + '期' + (s.k < setting.minBaselineForCaution ? '（样本偏少，仅供探索）' : '');
+  var explanation = '图表说明：' + setting.scopeText + '；' + baselineNote + '；' + setting.footnoteText;
+  var tooltipStyle = 'padding:1px 0;white-space:nowrap;';
+  function renderTooltip(params) {
+    if (!params || !params.length) return '';
+    var item = params.find(function (p) { return p.seriesType === 'line'; }) || params[0];
+    var index = item.dataIndex;
+    if (!(index >= 0 && index < rows.length)) return '';
+    var rec = rows[index], v = rec.value, signal = s.signals[index];
+    var color = col.warning;
+    var sigs = [];
+    if (signal.iOutside) sigs.push('单值越过控制限');
+    if (signal.sameSide) sigs.push('连续' + signal.sideRunLength + '期在中心线' + (signal.sideDirection > 0 ? '上' : '下') + '方');
+    if (signal.mrOutside) sigs.push('移动极差超过上控制限');
+    function tr(name, val, customColor) {
+      return '<div style="display:flex;justify-content:space-between;gap:24px;' + tooltipStyle + '">' +
+        '<span style="color:' + col.secondary + '">' + htmlEscape(name) + '</span>' +
+        '<span style="color:' + (customColor || col.main) + ';font-weight:600;font-variant-numeric:tabular-nums">' + htmlEscape(val) + '</span></div>';
+    }
+    return '<div style="min-width:238px;font-family:Arial,\'Microsoft YaHei\',sans-serif;font-size:12px;color:' + col.main + '">' +
+      '<div style="font-size:13px;font-weight:700;padding-bottom:8px;border-bottom:1px solid ' + col.grid + '">' + htmlEscape(setting.categoryName) + '：' + htmlEscape(rec.id) + '</div>' +
+      '<div style="padding-top:8px">' +
+      tr(setting.measureName, numberLabel(v, setting.tooltipDigits) + (setting.unit ? ' ' + setting.unit : '')) +
+      tr('I 中心线 CL', numberLabel(s.mean, setting.tooltipDigits)) +
+      tr('I 上控制限 UCL', numberLabel(s.ucl, setting.tooltipDigits)) +
+      tr('I 下控制限 LCL', numberLabel(s.lcl, setting.tooltipDigits)) +
+      '<div style="height:1px;background:' + col.grid + ';margin:7px 0"></div>' +
+      tr('移动极差 MR', s.mr[index] === null ? '—（首期）' : numberLabel(s.mr[index], setting.tooltipDigits)) +
+      tr('MR 上控制限 UCL', numberLabel(s.mrUcl, setting.tooltipDigits)) +
+      (sigs.length ? '<div style="margin-top:7px;padding-top:7px;border-top:1px solid ' + col.grid + ';color:' + color + ';line-height:1.7">' + sigs.map(htmlEscape).join('；') + '</div>' : '') +
+      '</div></div>';
+  }
+  var markStyle = { type: 'dashed', width: 1.2 };
+  // ECharts 6.0 中 markLine.precision 默认 2 会将 0.5442 错绘至 0.54。
+  // -1 关闭 MarkLineView 的数值舍入，保证参考线和统计判断使用同一原始值。
+  var markPrecision = -1;
+  function lineMark(name, value, color, type) {
+    return { name: name, yAxis: value, lineStyle: { color: color, type: type || 'dashed', width: 1.1 },
+      label: { show: true, position: 'insideEndTop', formatter: name + ' ' + numberLabel(value, setting.digits), color: color, fontSize: 10, distance: 4 } };
+  }
+  var anyAlert = s.numI + s.numMR + s.numRun;
+  var signalSummary = 'I 越界 ' + s.numI + '  |  MR 越界 ' + s.numMR + (s.numRun > 0 ? '  |  连续同侧 ' + s.numRun : '');
+  return {
+    backgroundColor: col.bg,
+    animationDuration: 450,
+    title: { left: 22, top: 44, text: setting.title, subtext: setting.subtitle,
+      textStyle: { color: col.main, fontSize: 20, fontWeight: 700 },
+      subtextStyle: { color: col.secondary, fontSize: 12, lineHeight: 19 }, itemGap: 8 },
+    graphic: [
+      { type: 'rect', left: 22, top: 22, silent: true, shape: { width: 20, height: 4 }, style: { fill: col.warning } },
+      { type: 'text', left: 22, top: 120, silent: true, style: { text: signalSummary,
+          fill: anyAlert ? col.main : col.secondary, fontSize: 12, fontWeight: 600 } },
+      { type: 'text', left: L.left, top: L.top - 29, silent: true, style: { text: '单值控制图（I）' + (setting.unit ? ' · ' + setting.unit : ''), fill: col.main, fontSize: 12, fontWeight: 700 } },
+      { type: 'text', left: L.left, top: mrTop - 29, silent: true, style: { text: '移动极差控制图（MR）' + (setting.unit ? ' · ' + setting.unit : ''), fill: col.main, fontSize: 12, fontWeight: 700 } },
+      { type: 'text', left: 22, bottom: 49, silent: true, style: { text: sourceNote, fill: col.secondary, fontSize: 10 } },
+      { type: 'text', left: 22, bottom: 29, silent: true, style: { text: explanation, fill: col.secondary, fontSize: 10 } }
+    ],
+    grid: [
+      { left: L.left, right: L.right, top: L.top, bottom: h - (L.top + iH), containLabel: false },
+      { left: L.left, right: L.right, top: mrTop, bottom: L.bottom, containLabel: false }
+    ],
+    tooltip: { trigger: 'axis', confine: true, appendToBody: false, backgroundColor: '#FFFFFF', borderColor: col.grid,
+      borderWidth: 1, padding: [11, 13], textStyle: { color: col.main, fontSize: 12 },
+      extraCssText: 'box-shadow:0 6px 24px rgba(38,50,56,0.10);',
+      axisPointer: { type: 'line', lineStyle: { color: col.secondary, width: 1, type: 'dashed' } },
+      // 让 Tooltip 与鼠标所在数据点保持距离，防止覆盖红色异常点。
+      position: function (point, params, dom, rect, size) {
+        var w = size.contentSize[0], ht = size.contentSize[1];
+        var vw = size.viewSize[0], vh = size.viewSize[1];
+        var x = point[0] + 25;
+        if (x + w > vw - 8) x = point[0] - w - 25;
+        x = Math.max(8, Math.min(vw - w - 8, x));
+        var y = Math.max(8, Math.min(vh - ht - 8, point[1] - ht / 2));
+        return [x, y];
+      }, formatter: renderTooltip },
+    axisPointer: { link: [{ xAxisIndex: [0, 1] }] },
+    xAxis: [
+      { type: 'category', gridIndex: 0, data: labels, boundaryGap: true, axisLabel: { show: false },
+        axisTick: { show: false }, axisLine: { lineStyle: { color: col.grid } }, splitLine: { show: false } },
+      { type: 'category', gridIndex: 1, data: labels, name: setting.categoryName, nameLocation: 'middle', nameGap: 32,
+        axisLabel: { color: col.secondary, fontSize: 11, hideOverlap: true,
+          interval: function (i) { return i === labels.length - 1 || i % Math.max(1, Math.ceil(labels.length / 9)) === 0; } },
+        axisTick: { show: false }, axisLine: { lineStyle: { color: col.grid } }, splitLine: { show: false },
+        nameTextStyle: { color: col.secondary, fontSize: 11 } }
+    ],
+    yAxis: [
+      { type: 'value', gridIndex: 0, min: minVal - pad, max: maxVal + pad,
+        axisLabel: { color: col.secondary, fontSize: 10, formatter: function (x) { return numberLabel(x, Math.min(4, setting.digits)); } },
+        axisTick: { show: false }, axisLine: { show: false }, splitLine: { lineStyle: { color: col.grid } } },
+      { type: 'value', gridIndex: 1, min: 0, max: mrMax, splitNumber: 3,
+        axisLabel: { color: col.secondary, fontSize: 10, formatter: function (x) { return numberLabel(x, Math.min(4, setting.digits)); } },
+        axisTick: { show: false }, axisLine: { show: false }, splitLine: { lineStyle: { color: col.grid } } }
+    ],
+    series: [
+      { name: 'I', type: 'line', xAxisIndex: 0, yAxisIndex: 0, showSymbol: true, symbol: 'circle',
+        symbolSize: function (v, p) { var si = s.signals[p.dataIndex]; return si && (si.iOutside || si.sameSide) ? 11 : 5; },
+        lineStyle: { color: col.data, width: 2 },
+        itemStyle: { color: function (p) { var si = s.signals[p.dataIndex]; return si && (si.iOutside || si.sameSide) ? col.warning : col.data; } },
+        data: values, z: 4,
+        markLine: { symbol: ['none', 'none'], silent: true, animation: false, precision: markPrecision,
+          label: { show: true }, lineStyle: markStyle, data: [
+            lineMark('UCL', s.ucl, col.warning), lineMark('CL', s.mean, col.main, 'solid'), lineMark('LCL', s.lcl, col.warning)
+          ] }
+      },
+      { name: 'MR', type: 'line', xAxisIndex: 1, yAxisIndex: 1, showSymbol: true, symbol: 'circle',
+        symbolSize: function (v, p) { var si = s.signals[p.dataIndex]; return si && si.mrOutside ? 11 : 5; },
+        lineStyle: { color: col.dataAux, width: 2 },
+        itemStyle: { color: function (p) { var si = s.signals[p.dataIndex]; return si && si.mrOutside ? col.warning : col.dataAux; } },
+        data: s.mr, z: 4,
+        markLine: { symbol: ['none', 'none'], silent: true, animation: false, precision: markPrecision,
+          label: { show: true }, lineStyle: markStyle, data: [lineMark('UCL', s.mrUcl, col.warning), lineMark('CL', s.mrbar, col.main, 'solid')] }
+      }
+    ]
+  };
+}
+try {
+  option = createOption();
+} catch (e) {
+  var failMessage = e && e.message ? e.message : String(e);
+  if (typeof console !== 'undefined' && console.error) console.error('C025 SPC input error:', failMessage);
+  option = { backgroundColor: 'transparent', title: { left: 22, top: 38, text: 'C025｜数据校验失败', textStyle: { color: '#D9544D', fontSize: 20 } },
+    graphic: [{ type: 'text', left: 22, top: 98, style: { text: failMessage, width: 650, overflow: 'break', fill: '#263238', fontSize: 13, lineHeight: 20 } }] };
+}
