@@ -1,0 +1,478 @@
+﻿// C022 多周期排名变化图（Bump Chart）
+// 适用：奥运奖牌榜、销售排名、品牌名次等多对象跨期排名变化。
+// 原始输入：周期、类别、排名和三个可替换指标共六个平行一维数组。
+// 重要：本案例使用官方奖牌榜的全球实际名次，不根据筛选出的 8 个国家重新计算排名。
+
+// 一、示例原始数据：六个独立的一维数组（与 Power BI 六个字段一一对应）
+// 将本节数组替换为 dataArr.dataObjects[i].values 时，请核对字段顺序。
+const periods = [
+  "2000", "2000", "2000", "2000", "2000", "2000", "2000", "2000",
+  "2004", "2004", "2004", "2004", "2004", "2004", "2004", "2004",
+  "2008", "2008", "2008", "2008", "2008", "2008", "2008", "2008",
+  "2012", "2012", "2012", "2012", "2012", "2012", "2012", "2012",
+  "2016", "2016", "2016", "2016", "2016", "2016", "2016", "2016",
+  "2020", "2020", "2020", "2020", "2020", "2020", "2020", "2020",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024"
+];
+const categories = [
+  "美国", "中国", "英国", "日本", "澳大利亚", "法国", "德国", "韩国",
+  "美国", "中国", "英国", "日本", "澳大利亚", "法国", "德国", "韩国",
+  "美国", "中国", "英国", "日本", "澳大利亚", "法国", "德国", "韩国",
+  "美国", "中国", "英国", "日本", "澳大利亚", "法国", "德国", "韩国",
+  "美国", "中国", "英国", "日本", "澳大利亚", "法国", "德国", "韩国",
+  "美国", "中国", "英国", "日本", "澳大利亚", "法国", "德国", "韩国",
+  "美国", "中国", "英国", "日本", "澳大利亚", "法国", "德国", "韩国"
+];
+const ranks = [
+  1, 3, 10, 15, 4, 6, 5, 12,
+  1, 2, 10, 5, 4, 7, 6, 9,
+  2, 1, 4, 8, 6, 10, 5, 7,
+  1, 2, 3, 11, 8, 7, 6, 5,
+  1, 3, 2, 6, 10, 7, 5, 8,
+  1, 2, 4, 3, 6, 8, 9, 16,
+  1, 2, 7, 3, 4, 5, 10, 8
+];
+const metricValues1 = [
+  37, 28, 11, 5, 16, 13, 13, 8,
+  36, 32, 9, 16, 17, 11, 13, 9,
+  36, 48, 19, 9, 14, 7, 16, 13,
+  48, 39, 29, 7, 8, 11, 11, 13,
+  46, 26, 27, 12, 8, 10, 17, 9,
+  39, 38, 22, 27, 17, 10, 10, 6,
+  40, 40, 14, 20, 18, 16, 12, 13
+];
+const metricValues2 = [
+  24, 16, 10, 8, 25, 14, 17, 10,
+  39, 17, 9, 9, 16, 9, 16, 12,
+  39, 22, 13, 8, 15, 16, 11, 11,
+  26, 31, 18, 14, 15, 11, 20, 9,
+  37, 18, 23, 8, 11, 18, 10, 3,
+  41, 32, 20, 14, 7, 12, 11, 4,
+  44, 27, 22, 12, 19, 26, 13, 9
+];
+const metricValues3 = [
+  32, 14, 7, 5, 17, 11, 26, 10,
+  26, 14, 12, 12, 17, 13, 20, 9,
+  37, 30, 19, 8, 17, 20, 14, 8,
+  32, 22, 18, 17, 12, 13, 13, 9,
+  38, 26, 17, 21, 10, 14, 15, 9,
+  33, 19, 22, 17, 22, 11, 16, 10,
+  42, 24, 29, 13, 16, 22, 8, 10
+];
+
+// 二、用户设置：可修改标题、颜色、布局、交互与显示范围
+const setting = {
+  caseCode: 'C022',
+  version: '0.2.5',
+  title: '24 年间，奥运金牌榜格局如何变化？',
+  subtitle: '2000—2024 年夏季奥运会｜8 个国家｜全球金牌榜排名',
+  backgroundColor: 'transparent',
+  grid: { left: 70, right: 150, top: 110, bottom: 96 }, // 单位：px
+  rankMin: 1,
+  rankMax: null,                  // null 自动根据数据确定；可手动设置整数
+  rankTickStep: 2,
+  showEndLabels: true,
+  showRankChange: true,
+  showSymbols: true,            // 所有类别统一圆点；设为 false 可隐藏数据节点
+  showLegend: false,           // 默认关闭：右侧末端标签已标明国家
+  lineWidth: 2.8,
+  hoverLineWidth: 4.3,         // 悬停右侧国家标签时，该国轨迹加粗
+  blurOpacity: 0.12,           // 悬停国家时，其他国家的轨迹、符号及标签透明度
+  labelHitWidth: 138,         // 末端标签可交互宽度（px），需小于 grid.right
+  labelHitHeight: 25,         // 末端标签可交互高度（px）
+  symbolSize: 7,
+  animationDuration: 650,
+  colors: {
+    positive: '#239263',
+    negative: '#D9544D',
+    bar: '#BFC6CE',
+    barSecondary: '#D9DEE3',
+    barReference: '#AEB7C1',
+    text: '#263238',
+    textSecondary: '#8493A2',
+    gridLine: '#E5E9ED'
+  },
+  // 类别按首次出现顺序依次取色；不绑定任何具体类别名称。
+  // 类别数超过色板长度时会循环使用颜色，建议按需补充已确认的系列色。
+  seriesColors: ['#20384F', '#D9544D', '#4DA1DB', '#239263',
+                 '#E3A13C', '#9972BC', '#8493A2', '#B87760'],
+  // 业务词汇只写在设置中；更换品牌、产品、部门排名时无需修改绘图函数。
+  periodColumnLabel: '年份',
+  periodTitleSuffix: '年夏季奥运会',
+  historyTitleSuffix: '历届奥运会排名',
+  rankColumnLabel: '全球排名',
+  rankScopeLabel: '全球金牌榜',
+  metricLabels: ['金', '银', '铜'],
+  metricDecimalPlaces: 0,
+  // 仅为示例附注；需要其他特殊周期说明时增删即可。
+  periodNotes: { '2020': '东京 2020 实际于 2021 年举办' },
+  sourceText: '数据来源：历届夏季奥运会奖牌榜（2000—2024，依据公开修订结果整理）。',
+  noteText: '图表说明：金牌→银牌→铜牌依次排序；纵轴为全球名次，未在所选国家内重排。'
+};
+
+// 三、输入校验与数据组织：只在内部构造对象，原始输入仍为平行数组
+const metricFieldArrays = [metricValues1, metricValues2, metricValues3];
+const fieldArrays = [periods, categories, ranks].concat(metricFieldArrays);
+if (!Array.isArray(setting.metricLabels) || setting.metricLabels.length !== metricFieldArrays.length) {
+  throw new Error('C022：metricLabels 与指标数组的数量必须一致。');
+}
+if (!Array.isArray(setting.seriesColors) || !setting.seriesColors.length) {
+  throw new Error('C022：seriesColors 至少包含一种颜色。');
+}
+if (!fieldArrays.every(function (arr) { return Array.isArray(arr) && arr.length === periods.length; })) {
+  throw new Error('C022：六个输入数组必须为等长的一维数组。');
+}
+if (periods.length === 0) throw new Error('C022：输入数据为空。');
+
+const periodList = [];
+const categoryList = [];
+const seenPeriods = Object.create(null);
+const seenCategories = Object.create(null);
+const dataByPeriod = Object.create(null);
+let observedMaxRank = 1;
+function parseRank(value, label, row) {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) throw new Error('C022：第' + row + '条记录' + label + '应为正整数。');
+  return n;
+}
+function parseMetric(value, label, row) {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) throw new Error('C022：第' + row + '条记录' + label + '应为数字。');
+  return n;
+}
+for (let i = 0; i < periods.length; i++) {
+  const period = String(periods[i] == null ? '' : periods[i]).trim();
+  const category = String(categories[i] == null ? '' : categories[i]).trim();
+  if (!period || !category) throw new Error('C022：第' + (i + 1) + '条记录周期或对象为空。');
+  if (!seenPeriods[period]) {
+    seenPeriods[period] = true;
+    periodList.push(period);
+    dataByPeriod[period] = Object.create(null);
+  }
+  if (!seenCategories[category]) {
+    seenCategories[category] = true;
+    categoryList.push(category);
+  }
+  if (Object.prototype.hasOwnProperty.call(dataByPeriod[period], category)) {
+    throw new Error('C022：周期' + period + '与对象' + category + '重复。');
+  }
+  const rank = parseRank(ranks[i], '排名', i + 1);
+  const metrics = metricFieldArrays.map(function (values, j) {
+    return parseMetric(values[i], '指标' + (j + 1), i + 1);
+  });
+  if (rank !== null) observedMaxRank = Math.max(observedMaxRank, rank);
+  dataByPeriod[period][category] = { rank: rank, metrics: metrics };
+}
+
+// 四、排名显示与名次变化；不以子集重新计算全球名次
+const latestPeriod = periodList[periodList.length - 1];
+function getRecord(period, category) {
+  return dataByPeriod[period] && dataByPeriod[period][category];
+}
+function rankText(value) { return value == null ? '无排名' : '第' + value + '名'; }
+function metricText(value) {
+  if (value == null) return '—';
+  const digits = Math.max(0, Math.min(8, Math.floor(Number(setting.metricDecimalPlaces) || 0)));
+  return Number(value).toLocaleString('en-US', { maximumFractionDigits: digits });
+}
+function metricsText(record) {
+  return record && record.metrics
+    ? record.metrics.map(metricText).join(' / ') : '—';
+}
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function rankChange(period, category) {
+  const index = periodList.indexOf(period);
+  if (index <= 0) return { text: '首个周期', color: setting.colors.textSecondary };
+  const previous = getRecord(periodList[index - 1], category);
+  const current = getRecord(period, category);
+  if (!previous || !current || previous.rank == null || current.rank == null) {
+    return { text: '无可比排名', color: setting.colors.textSecondary };
+  }
+  const delta = previous.rank - current.rank;
+  if (delta === 0) return { text: '名次持平', color: setting.colors.textSecondary };
+  return delta > 0
+    ? { text: '▲ 提升 ' + delta + ' 位', color: setting.colors.positive }
+    : { text: '▼ 下降 ' + Math.abs(delta) + ' 位', color: setting.colors.negative };
+}
+// 首次出现的类别序号就是色板序号；未知类别回退为中性参考色。
+const colorByCategory = Object.create(null);
+categoryList.forEach(function (category, index) {
+  colorByCategory[category] = setting.seriesColors[index % setting.seriesColors.length];
+});
+function colorOf(category) {
+  return colorByCategory[category] || setting.colors.barReference;
+}
+const axisMax = setting.rankMax == null
+  ? Math.max(setting.rankMin + setting.rankTickStep, observedMaxRank + 1)
+  : Number(setting.rankMax);
+if (!Number.isFinite(axisMax) || axisMax <= setting.rankMin) throw new Error('C022：排名坐标轴范围无效。');
+
+// 五、系列：同一个 custom 系列包含全部类别；每个类别是独立数据项。
+// 关键：ECharts 6 CustomView 从 renderItem 返回图形的【根级 focus、blurScope】读取悬停策略。
+//       写在 series.emphasis 或 data[i].emphasis 对自定义图形的相互淡化不会生效。
+//       同系列的其他国家数据项进入 blur，由各子图形 blur.style.opacity 控制透明度。
+// 原生透明 line 系列仅负责按周期的 axis Tooltip，不参与绘制或类别高亮。
+// 统一使用圆形节点：颜色区分类别，不再使用不同符号形状编码类别。
+function markerGraphic(x, y, size, color) {
+  return {
+    type: 'circle', silent: true,
+    shape: { cx: x, cy: y, r: size / 2 },
+    style: { fill: color, stroke: '#FFFFFF', lineWidth: 1.1, opacity: 1 },
+    emphasis: { style: { opacity: 1 } },
+    blur: { style: { opacity: setting.blurOpacity } }
+  };
+}
+
+function categoryTooltip(category) {
+  const color = colorOf(category);
+  let html = '<div style="font-size:14px;font-weight:700;margin-bottom:8px;color:' + color + '">' +
+    escapeHtml(category) + ' · ' + escapeHtml(setting.historyTitleSuffix) + '</div>' +
+    '<table style="border-collapse:collapse;font-size:11px;white-space:nowrap;line-height:1.65;">' +
+    '<thead><tr style="color:' + setting.colors.textSecondary + ';border-bottom:1px solid ' + setting.colors.gridLine + '">' +
+    '<th style="text-align:left;padding:3px 12px 5px 0;">' + escapeHtml(setting.periodColumnLabel) + '</th>' +
+    '<th style="text-align:left;padding:3px 12px 5px 0;">' + escapeHtml(setting.rankColumnLabel) + '</th>' +
+    '<th style="text-align:left;padding:3px 12px 5px 0;">名次变化</th>' +
+    '<th style="text-align:right;padding:3px 0 5px 0;">' + escapeHtml(setting.metricLabels.join(' / ')) + '</th></tr></thead><tbody>';
+  periodList.forEach(function (period) {
+    const record = getRecord(period, category);
+    const change = rankChange(period, category);
+    const rank = record && record.rank != null ? rankText(record.rank) : '—';
+    const metricSummary = metricsText(record);
+    html += '<tr style="border-bottom:1px solid #F0F2F4;">' +
+      '<td style="padding:5px 12px 5px 0;">' + escapeHtml(period) + '</td>' +
+      '<td style="padding:5px 12px 5px 0;font-weight:600;">' + escapeHtml(rank) + '</td>' +
+      '<td style="padding:5px 12px 5px 0;color:' + change.color + ';">' +
+      (setting.showRankChange ? escapeHtml(change.text) : '—') + '</td>' +
+      '<td style="padding:5px 0;text-align:right;">' + escapeHtml(metricSummary) + '</td></tr>';
+  });
+  const first = getRecord(periodList[0], category);
+  const last = getRecord(latestPeriod, category);
+  html += '</tbody></table>' +
+    '<div style="display:flex;justify-content:space-between;gap:14px;margin-top:9px;font-size:11px;">' +
+    '<span style="color:' + setting.colors.textSecondary + ';">' + escapeHtml(periodList[0]) + '—' + escapeHtml(latestPeriod) + ' · ' + escapeHtml(setting.rankScopeLabel) + '</span>' +
+    '<strong>' + escapeHtml(rankText(first && first.rank)) + ' → ' + escapeHtml(rankText(last && last.rank)) + '</strong></div>';
+  return html;
+}
+
+// 单个 custom 系列中每个类别为一个数据项：每项包含完整线段、节点及末端标签。
+// 每个类别的根图形组设置 focus=self；blurScope=series 淡化其他类别。
+const series = [{
+  name: '排名轨迹',
+  type: 'custom',
+  coordinateSystem: 'cartesian2d',
+  clip: false,
+  z: 10,
+  data: categoryList.map(function (category) {
+    const latest = getRecord(latestPeriod, category);
+    return {
+      name: category,
+      value: [periodList.length - 1, latest && latest.rank != null ? latest.rank : setting.rankMin],
+    };
+  }),
+  encode: { x: 0, y: 1 },
+  tooltip: { trigger: 'item' },
+  renderItem: function (params, api) {
+    const category = categoryList[params.dataIndex];
+    const color = colorOf(category);
+    const latest = getRecord(latestPeriod, category);
+    const children = [];
+    let prevPoint = null;
+    let lastPoint = null;
+    periodList.forEach(function (period, index) {
+      const record = getRecord(period, category);
+      if (!record || record.rank == null) { prevPoint = null; return; }
+      const point = api.coord([index, record.rank]);
+      if (!Number.isFinite(point[0]) || !Number.isFinite(point[1])) { prevPoint = null; return; }
+      if (prevPoint) {
+        children.push({
+          type: 'line', silent: true,
+          shape: { x1: prevPoint[0], y1: prevPoint[1], x2: point[0], y2: point[1] },
+          style: { stroke: color, lineWidth: setting.lineWidth, opacity: 0.95 },
+          emphasis: { style: { lineWidth: setting.hoverLineWidth, opacity: 1 } },
+          blur: { style: { opacity: setting.blurOpacity } }
+        });
+      }
+      if (setting.showSymbols) {
+        children.push(markerGraphic(point[0], point[1], setting.symbolSize, color));
+      }
+      prevPoint = point;
+      if (index === periodList.length - 1) lastPoint = point;
+    });
+    if (setting.showEndLabels && lastPoint && latest) {
+      const x = lastPoint[0] + 8;
+      const y = lastPoint[1] - setting.labelHitHeight / 2;
+      // 仅标签矩形接收鼠标命中，其他图形 silent 避免触发无关悬停。
+      children.push({
+        type: 'rect',
+        shape: { x: x, y: y, width: setting.labelHitWidth, height: setting.labelHitHeight, r: 3 },
+        style: { fill: 'rgba(255,255,255,0.92)', opacity: 1 },
+        emphasis: { style: { fill: 'rgba(244,247,249,0.99)', opacity: 1 } },
+        blur: { style: { opacity: setting.blurOpacity } }
+      });
+      children.push({
+        type: 'text', silent: true,
+        style: {
+          x: x + 5, y: lastPoint[1],
+          text: category + '  ' + rankText(latest.rank),
+          fill: color, font: '600 11px sans-serif',
+          textVerticalAlign: 'middle', textAlign: 'left', opacity: 1
+        },
+        emphasis: { style: { opacity: 1 } },
+        blur: { style: { opacity: setting.blurOpacity } }
+      });
+    }
+    // 根级配置！CustomView.createOrUpdateItem 调用 toggleHoverEmphasis(el, elOption.focus, elOption.blurScope)。
+    // 放在 series.emphasis / data.emphasis 中，标签 hover 仅会加粗当前线条，不会触发其他国家 blur。
+    return {
+      type: 'group',
+      focus: 'self',
+      blurScope: 'series',
+      children: children
+    };
+  }
+}];
+
+// 透明原生折线负责按年份触发轴 Tooltip。
+categoryList.forEach(function (category) {
+  const values = periodList.map(function (period) {
+    const record = getRecord(period, category);
+    return record && record.rank != null ? record.rank : null;
+  });
+  series.push({
+    name: category,
+    type: 'line',
+    data: values,
+    showSymbol: false,
+    symbolSize: 0,
+    smooth: false,
+    connectNulls: false,
+    silent: true,
+    lineStyle: { opacity: 0, width: 0 },
+    itemStyle: { opacity: 0 },
+    tooltip: { trigger: 'axis' },
+    z: 0
+  });
+});
+
+// 六、ECharts option：单 Grid；第一名位于最上方
+option = {
+  backgroundColor: setting.backgroundColor,
+  animationDuration: setting.animationDuration,
+  color: categoryList.map(colorOf),
+  title: {
+    text: setting.title,
+    subtext: setting.subtitle,
+    left: 24, top: 29, itemGap: 7,
+    textStyle: { color: setting.colors.text, fontSize: 20, fontWeight: 700 },
+    subtextStyle: { color: setting.colors.textSecondary, fontSize: 11, lineHeight: 16 }
+  },
+  legend: {
+    show: setting.showLegend,
+    data: categoryList,
+    top: 93, left: 24, right: 24,
+    itemWidth: 15, itemHeight: 9, itemGap: 17,
+    textStyle: { color: setting.colors.textSecondary, fontSize: 11 },
+    selectedMode: true
+  },
+  tooltip: {
+    trigger: 'axis',
+    confine: true,
+    position: function (point, params, dom, rect, size) {
+      // 历史明细优先显示在右侧标签左边；同时限制在视觉对象画布内。
+      const w = size.contentSize[0], h = size.contentSize[1];
+      const x = Math.max(8, Math.min(point[0] - w - 16, size.viewSize[0] - w - 8));
+      const y = Math.max(8, Math.min(point[1] - h / 2, size.viewSize[1] - h - 8));
+      return [x, y];
+    },
+    axisPointer: { type: 'line', lineStyle: { color: setting.colors.barReference, width: 1, type: 'dashed' } },
+    backgroundColor: '#FFFFFF',
+    borderColor: setting.colors.gridLine,
+    borderWidth: 1,
+    padding: [12, 14],
+    textStyle: { color: setting.colors.text, fontSize: 12 },
+    extraCssText: 'box-shadow:0 3px 14px rgba(38,50,56,0.10);border-radius:5px;',
+    formatter: function (params) {
+      // 单一 custom 系列的每个数据项以 params.name 识别类别。
+      if (!Array.isArray(params) && params && params.seriesType === 'custom') {
+        return categoryTooltip(params.name);
+      }
+      // 绘图区触发 axis Tooltip：展示当前周期各类别。
+      const items = (Array.isArray(params) ? params : [params]).filter(function (item) {
+        return item && item.seriesType === 'line';
+      });
+      if (!items.length) return '';
+      const period = String(items[0].axisValue == null ? '' : items[0].axisValue);
+      const sorted = items.slice().sort(function (a, b) {
+        const ar = getRecord(period, a.seriesName);
+        const br = getRecord(period, b.seriesName);
+        return (ar && ar.rank != null ? ar.rank : Infinity) - (br && br.rank != null ? br.rank : Infinity);
+      });
+      let html = '<div style="font-weight:700;font-size:13px;margin-bottom:8px;color:' + setting.colors.text + '">' +
+        escapeHtml(period) + escapeHtml(setting.periodTitleSuffix) + '</div>' +
+        '<div style="font-size:10px;color:' + setting.colors.textSecondary + ';margin-bottom:7px;">' +
+        escapeHtml(setting.rankScopeLabel) + ' · ' + escapeHtml(setting.metricLabels.join(' / ')) + '</div>';
+      sorted.forEach(function (item) {
+        const category = item.seriesName;
+        const record = getRecord(period, category);
+        if (!record || record.rank == null) return;
+        const change = rankChange(period, category);
+        html += '<div style="display:flex;align-items:center;gap:9px;line-height:23px;white-space:nowrap;">' +
+          '<span style="width:8px;height:8px;border-radius:50%;background:' + colorOf(category) + ';display:inline-block;"></span>' +
+          '<span style="min-width:55px;">' + escapeHtml(category) + '</span>' +
+          '<strong style="min-width:43px;">' + escapeHtml(rankText(record.rank)) + '</strong>' +
+          '<span style="min-width:84px;color:' + setting.colors.textSecondary + ';">' +
+          escapeHtml(metricsText(record)) + '</span>' +
+          (setting.showRankChange ? '<span style="color:' + change.color + '">' + escapeHtml(change.text) + '</span>' : '') +
+          '</div>';
+      });
+      if (setting.periodNotes && Object.prototype.hasOwnProperty.call(setting.periodNotes, period)) {
+        html += '<div style="font-size:10px;color:' + setting.colors.textSecondary + ';margin-top:7px;">' +
+          escapeHtml(setting.periodNotes[period]) + '</div>';
+      }
+      return html;
+    }
+  },
+  grid: {
+    left: setting.grid.left, right: setting.grid.right,
+    top: setting.grid.top, bottom: setting.grid.bottom,
+    containLabel: false
+  },
+  xAxis: {
+    type: 'category', data: periodList, boundaryGap: false,
+    axisLine: { lineStyle: { color: setting.colors.gridLine } },
+    axisTick: { show: false },
+    axisLabel: { color: setting.colors.textSecondary, fontSize: 11, margin: 12, interval: 0 },
+    splitLine: { show: false }
+  },
+  yAxis: {
+    type: 'value', min: setting.rankMin, max: axisMax,
+    interval: setting.rankTickStep, inverse: true,
+    axisLine: { show: false }, axisTick: { show: false },
+    axisLabel: {
+      color: setting.colors.textSecondary, fontSize: 10, margin: 11,
+      formatter: function (value) { return Number.isInteger(value) ? String(value) : ''; }
+    },
+    splitLine: { show: true, lineStyle: { color: setting.colors.gridLine, width: 1 } }
+  },
+  graphic: [
+    {
+      type: 'rect', left: 24, top: 21, silent: true,
+      shape: { width: 20, height: 4 }, style: { fill: setting.colors.negative }
+    },
+    {
+      type: 'text', left: 24, bottom: 49, silent: true,
+      style: { text: setting.sourceText, fill: setting.colors.textSecondary, font: '10px sans-serif' }
+    },
+    {
+      type: 'text', left: 24, bottom: 27, silent: true,
+      style: { text: setting.noteText, fill: setting.colors.textSecondary, font: '10px sans-serif' }
+    }
+  ],
+  series: series
+};
