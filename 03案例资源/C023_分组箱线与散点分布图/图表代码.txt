@@ -1,0 +1,441 @@
+﻿/*
+ * C023 多地区箱线图与个体散点分布
+ * 案例演示数据：世界银行 2024 年预期寿命，地理分组为联合国 M49 五大洲。
+ * 示例值仅保存在“原始输入”区；下方统计、视觉、交互逻辑不引用示例类别或年份。
+ * 直接粘贴到 ECharts 官方编辑器 JS 面板；或替换原始一维数组后用于 ECharts for Power BI。
+ * 四个原始字段必须按行索引严格对应，所有统计值由代码实时计算。
+ */
+
+// ==================== 1. 数据（四个字段，平行一维数组） ====================
+// Power BI 替换示例：周期 = dataArr.dataObjects[0].values；以实际字段序号为准。
+// 业务场景变化时，直接替换这四个数组，不修改下方计算或系列代码。
+var 周期 = [
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024", "2024",
+  "2024", "2024", "2024", "2024", "2024", "2024", "2024"
+];
+var 类别 = [
+  "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "非洲",
+  "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "非洲",
+  "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "非洲",
+  "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "非洲",
+  "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "非洲",
+  "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "非洲",
+  "非洲", "非洲", "非洲", "非洲", "非洲", "非洲", "美洲", "美洲",
+  "美洲", "美洲", "美洲", "美洲", "美洲", "美洲", "美洲", "美洲",
+  "美洲", "美洲", "美洲", "美洲", "美洲", "美洲", "美洲", "美洲",
+  "美洲", "美洲", "美洲", "美洲", "美洲", "美洲", "美洲", "美洲",
+  "美洲", "美洲", "美洲", "美洲", "美洲", "美洲", "美洲", "美洲",
+  "美洲", "美洲", "美洲", "美洲", "美洲", "美洲", "美洲", "美洲",
+  "美洲", "美洲", "美洲", "美洲", "亚洲", "亚洲", "亚洲", "亚洲",
+  "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲",
+  "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲",
+  "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲",
+  "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲",
+  "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲",
+  "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "亚洲", "欧洲", "欧洲",
+  "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲",
+  "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲",
+  "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲",
+  "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲",
+  "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲", "欧洲",
+  "欧洲", "欧洲", "欧洲", "欧洲", "大洋洲", "大洋洲", "大洋洲", "大洋洲",
+  "大洋洲", "大洋洲", "大洋洲", "大洋洲", "大洋洲", "大洋洲", "大洋洲", "大洋洲",
+  "大洋洲", "大洋洲", "大洋洲", "大洋洲", "大洋洲", "大洋洲", "大洋洲"
+];
+var 对象 = [
+  "安哥拉", "布隆迪", "贝宁", "布基纳法索", "博茨瓦纳",
+  "中非共和国", "科特迪瓦", "喀麦隆", "刚果（金）", "刚果（布）",
+  "科摩罗", "佛得角", "吉布提", "阿尔及利亚", "埃及",
+  "厄立特里亚", "埃塞俄比亚", "加蓬", "加纳", "几内亚",
+  "冈比亚", "几内亚比绍", "赤道几内亚", "肯尼亚", "利比里亚",
+  "利比亚", "莱索托", "摩洛哥", "马达加斯加", "马里",
+  "莫桑比克", "毛里塔尼亚", "毛里求斯", "马拉维", "纳米比亚",
+  "尼日尔", "尼日利亚", "卢旺达", "苏丹", "塞内加尔",
+  "塞拉利昂", "索马里", "南苏丹", "圣多美和普林西比", "斯威士兰",
+  "塞舌尔", "乍得", "多哥", "突尼斯", "坦桑尼亚",
+  "乌干达", "南非", "赞比亚", "津巴布韦", "阿鲁巴",
+  "阿根廷", "安提瓜和巴布达", "巴哈马", "伯利兹", "百慕大",
+  "玻利维亚", "巴西", "巴巴多斯", "加拿大", "智利",
+  "哥伦比亚", "哥斯达黎加", "古巴", "库拉索", "开曼群岛",
+  "多米尼克", "多米尼加共和国", "厄瓜多尔", "格林纳达", "格陵兰",
+  "危地马拉", "圭亚那", "洪都拉斯", "海地", "牙买加",
+  "圣基茨和尼维斯", "圣卢西亚", "法属圣马丁", "墨西哥", "尼加拉瓜",
+  "巴拿马", "秘鲁", "波多黎各", "巴拉圭", "萨尔瓦多",
+  "苏里南", "荷属圣马丁", "特克斯和凯科斯群岛", "特立尼达和多巴哥", "乌拉圭",
+  "美国", "圣文森特和格林纳丁斯", "委内瑞拉", "英属维尔京群岛", "美属维尔京群岛",
+  "阿富汗", "阿拉伯联合酋长国", "亚美尼亚", "阿塞拜疆", "孟加拉国",
+  "巴林", "文莱", "不丹", "中国", "塞浦路斯",
+  "格鲁吉亚", "中国香港", "印度尼西亚", "印度", "伊朗",
+  "伊拉克", "以色列", "约旦", "日本", "哈萨克斯坦",
+  "吉尔吉斯斯坦", "柬埔寨", "韩国", "科威特", "老挝",
+  "黎巴嫩", "斯里兰卡", "中国澳门", "马尔代夫", "缅甸",
+  "蒙古", "马来西亚", "尼泊尔", "阿曼", "巴基斯坦",
+  "菲律宾", "朝鲜", "约旦河西岸和加沙", "卡塔尔", "沙特阿拉伯",
+  "新加坡", "叙利亚", "泰国", "塔吉克斯坦", "土库曼斯坦",
+  "东帝汶", "土耳其", "乌兹别克斯坦", "越南", "也门",
+  "阿尔巴尼亚", "安道尔", "奥地利", "比利时", "保加利亚",
+  "波斯尼亚和黑塞哥维那", "白俄罗斯", "瑞士", "捷克", "德国",
+  "丹麦", "西班牙", "爱沙尼亚", "芬兰", "法国",
+  "法罗群岛", "英国", "直布罗陀", "希腊", "克罗地亚",
+  "匈牙利", "马恩岛", "爱尔兰", "冰岛", "意大利",
+  "列支敦士登", "立陶宛", "卢森堡", "拉脱维亚", "摩纳哥",
+  "摩尔多瓦", "北马其顿", "马耳他", "黑山", "荷兰",
+  "挪威", "波兰", "葡萄牙", "罗马尼亚", "俄罗斯",
+  "圣马力诺", "塞尔维亚", "斯洛伐克", "斯洛文尼亚", "瑞典",
+  "乌克兰", "美属萨摩亚", "澳大利亚", "斐济", "密克罗尼西亚",
+  "关岛", "基里巴斯", "马绍尔群岛", "北马里亚纳群岛", "新喀里多尼亚",
+  "瑙鲁", "新西兰", "帕劳", "巴布亚新几内亚", "法属波利尼西亚",
+  "所罗门群岛", "汤加", "图瓦卢", "瓦努阿图", "萨摩亚"
+];
+var 数值 = [
+  64.805, 63.818, 60.961, 61.292, 69.293, 57.671, 62.110, 63.968, 62.074, 66.001,
+  67.023, 76.224, 66.202, 76.475, 71.806, 68.893, 67.603, 68.511, 65.695, 60.904,
+  66.057, 64.254, 63.906, 63.834, 62.324, 71.121, 57.798, 75.493, 63.835, 60.675,
+  63.797, 68.713, 73.789, 67.561, 67.516, 61.433, 54.635, 68.017, 66.521, 68.924,
+  61.964, 58.967, 57.738, 69.905, 64.264, 76.295, 55.238, 62.935, 76.711, 67.212,
+  68.487, 66.312, 66.528, 63.064, 76.500, 77.543, 77.766, 74.710, 73.739, 82.490,
+  68.739, 76.023, 76.332, 82.108, 81.359, 77.913, 80.996, 78.264, 76.989, 80.540,
+  71.294, 73.868, 77.579, 75.367, 70.273, 72.746, 70.319, 73.044, 65.119, 71.606,
+  72.281, 72.846, 80.438, 75.264, 75.100, 79.775, 77.941, 81.902, 73.982, 72.302,
+  73.757, 76.528, 78.181, 73.617, 78.287, 78.890, 71.382, 72.673, 77.431, 80.771,
+  66.289, 83.069, 78.320, 74.576, 74.930, 81.423, 75.501, 73.262, 78.017, 81.821,
+  74.657, 85.393, 71.288, 72.235, 77.854, 72.424, 83.198, 77.981, 84.036, 74.531,
+  72.400, 70.817, 83.629, 84.580, 69.225, 77.945, 77.672, 83.332, 81.285, 67.095,
+  72.398, 76.821, 70.636, 80.246, 67.799, 69.946, 73.743, 69.213, 82.522, 78.982,
+  83.346, 72.560, 76.564, 71.927, 70.201, 67.904, 77.421, 72.528, 74.736, 69.439,
+  79.776, 84.188, 81.995, 82.300, 75.761, 78.044, 74.365, 84.407, 79.978, 80.793,
+  82.254, 83.888, 79.295, 82.337, 82.980, 83.083, 81.387, 83.630, 81.839, 78.929,
+  76.724, 81.091, 83.010, 82.810, 83.951, 84.200, 77.195, 83.195, 76.429, 86.497,
+  71.332, 76.617, 82.956, 77.890, 81.966, 83.161, 78.410, 82.383, 76.459, 73.440,
+  85.817, 75.968, 78.371, 82.285, 84.063, 74.692, 72.992, 83.051, 67.463, 67.357,
+  77.422, 66.600, 67.075, 78.947, 78.921, 62.279, 82.010, 69.383, 66.256, 84.192,
+  70.694, 73.070, 67.259, 71.654, 71.826
+];
+
+
+// ==================== 2. 用户设置（通用模板） ====================
+var setting = {
+  title: '各大洲预期寿命分布对比', // 示例标题；替换数据时按场景修改，不参与统计逻辑
+  subtitle: '',                 // 留空：自动展示当前周期、类别数、样本数
+  sourceText: '数据来源：世界银行 WDI（SP.DYN.LE00.IN，2024）；地理分类：联合国 M49。', // 与示例数据配套；换数据时同步填写实际来源
+  noteText: '图表说明：经济体等权、非人口加权；箱体 Q1～Q3，中线为中位数；须线按 1.5×IQR；散点为单条记录。', // 示例解释；换场景时应调整口径说明
+  metricName: '预期寿命',          // 示例指标名称；更换数据时填写实际指标
+  valueUnit: '岁',                // 示例指标单位；更换数据时填写实际单位
+  valuePrecision: 1,
+  yearLabel: '周期',
+  groupLabel: '类别',
+  entityLabel: '对象',
+  valueLabel: '',                 // 留空时自动使用 metricName，确保 Tooltip 指标名称与横轴一致
+  showTitle: true,
+  showPoints: true,
+  showOutlierRing: true,
+  showMedianLabels: false,
+  periodFilter: null,         // null：使用输入中最后出现的周期；也可指定周期值
+  groupOrder: [],              // [] 自动发现；也可以自行设为 ['A','B','C']
+  seriesColors: ['#20384F','#D9544D','#4DA1DB','#239263','#E3A13C','#9972BC','#8493A2','#B87760'],
+  pointSize: 6.5,
+  pointOpacity: 0.43,
+  jitter: 0.27,                // 0～0.42；同类别点的纵向抖动宽度
+  boxHalfHeight: 17,          // 箱体半高，px
+  boxFillOpacity: 0.13,
+  boxLineWidth: 2.2,
+  medianWidth: 3.1,
+  hoverOpacity: 1,
+  blurOpacity: 0.23,                // 聚焦时非当前类别的透明度（0～1）
+  tooltipGap: 24,                  // Tooltip 与悬停位置的水平距离（px）
+  tooltipEdge: 12,                 // Tooltip 距图表边缘的留白（px）
+  xMin: null,                 // null 按数据实际范围动态计算，不假设数值单位或数量级
+  xMax: null,
+  axisSplitNumber: 8,
+  axisLabelPrecision: null,   // null 使用 valuePrecision；也可手动指定非负整数
+  showGroupCount: true,       // 左侧类别后显示有效样本数
+  chartMargin: { left: 126, right: 54, top: 127, bottom: 89 },
+  animationDuration: 700
+};
+
+// ==================== 3. 校验、整理及分组统计 ====================
+if (![类别.length, 对象.length, 数值.length].every(function (n) { return n === 周期.length; })) {
+  throw new Error('四个输入字段数组长度必须一致，请核对 Power BI 字段绑定。');
+}
+var COLORS = {
+  text: '#263238', subText: '#8493A2', grid: '#E5E9ED', background: 'transparent',
+  positive: '#239263', negative: '#D9544D', white: '#FFFFFF'
+};
+var fmt = function (v) { return Number(v).toFixed(setting.valuePrecision); };
+var escapeHtml = function (v) { return String(v).replace(/[&<>"']/g, function (c) {
+  return {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c];
+}); };
+var input = [];
+for (var i = 0; i < 周期.length; i++) {
+  var v = Number(数值[i]);
+  if (数值[i] === null || 数值[i] === undefined || String(数值[i]).trim() === '' ||
+      !isFinite(v) || 类别[i] === null || 类别[i] === undefined || 类别[i] === '' ||
+      对象[i] === null || 对象[i] === undefined || String(对象[i]) === '') continue;
+  input.push({ year: String(周期[i]), group: String(类别[i]), entity: String(对象[i]), value: v, sourceIndex: i });
+}
+if (!input.length) throw new Error('没有有效数值，请检查绑定和度量值类型。');
+var periods = Array.from(new Set(input.map(function(p){return p.year;})));
+var targetPeriod = setting.periodFilter === null ? periods[periods.length - 1] : String(setting.periodFilter);
+input = input.filter(function(p){return p.year === targetPeriod;});
+if (!input.length) throw new Error('指定周期不存在有效数据，请检查 periodFilter。');
+var groupNames = [];
+var present = Object.create(null);
+input.forEach(function (p) { if (!present[p.group]) { present[p.group] = true; groupNames.push(p.group); } });
+if (setting.groupOrder.length) {
+  var newOrder = setting.groupOrder.filter(function (g) { return present[g]; });
+  groupNames.forEach(function (g) { if (newOrder.indexOf(g) < 0) newOrder.push(g); });
+  groupNames = newOrder;
+}
+var pointGroups = groupNames.map(function (g) { return input.filter(function (p) { return p.group === g; }); });
+var getQuantile = function (sorted, ratio) {
+  var k = (sorted.length - 1) * ratio;
+  var left = Math.floor(k), right = Math.ceil(k);
+  return sorted[left] + (sorted[right] - sorted[left]) * (k - left);
+};
+var summaries = pointGroups.map(function (points, groupIndex) {
+  var sorted = points.map(function (p) { return p.value; }).sort(function (a, b) { return a - b; });
+  var q1 = getQuantile(sorted, 0.25), median = getQuantile(sorted, 0.5), q3 = getQuantile(sorted, 0.75);
+  var iqr = q3 - q1, lowLimit = q1 - 1.5 * iqr, highLimit = q3 + 1.5 * iqr;
+  var within = sorted.filter(function (n) { return n >= lowLimit && n <= highLimit; });
+  points.forEach(function (p) { p.outlier = p.value < lowLimit || p.value > highLimit; });
+  return { group: groupNames[groupIndex], index: groupIndex, count: sorted.length,
+    min: sorted[0], q1: q1, median: median, q3: q3, max: sorted[sorted.length - 1],
+    low: within[0], high: within[within.length-1],
+    outliers: sorted.filter(function (n) { return n < lowLimit || n > highLimit; }).length };
+});
+var getColor = function (i) { return setting.seriesColors[i % setting.seriesColors.length]; };
+var deterministicJitter = function (i, g) {
+  // 乘法散列：稳定、不依赖 random()，Power BI 刷新后布局不漂移。
+  var n = Math.sin((i + 1) * 127.1 + (g + 1) * 311.7) * 43758.5453;
+  return ((n - Math.floor(n)) * 2 - 1) * setting.jitter;
+};
+var minValue = Math.min.apply(null, input.map(function (p) { return p.value; }));
+var maxValue = Math.max.apply(null, input.map(function (p) { return p.value; }));
+// 以当前指标的实际数据范围推导边界：同一模板适用于百分比、金额、时长等不同量级。
+var span = maxValue - minValue;
+var axisPadding = span > 0 ? span * 0.055 : Math.max(Math.abs(maxValue) * 0.08, 0.08);
+// 根据数值量级选取整齐的通用刻度步长（1、2、2.5、5 × 10^n），不写死业务范围。
+var axisLo = minValue - axisPadding;
+var axisHi = maxValue + axisPadding;
+var targetTicks = Math.max(2, Number(setting.axisSplitNumber) || 8);
+var rawStep = (axisHi - axisLo) / targetTicks;
+var magnitude = Math.pow(10, Math.floor(Math.log(rawStep) / Math.LN10));
+var multiples = [1, 2, 2.5, 5, 10];
+var axisStep = magnitude;
+var bestDistance = Infinity;
+multiples.forEach(function (m) {
+  var candidate = m * magnitude;
+  var distance = Math.abs(Math.log(candidate / rawStep));
+  if (distance < bestDistance) { bestDistance = distance; axisStep = candidate; }
+});
+var xMin = setting.xMin === null ? Math.floor(axisLo / axisStep + 1e-10) * axisStep : Number(setting.xMin);
+var xMax = setting.xMax === null ? Math.ceil(axisHi / axisStep - 1e-10) * axisStep : Number(setting.xMax);
+if (!isFinite(xMin) || !isFinite(xMax) || xMax <= xMin) throw new Error('数值坐标轴范围无效，请检查 xMin 和 xMax。');
+var subtitleText = setting.subtitle || (String(targetPeriod) + '｜' + groupNames.length + ' 类别｜' + input.length + ' 条样本');
+// 轴标题与单位均从用户设置获取；不在图形计算或 Tooltip 中写死业务信息。
+var axisName = setting.metricName
+  ? setting.metricName + (setting.valueUnit ? '（' + setting.valueUnit + '）' : '')
+  : (setting.valueUnit || '');
+var formatValueWithUnit = function (v) { return fmt(v) + (setting.valueUnit ? ' ' + setting.valueUnit : ''); };
+var axisPrecision = setting.axisLabelPrecision === null ? setting.valuePrecision : setting.axisLabelPrecision;
+var fmtAxis = function(v){return Number(v).toLocaleString('zh-CN',{minimumFractionDigits:0, maximumFractionDigits:Math.min(15, Math.max(0, Number(axisPrecision) || 0))});};
+
+// ==================== 4. 富文本 Tooltip（分布 / 单个样本） ====================
+var tooltipShell = function (heading, color, body, footer) {
+  return '<div style="min-width:238px;font-family:Arial,Microsoft YaHei,sans-serif;color:#263238;">'
+    + '<div style="font-size:13px;font-weight:700;padding:1px 0 9px;border-bottom:1px solid #E5E9ED;color:'+color+'">'
+    + escapeHtml(heading) + '</div>' + body
+    + '<div style="color:#8493A2;font-size:10px;margin-top:9px;padding-top:7px;border-top:1px solid #E5E9ED">'
+    + escapeHtml(footer) + '</div></div>';
+};
+var tooltipRow = function (label, value, color) {
+  return '<div style="display:flex;justify-content:space-between;gap:18px;padding:4px 0;font-size:11px">'
+    + '<span style="color:#8493A2">'+escapeHtml(label)+'</span>'
+    + '<b style="color:'+(color || '#263238')+'">'+escapeHtml(value)+'</b></div>';
+};
+
+// ==================== 5. 图形与同类别聚焦 ====================
+// 箱体和散点作为同一个 custom 系列的数据项。聚焦同类别的完整索引集合，
+// 避免跨系列淡化时把当前散点所属的箱体一起变灰。
+var drawItems = [];
+var focusIndexGroups = groupNames.map(function () { return []; });
+var rgba = function(hex, alpha) {
+  var r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+  return 'rgba('+r+','+g+','+b+','+alpha+')';
+};
+// 每组先加入箱体，再加入本组散点：这样散点自身的 tooltip 能单独识别。
+summaries.forEach(function (s, gi) {
+  var bIndex=drawItems.length;
+  drawItems.push({kind:'box',groupIndex:gi,
+    value:[gi,s.median,gi,s.low,s.q1,s.q3,s.high]});
+  focusIndexGroups[gi].push(bIndex);
+  if (setting.showPoints) {
+    pointGroups[gi].forEach(function (p) {
+      var jitterY=gi+deterministicJitter(p.sourceIndex,gi);
+      var pointIndex=drawItems.length;
+      drawItems.push({kind:'point',groupIndex:gi,record:p,
+        value:[gi,p.value,jitterY]});
+      focusIndexGroups[gi].push(pointIndex);
+    });
+  }
+});
+
+var distributionSeries = {
+  name:'分布及样本',type:'custom',coordinateSystem:'cartesian2d',z:7,
+  // x/y 坐标及类目范围仍由原数据与统计计算；不依赖任何示例类别名称。
+  data:drawItems,
+  encode:{x:1,y:2},
+  renderItem:function(params,api) {
+    var item=drawItems[params.dataIndex];
+    if (!item) return;
+    var gi=item.groupIndex, color=getColor(gi);
+    // ECharts 6 通过返回图元的根节点读取 focus 与 blurScope，
+    // 数组索引让该类别所有箱体和散点保留，其他类别进入 blur。
+    var focus=focusIndexGroups[gi];
+    if (item.kind==='point') {
+      var p=item.record;
+      var coord=api.coord([p.value,gi+deterministicJitter(p.sourceIndex,gi)]);
+      var radius=(p.outlier && setting.showOutlierRing ? setting.pointSize+3 : setting.pointSize)/2;
+      return {
+        type:'circle',
+        focus:focus,blurScope:'series',
+        shape:{cx:coord[0],cy:coord[1],r:radius},
+        style:{fill:color,opacity:setting.pointOpacity,
+          stroke:p.outlier && setting.showOutlierRing ? color:'none',
+          lineWidth:p.outlier && setting.showOutlierRing ? 1.7:0},
+        emphasis:{shape:{r:radius*1.6},style:{opacity:setting.hoverOpacity,
+          stroke:'#FFFFFF',lineWidth:1.1}},
+        blur:{style:{opacity:setting.blurOpacity}}
+      };
+    }
+    var s=summaries[gi];
+    var pos=function(v){return api.coord([v,gi])[0];};
+    var midY=api.coord([s.median,gi])[1];
+    var low=pos(s.low),q1=pos(s.q1),med=pos(s.median),q3=pos(s.q3),high=pos(s.high);
+    var hh=setting.boxHalfHeight;
+    var children=[
+      {type:'line',shape:{x1:low,y1:midY,x2:high,y2:midY},style:{stroke:color,lineWidth:2}},
+      {type:'line',shape:{x1:low,y1:midY-hh*0.58,x2:low,y2:midY+hh*0.58},
+        style:{stroke:color,lineWidth:setting.boxLineWidth}},
+      {type:'line',shape:{x1:high,y1:midY-hh*0.58,x2:high,y2:midY+hh*0.58},
+        style:{stroke:color,lineWidth:setting.boxLineWidth}},
+      {type:'rect',shape:{x:q1,y:midY-hh,width:Math.max(1,q3-q1),height:hh*2},
+        style:{fill:rgba(color,setting.boxFillOpacity),stroke:color,lineWidth:setting.boxLineWidth}},
+      {type:'line',shape:{x1:med,y1:midY-hh,x2:med,y2:midY+hh},
+        style:{stroke:color,lineWidth:setting.medianWidth}}
+    ];
+    if (setting.showMedianLabels) children.push({
+      type:'text',style:{x:med,y:midY-hh-12,text:fmt(s.median),fill:color,
+        align:'center',verticalAlign:'middle',font:'600 11px Microsoft YaHei, sans-serif'}
+    });
+    return {type:'group',focus:focus,blurScope:'series',children:children,
+      emphasis:{style:{opacity:1}},blur:{style:{opacity:setting.blurOpacity}}};
+  },
+  tooltip:{show:true}
+};
+
+// Tooltip 优先出现在鼠标右侧；空间不够时自动翻转至左侧，并限制上下边界。
+// 使用 ECharts 提供的容器和内容尺寸，不读取 DOM，不依赖固定图表宽高。
+var tooltipPosition=function(pos,params,dom,rect,size) {
+  var w=size.viewSize[0],h=size.viewSize[1];
+  var tw=size.contentSize[0],th=size.contentSize[1];
+  var gap=Math.max(0,Number(setting.tooltipGap)||0);
+  var edge=Math.max(0,Number(setting.tooltipEdge)||0);
+  var rightX=pos[0]+gap, leftX=pos[0]-tw-gap;
+  var x=rightX+tw+edge<=w?rightX:(leftX>=edge?leftX:Math.max(edge,w-tw-edge));
+  var topLimit=setting.showTitle?104:edge;
+  var bottomLimit=h-(setting.chartMargin.bottom||0)+22;
+  var maxY=Math.max(topLimit,Math.min(h-th-edge,bottomLimit-th));
+  var y=Math.min(maxY,Math.max(topLimit,pos[1]-th/2));
+  return [x,y];
+};
+
+option = {
+  backgroundColor:COLORS.background,
+  animationDuration:setting.animationDuration,
+  color:setting.seriesColors,
+  graphic: setting.showTitle ? [
+    {type:'rect',left:24,top:25,shape:{width:20,height:4},style:{fill:COLORS.negative}},
+    {type:'text',left:28,top:38,style:{text:setting.title,fill:COLORS.text,font:'700 21px Microsoft YaHei, sans-serif'}},
+    {type:'text',left:28,top:72,style:{text:subtitleText,fill:COLORS.subText,font:'12px Microsoft YaHei, sans-serif'}}
+  ].concat([
+    {type:'text',left:23,bottom:31,style:{text:setting.sourceText,fill:COLORS.subText,font:'10px Microsoft YaHei, sans-serif'}},
+    {type:'text',left:23,bottom:14,style:{text:setting.noteText,fill:COLORS.subText,font:'10px Microsoft YaHei, sans-serif'}}
+  ]) : [
+    {type:'text',left:23,bottom:31,style:{text:setting.sourceText,fill:COLORS.subText,font:'10px Microsoft YaHei, sans-serif'}},
+    {type:'text',left:23,bottom:14,style:{text:setting.noteText,fill:COLORS.subText,font:'10px Microsoft YaHei, sans-serif'}}
+  ],
+  grid:{left:setting.chartMargin.left,right:setting.chartMargin.right,
+        top:setting.chartMargin.top,bottom:setting.chartMargin.bottom,containLabel:false},
+  xAxis:{type:'value',min:xMin,max:xMax,splitNumber:setting.axisSplitNumber,
+    interval:(setting.xMin === null && setting.xMax === null ? axisStep : undefined),
+    name:axisName,nameLocation:'middle',nameGap:40,
+    nameTextStyle:{color:COLORS.subText,fontSize:11},
+    axisLine:{show:false},axisTick:{show:false},
+    axisLabel:{color:COLORS.subText,fontSize:11,formatter:function(v){return fmtAxis(v);}},
+    splitLine:{show:true,lineStyle:{color:COLORS.grid,width:1}}
+  },
+  yAxis:{type:'value',inverse:true,min:-1,max:groupNames.length,interval:1,
+    axisLine:{show:false},axisTick:{show:false},splitLine:{show:false},
+    axisLabel:{margin:20,color:COLORS.text,fontSize:12,fontWeight:600,
+      formatter:function (v){if(Math.abs(v-Math.round(v))>0.001)return '';var i=Math.round(v);if(i<0||i>=groupNames.length)return '';return groupNames[i]+(setting.showGroupCount ? '  ·  '+summaries[i].count : '');}}
+  },
+  tooltip:{trigger:'item',renderMode:'html',confine:true,position:tooltipPosition,
+    backgroundColor:'#FFFFFF',borderColor:COLORS.grid,borderWidth:1,
+    textStyle:{color:COLORS.text,fontSize:11},padding:[11,13],extraCssText:'box-shadow:0 3px 16px rgba(20,30,40,.12);',
+    formatter:function(p){
+      if(p.seriesType==='custom') {
+        var item=drawItems[p.dataIndex];
+        if (!item) return '';
+        var c=getColor(item.groupIndex);
+        if (item.kind==='box') {
+          var s=summaries[item.groupIndex];
+          return tooltipShell(s.group+' · '+(setting.metricName ? setting.metricName+'分布统计' : '分布统计'),c,
+            tooltipRow('有效样本',s.count+' 条')
+            +tooltipRow('最小值 / 下须线',fmt(s.min)+' / '+formatValueWithUnit(s.low))
+            +tooltipRow('Q1（25%）',formatValueWithUnit(s.q1))
+            +tooltipRow('中位数（50%）',formatValueWithUnit(s.median),c)
+            +tooltipRow('Q3（75%）',formatValueWithUnit(s.q3))
+            +tooltipRow('上须线 / 最大值',fmt(s.high)+' / '+formatValueWithUnit(s.max))
+            +tooltipRow('异常值数量',s.outliers+' 条'),
+            '四分位数采用线性插值（PERCENTILE.INC）；1.5×IQR 须线');
+        }
+        var d=item.record;
+        return tooltipShell(d.entity,c,
+          tooltipRow(setting.groupLabel,d.group)
+          +tooltipRow(setting.entityLabel,d.entity)
+          +tooltipRow(setting.yearLabel,d.year)
+          +tooltipRow(setting.valueLabel || setting.metricName || '指标值',formatValueWithUnit(d.value),c)
+          +(d.outlier?tooltipRow('分布标记','1.5×IQR 离群点'):''),
+          '散点代表输入数据中的一条有效记录');
+      }
+      return '';
+    }
+  },
+  series:[distributionSeries]
+};
