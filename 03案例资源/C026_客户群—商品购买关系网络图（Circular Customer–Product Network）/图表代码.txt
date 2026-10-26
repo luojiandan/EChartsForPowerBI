@@ -1,0 +1,700 @@
+﻿/**
+ * C026 客户群—商品购买关系网络图 / Circular Customer-Product Network / v0.5.7
+ * 使用说明：完整 JS，ECharts 官方编辑器直接复制；option 不声明 var；无需额外 HTML 文件或外网资源。
+ * 商品查找使用 JS 创建的原生 input（支持中文拼音组合输入）及可滚动结果列表，仍为单个 JS。
+ * ECharts for Power BI 须允许在图表实例 DOM 内创建元素；若环境禁用 DOM，此搜索控件无法显示。
+ * 原始输入必须是下方 5 条平行一维数组，行索引对应一条“客户群×商品”的聚合关系。
+ * 实际输入来源：GitHub 第三方公开抽样文件（并非官方 UCI 原始完整文件）：
+ * https://github.com/jerry-appliedAIstudio/business-ml-algorithms/blob/main/data/online_retail_sample.csv
+ * 对照数据集：UCI Online Retail (Daqing Chen; CC BY 4.0; DOI:10.24432/C5BW33)
+ * https://archive.ics.uci.edu/dataset/352/online+retail
+ * 注意：抽样文件的字段和日期区间与 Online Retail 数据集一致；尚未与官方原始文件逐行比对，
+ * 不能据此确认第三方样本的每一行均与 UCI 原始数据完全一致。
+ * 该抽样数据覆盖2010-12—2011-12，非完整数据集，亦不是 Online Retail II 两年完整数据。
+ * 采用第三方文件的2709条抽样交易，过滤无客户ID、退单、非正数量或单价、无效日期、空商品名后1995条。
+ * 计算得到1153位客户，按样本内R/F/M进行4组划分：
+ *   F >= 2：样本复购；该类消费金额 M 的中位数35.40 英镑分为高价值复购和一般复购；
+ *   F = 1：样本单购；R（距样本最后时间次日2011-12-10天数）的中位数143.55天分近期/较久。
+ *   以上分群仅对抽样窗口有效，不代表该客户在全部交易期的真实状态，也不是官方已有的客户标签。
+ * 按样本内去重购买人数选46个商品，形成148条真实群组—商品汇总关系。
+ * 每条边的购买客户数表示“该群组中至少购买过该商品的一位不同客户”，不等于订单数/件数。
+ * 须在 Power BI 侧先完成明细去重、分群和群组—商品汇总，替换对应字段数组。
+ * 直接从明细交易拉入而不聚合，会触发复合键校验错误，这属于有意的防错行为。
+ */
+
+// ===== 01 示例输入数据（5个平行的一维数组） =====
+// Power BI 中按实际字段顺序分别替换。必须汇总到“客户群×商品编号”唯一粒度。
+// 以下是 5 个原始输入字段的替换示例（取消注释并替换下面对应 var 数组，序号须按实际字段顺序调整）：
+// var 客户群 = dataArr.dataObjects[0].values;
+// var 商品编号 = dataArr.dataObjects[1].values;
+// var 商品名称 = dataArr.dataObjects[2].values;
+// var 购买客户数 = dataArr.dataObjects[3].values; // 群组-商品组合中的去重购买客户数，正整数
+// var 群体客户数 = dataArr.dataObjects[4].values; // 客户群样本人数，同组所有商品行均相同
+// 注意：不得直接把订单明细当成汇总结果；不支持同一客户群×商品编号出现多行。
+var 客户群 = ["高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","高价值复购","近期单购","较久单购","高价值复购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购","一般复购","较久单购","高价值复购","一般复购","高价值复购","近期单购","较久单购","高价值复购","近期单购","较久单购","高价值复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","一般复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","近期单购","较久单购","高价值复购","近期单购","高价值复购","一般复购","较久单购","高价值复购","一般复购","近期单购","高价值复购","近期单购","较久单购","高价值复购","近期单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","较久单购","高价值复购","一般复购","较久单购","高价值复购","一般复购","近期单购","较久单购","高价值复购","一般复购","高价值复购","高价值复购","较久单购","一般复购","较久单购","高价值复购","近期单购","较久单购","高价值复购","一般复购","近期单购","较久单购"];
+var 商品编号 = ["22423","22423","22423","22423","84879","84879","84879","84879","47566","47566","47566","47566","85099B","85099B","85099B","85099B","20725","20725","20725","20725","22558","22558","22558","22558","85123A","85123A","85123A","85123A","22138","22138","22138","22138","22197","22197","22197","22197","22326","22326","22326","82482","82482","82482","82482","20726","20726","20726","20726","21790","21790","21790","22383","22383","22383","22383","22666","22666","22666","22720","22720","22720","22720","23319","23319","23319","21733","21733","21733","21754","21754","22090","22090","22090","22090","22457","22457","22457","22457","22469","22469","22629","22629","22699","22699","22699","47590A","47590A","47590A","84992","84992","84992","20718","20718","20718","20718","20719","20719","20719","20728","20728","20728","21172","21172","21172","21172","21914","21914","21914","21928","21928","21930","21930","21930","22111","22111","22111","22139","22139","22139","22178","22178","22356","22356","22356","22356","22384","22384","22384","22424","22424","22424","22553","22553","22553","22553","22624","22624","22630","22698","22698","22722","22722","22726","22726","22726","22727","22727","22727","22727"];
+var 商品名称 = ["REGENCY CAKESTAND 3 TIER","REGENCY CAKESTAND 3 TIER","REGENCY CAKESTAND 3 TIER","REGENCY CAKESTAND 3 TIER","ASSORTED COLOUR BIRD ORNAMENT","ASSORTED COLOUR BIRD ORNAMENT","ASSORTED COLOUR BIRD ORNAMENT","ASSORTED COLOUR BIRD ORNAMENT","PARTY BUNTING","PARTY BUNTING","PARTY BUNTING","PARTY BUNTING","JUMBO BAG RED RETROSPOT","JUMBO BAG RED RETROSPOT","JUMBO BAG RED RETROSPOT","JUMBO BAG RED RETROSPOT","LUNCH BAG RED RETROSPOT","LUNCH BAG RED RETROSPOT","LUNCH BAG RED RETROSPOT","LUNCH BAG RED RETROSPOT","CLOTHES PEGS RETROSPOT PACK 24","CLOTHES PEGS RETROSPOT PACK 24","CLOTHES PEGS RETROSPOT PACK 24","CLOTHES PEGS RETROSPOT PACK 24","WHITE HANGING HEART T-LIGHT HOLDER","WHITE HANGING HEART T-LIGHT HOLDER","WHITE HANGING HEART T-LIGHT HOLDER","WHITE HANGING HEART T-LIGHT HOLDER","BAKING SET 9 PIECE RETROSPOT","BAKING SET 9 PIECE RETROSPOT","BAKING SET 9 PIECE RETROSPOT","BAKING SET 9 PIECE RETROSPOT","POPCORN HOLDER","POPCORN HOLDER","POPCORN HOLDER","POPCORN HOLDER","ROUND SNACK BOXES SET OF4 WOODLAND","ROUND SNACK BOXES SET OF4 WOODLAND","ROUND SNACK BOXES SET OF4 WOODLAND","WOODEN PICTURE FRAME WHITE FINISH","WOODEN PICTURE FRAME WHITE FINISH","WOODEN PICTURE FRAME WHITE FINISH","WOODEN PICTURE FRAME WHITE FINISH","LUNCH BAG WOODLAND","LUNCH BAG WOODLAND","LUNCH BAG WOODLAND","LUNCH BAG WOODLAND","VINTAGE SNAP CARDS","VINTAGE SNAP CARDS","VINTAGE SNAP CARDS","LUNCH BAG SUKI DESIGN","LUNCH BAG SUKI DESIGN","LUNCH BAG SUKI DESIGN","LUNCH BAG SUKI DESIGN","RECIPE BOX PANTRY YELLOW DESIGN","RECIPE BOX PANTRY YELLOW DESIGN","RECIPE BOX PANTRY YELLOW DESIGN","SET OF 3 CAKE TINS PANTRY DESIGN","SET OF 3 CAKE TINS PANTRY DESIGN","SET OF 3 CAKE TINS PANTRY DESIGN","SET OF 3 CAKE TINS PANTRY DESIGN","BOX OF 6 MINI 50'S CRACKERS","BOX OF 6 MINI 50'S CRACKERS","BOX OF 6 MINI 50'S CRACKERS","RED HANGING HEART T-LIGHT HOLDER","RED HANGING HEART T-LIGHT HOLDER","RED HANGING HEART T-LIGHT HOLDER","HOME BUILDING BLOCK WORD","HOME BUILDING BLOCK WORD","PAPER BUNTING RETROSPOT","PAPER BUNTING RETROSPOT","PAPER BUNTING RETROSPOT","PAPER BUNTING RETROSPOT","NATURAL SLATE HEART CHALKBOARD","NATURAL SLATE HEART CHALKBOARD","NATURAL SLATE HEART CHALKBOARD","NATURAL SLATE HEART CHALKBOARD","HEART OF WICKER SMALL","HEART OF WICKER SMALL","SPACEBOY LUNCH BOX","SPACEBOY LUNCH BOX","ROSES REGENCY TEACUP AND SAUCER","ROSES REGENCY TEACUP AND SAUCER","ROSES REGENCY TEACUP AND SAUCER","BLUE HAPPY BIRTHDAY BUNTING","BLUE HAPPY BIRTHDAY BUNTING","BLUE HAPPY BIRTHDAY BUNTING","72 SWEETHEART FAIRY CAKE CASES","72 SWEETHEART FAIRY CAKE CASES","72 SWEETHEART FAIRY CAKE CASES","RED RETROSPOT SHOPPER BAG","RED RETROSPOT SHOPPER BAG","RED RETROSPOT SHOPPER BAG","RED RETROSPOT SHOPPER BAG","WOODLAND CHARLOTTE BAG","WOODLAND CHARLOTTE BAG","WOODLAND CHARLOTTE BAG","LUNCH BAG CARS BLUE","LUNCH BAG CARS BLUE","LUNCH BAG CARS BLUE","PARTY METAL SIGN","PARTY METAL SIGN","PARTY METAL SIGN","PARTY METAL SIGN","BLUE HARMONICA IN BOX","BLUE HARMONICA IN BOX","BLUE HARMONICA IN BOX","JUMBO BAG SCANDINAVIAN BLUE PAISLEY","JUMBO BAG SCANDINAVIAN BLUE PAISLEY","JUMBO STORAGE BAG SKULLS","JUMBO STORAGE BAG SKULLS","JUMBO STORAGE BAG SKULLS","SCOTTIE DOG HOT WATER BOTTLE","SCOTTIE DOG HOT WATER BOTTLE","SCOTTIE DOG HOT WATER BOTTLE","RETROSPOT TEA SET CERAMIC 11 PC","RETROSPOT TEA SET CERAMIC 11 PC","RETROSPOT TEA SET CERAMIC 11 PC","VICTORIAN GLASS HANGING T-LIGHT","VICTORIAN GLASS HANGING T-LIGHT","CHARLOTTE BAG PINK POLKADOT","CHARLOTTE BAG PINK POLKADOT","CHARLOTTE BAG PINK POLKADOT","CHARLOTTE BAG PINK POLKADOT","LUNCH BAG PINK POLKADOT","LUNCH BAG PINK POLKADOT","LUNCH BAG PINK POLKADOT","ENAMEL BREAD BIN CREAM","ENAMEL BREAD BIN CREAM","ENAMEL BREAD BIN CREAM","PLASTERS IN TIN SKULLS","PLASTERS IN TIN SKULLS","PLASTERS IN TIN SKULLS","PLASTERS IN TIN SKULLS","IVORY KITCHEN SCALES","IVORY KITCHEN SCALES","DOLLY GIRL LUNCH BOX","PINK REGENCY TEACUP AND SAUCER","PINK REGENCY TEACUP AND SAUCER","SET OF 6 SPICE TINS PANTRY DESIGN","SET OF 6 SPICE TINS PANTRY DESIGN","ALARM CLOCK BAKELIKE GREEN","ALARM CLOCK BAKELIKE GREEN","ALARM CLOCK BAKELIKE GREEN","ALARM CLOCK BAKELIKE RED","ALARM CLOCK BAKELIKE RED","ALARM CLOCK BAKELIKE RED","ALARM CLOCK BAKELIKE RED"];
+var 购买客户数 = [7,1,4,6,1,1,6,3,3,3,2,2,4,3,2,1,4,2,1,2,1,3,1,4,4,1,2,2,3,1,2,2,4,1,2,1,2,2,4,3,1,2,2,2,1,1,3,3,1,3,1,4,1,1,4,1,2,2,1,3,1,1,1,5,2,1,3,4,2,3,1,1,1,2,2,1,1,2,4,5,1,1,1,4,2,2,2,2,1,3,1,2,1,1,2,2,1,1,1,3,1,2,1,1,2,1,2,3,2,1,1,3,1,1,3,1,3,1,4,1,1,1,2,1,1,3,1,1,3,1,1,1,2,1,3,2,5,4,1,1,4,1,2,2,1,1,1,2];
+var 群体客户数 = [163,162,414,414,163,162,414,414,163,162,414,414,163,162,414,414,163,162,414,414,163,162,414,414,163,162,414,414,163,162,414,414,163,162,414,414,163,162,414,163,162,414,414,163,162,414,414,163,162,414,163,162,414,414,163,162,414,163,162,414,414,163,162,414,163,414,414,163,414,163,162,414,414,163,162,414,414,162,414,163,162,163,414,414,163,414,414,163,414,414,163,162,414,414,163,162,414,162,414,414,163,162,414,414,163,414,414,163,414,163,162,414,163,162,414,163,414,414,163,414,163,162,414,414,163,162,414,163,162,414,163,162,414,414,163,162,163,163,414,162,414,163,414,414,163,162,414,414];
+
+// ===== 02 全局参数设置 =====
+var setting = {
+  title:'谁在买什么？不同客户群的商品购买关系',
+  subtitle:'2010.12—2011.12零售交易抽样 · 客户群 × 商品关联 · 环形固定布局',
+  sourceText:'GitHub/jerry-appliedAIstudio交易抽样；对照UCI Online Retail（Daqing Chen）',
+  noteText:'2010.12—2011.12抽样；客户群仅按样本划分；连线=组内去重购买人数；商品颜色=购买人数最多的客户群。',
+  metricUnit:'人',
+  entityGroupName:'客户群',
+  entityProductName:'商品',
+  chartInstance:null,            // 视觉对象如未暴露 myChart：初始化后调用 c026BindChart(实例)
+  fallbackWidth:1220,
+  fallbackHeight:830,
+  panelWidth:280,
+  minWidth:860,
+  minHeight:550,
+  ringScale:1.035,
+  bundling:.24,                // 0.0 = 更靠中心，1.0 = 靠近圆周；会按角距自动校正
+  normalLinkOpacity:.19,
+  fadedLinkOpacity:.025,
+  highlightLinkOpacity:.82,
+  showTopLabels:24,                 // 入选候选，不等于全部显示：根据组内角间距避让
+  maxProductLabelsPerGroup:2,
+  labelMinAngle:0.26,             // 避免同扇区商品标签扎堆
+  detailTopCount:8,
+  productFinder:true,            // 右侧商品定位：真实输入框，支持中文输入法、英文及 SKU
+  productFinderMaxVisible:7,   // 下拉列表最多同时显示条数；更多结果可滚动
+  productFinderAutoResetView:true, // 搜索定位到当前可视范围外的商品时恢复初始视图
+  showPanelBars:true,              // 右侧面板：用横向比较条呈现人数规模
+  showGroupPurchaseRate:true,      // 选中商品时，同时显示组内购买率（避免大小群组误判）
+  panelBarHeight:6,
+  panelTrackColor:'#EDF1F4',
+  enableHoverFocus:true,
+  enableWheelZoom:true,
+  enableDragPan:true,
+  zoomMin:0.75,
+  zoomMax:3.5,
+  zoomStep:1.18,
+  zoomInitial:1,
+  showProductShortLabel:true,
+  zoomLabelThresholds:[1.17,1.50,2.00], // 缩放到不同级别时逐步显示更多商品名称
+  zoomLabelLengths:[8,12,18,28],       // 各级别最长显示的名称字符数
+  zoomLabelLimits:[2,5,12,99],         // 各级别单群最多标注的商品数
+  relationMin:1,
+  fontFamily:'sans-serif',
+  colors:['#4B7290','#B77E5A','#4D8D7C','#8B77A5','#6296A9','#9EAD85','#CE9779','#8493A2'],
+  background:'transparent',
+  accent:'#D9544D',
+  text:'#263238',
+  secondary:'#8493A2',
+  gridLine:'#E5E9ED',
+  productAliases:{  // 仅用于展示的翻译/短名称，不参与去重与计算；其余使用真实英文名
+    '22423':'三层蛋糕架','84879':'彩色鸟装饰','47566':'派对彩旗',
+    '85099B':'红色复古大袋','20725':'红色午餐袋','22558':'复古晾衣夹',
+    '85123A':'白色爱心烛台','22138':'复古烘焙套装','22197':'爆米花桶',
+    '22326':'林地零食盒','82482':'白色相框','20726':'林地午餐袋',
+    '21790':'复古游戏卡','22383':'Suki 午餐袋','22666':'黄色食谱盒',
+    '22720':'三件装蛋糕盒','23319':'复古迷你拉炮','21733':'红色爱心烛台',
+    '21754':'家居字母积木','22090':'复古纸质彩旗','22457':'心形黑板',
+    '22469':'柳编爱心','22629':'太空男孩午餐盒','22699':'玫瑰茶杯套装',
+    '21914':'蓝色口琴',
+    '20718':'红色购物袋','20719':'林地手提袋','20728':'蓝色汽车午餐袋',
+    '21172':'派对金属挂牌','21928':'北欧蓝色大袋','21930':'骷髅收纳袋',
+    '22111':'苏格兰犬热水袋','22139':'复古陶瓷茶具','22178':'维多利亚玻璃烛饰',
+    '22356':'粉色波点手提袋','22384':'粉色波点午餐袋','22424':'奶油色搪瓷面包盒',
+    '22553':'骷髅铁盒创可贴','22624':'象牙色厨房秤','22630':'洋娃娃午餐盒',
+    '22698':'粉色玫瑰茶杯','22722':'六件装香料罐','22726':'绿色复古闹钟',
+    '22727':'红色复古闹钟','47590A':'蓝色生日彩旗','84992':'爱心纸杯蛋糕纸托'
+    // 仅用于搜索与展示的别名，不更改商品原名或数据统计
+  }
+};
+
+// ===== 03 计算与数据校验：无业务特定常量 =====
+function c026S(v){return v==null?'':String(v).trim();}
+function c026Esc(v){return c026S(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function c026Clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function c026Num(v){return Number(v||0).toLocaleString('zh-CN');}
+function c026Fail(m){throw Error('C026 输入错误：'+m);}
+function c026Label(n){return n.kind==='group'?n.name:(setting.productAliases[n.sku]||n.name);}
+function c026BuildData(){
+  var arrays=[客户群,商品编号,商品名称,购买客户数,群体客户数];
+  if(arrays.some(function(x){return !Array.isArray(x);}))c026Fail('5个输入字段必须都是一维数组。');
+  var length=arrays[0].length;
+  if(!length||arrays.some(function(x){return x.length!==length;}))c026Fail('5个数组必须非空且长度一致。');
+  var groups=new Map(),goods=new Map(),links=[],seen=new Set();
+  for(var i=0;i<length;i++){
+    var g=c026S(客户群[i]),sku=c026S(商品编号[i]),name=c026S(商品名称[i]);
+    var weight=Number(购买客户数[i]),base=Number(群体客户数[i]);
+    if(!g||!sku||!name)c026Fail('第'+(i+1)+'条存在空的客户群/商品编号/商品名称。');
+    if(!Number.isInteger(weight)||weight<=0)c026Fail('第'+(i+1)+'条购买客户数需为正整数。');
+    if(!Number.isInteger(base)||base<=0||base<weight)c026Fail('第'+(i+1)+'条群体人数无效。');
+    var k=JSON.stringify([g,sku]);if(seen.has(k))c026Fail('第'+(i+1)+'条客户群×商品重复：'+k);seen.add(k);
+    if(!groups.has(g))groups.set(g,{key:'g:'+g,name:g,kind:'group',size:base,edges:[],sum:0});
+    var group=groups.get(g);if(group.size!==base)c026Fail('客户群 '+g+' 在不同记录中的群体客户数不一致。');
+    if(!goods.has(sku))goods.set(sku,{key:'p:'+sku,sku:sku,name:name,kind:'product',edges:[],sum:0});
+    var product=goods.get(sku);if(product.name!==name)c026Fail('商品编号 '+sku+' 对应多个不同商品名称，请在上游统一。');
+    var row={id:'e:'+i,g:group.key,p:product.key,group:g,sku:sku,weight:weight};
+    links.push(row);group.edges.push(row);product.edges.push(row);group.sum+=weight;product.sum+=weight;
+  }
+  var gg=[...groups.values()],pp=[...goods.values()];
+  var color=new Map(gg.map(function(g,i){return[g.name,setting.colors[i%setting.colors.length]];}));
+  pp.forEach(function(p){p.dominant=p.edges.slice().sort(function(a,b){return b.weight-a.weight||gg.findIndex(x=>x.name===a.group)-gg.findIndex(x=>x.name===b.group);})[0].group;});
+  var order=new Map(gg.map(function(g,i){return[g.name,i];}));
+  pp.sort(function(a,b){return order.get(a.dominant)-order.get(b.dominant)||b.sum-a.sum||a.sku.localeCompare(b.sku,'zh-CN',{numeric:true});});
+  var maxW=Math.max.apply(null,links.map(function(x){return x.weight;}));
+  return {groups:gg,products:pp,links:links,color:color,maxW:maxW,groupMap:groups,productMap:goods, shared3:pp.filter(function(p){return p.edges.length>=3;}).length};
+}
+var c026Data=c026BuildData();
+var c026State={selected:null,hover:null};
+var c026Finder={open:false,query:'',page:0};
+var c026View={zoom:c026Clamp(Number(setting.zoomInitial)||1,setting.zoomMin,setting.zoomMax),panX:0,panY:0};
+var c026Instance=null;
+// 图表宿主对实例变量的命名各不相同；优先从显式 chartInstance 读取，
+// 然后尝试常见实例变量。不存在时不尝试访问 DOM 或自行初始化第二个图表。
+function c026ResolveChart(){
+  function usable(x){return !!x&&typeof x.setOption==='function'&&!(typeof x.isDisposed==='function'&&x.isDisposed());}
+  if(usable(c026Instance))return c026Instance;
+  if(usable(setting.chartInstance))return setting.chartInstance;
+  if(typeof myChart!=='undefined'&&usable(myChart))return myChart;
+  if(typeof chartInstance!=='undefined'&&usable(chartInstance))return chartInstance;
+  if(typeof chart!=='undefined'&&usable(chart))return chart;
+  if(typeof echartsInstance!=='undefined'&&usable(echartsInstance))return echartsInstance;
+  return null;
+}
+function c026Dims(){var ch=c026ResolveChart();return {w:ch&&ch.getWidth?ch.getWidth():setting.fallbackWidth,h:ch&&ch.getHeight?ch.getHeight():setting.fallbackHeight};}
+function c026IsRelated(row,key){return row.g===key||row.p===key;}
+function c026FocusKey(){return c026State.selected||c026State.hover;}
+function c026Human(name,max){var s=c026S(name);return s.length>max?s.slice(0,max-1)+'…':s;}
+function c026Color(name){return c026Data.color.get(name)||setting.secondary;}
+
+// ===== 04 固定环形布局：按群组主偏好排序的商品，内部为数据驱动贝塞尔曲线 =====
+function c026BuildModel(){
+  var W=c026Dims().w,H=c026Dims().h;
+  var panel=c026Clamp(setting.panelWidth,226,Math.max(226,W*.34));
+  var right=W-panel-22, plotW=right-28;
+  var top=158, footer=65, availableH=H-top-footer;
+  var R=Math.max(65,Math.min(plotW/2-44,availableH/2-24));
+  R*=setting.ringScale;
+  var cx=28+plotW/2,cy=top+availableH/2;
+  var gArr=c026Data.groups,pArr=c026Data.products,perGroup=new Map();
+  gArr.forEach(function(g){perGroup.set(g.name,pArr.filter(function(p){return p.dominant===g.name;}));});
+  var nodes=[],nodeMap=new Map(),nG=gArr.length;
+  gArr.forEach(function(g,i){
+    var start=-Math.PI/2+i*(2*Math.PI/nG),end=-Math.PI/2+(i+1)*(2*Math.PI/nG);
+    var seg=perGroup.get(g.name),n=seg.length;
+    // 顶部首部区域给组节点留出位置；商品排到同一个扇区内，体现客户群分组
+    var a=(start+end)/2;
+    var center={key:g.key,kind:'group',name:g.name,entity:g,theta:a,x:Math.cos(a),y:Math.sin(a),size:Math.min(27,15+Math.sqrt(g.size)*.45),color:c026Color(g.name)};
+    nodes.push(center);nodeMap.set(center.key,center);
+    seg.forEach(function(p,j){
+      var slot=(j+.5)/n;
+      var angle=start+.065+(end-start-.13)*slot;
+      // 避开组节点的中心角，避免同一圆周的节点重叠
+      if(Math.abs(angle-a)<.070)angle+=(angle<a?-.076:.076);
+      var nP={key:p.key,kind:'product',name:p.name,sku:p.sku,entity:p,theta:angle,x:Math.cos(angle),y:Math.sin(angle),size:c026Clamp(4.1+Math.sqrt(p.sum)*.95,6,13),color:c026Color(p.dominant)};
+      nodes.push(nP);nodeMap.set(nP.key,nP);
+    });
+  });
+  // 每次生成模型都从原始汇总重算商品排名；不依赖上一次绘制的残留状态。
+  var ranked=c026Data.products.slice().sort(function(a,b){return b.sum-a.sum||String(a.sku).localeCompare(String(b.sku));});
+  ranked.forEach(function(p,i){p.rank=i;});
+  // 先锁定4个客户群标签，再根据实时缩放级别选择更多商品标签。
+  // 标签在当前屏幕坐标系内重新计算防碰撞，且不会把已被缩出画布的节点强行标注。
+  var zoom=c026View.zoom, thresholds=setting.zoomLabelThresholds;
+  var tier=0;
+  for(var ti=0;ti<thresholds.length;ti++)if(zoom>=thresholds[ti])tier=ti+1;
+  var globalRankLimit=tier===0?setting.showTopLabels:Infinity;
+  var perGroupLimit=setting.zoomLabelLimits[tier]||99;
+  var textLength=setting.zoomLabelLengths[tier]||18;
+  var visualRadius=R*.95/1.10;
+  var occupied=[];
+  function labelBox(n){
+    var angle=n.theta,dx=Math.cos(angle),dy=-Math.sin(angle),grp=n.kind==='group';
+    var px=cx+visualRadius*dx*zoom+c026View.panX;
+    var py=cy+visualRadius*dy*zoom+c026View.panY;
+    var txt=c026Human(c026Label(n),grp?12:textLength),size=grp?12:10;
+    n.displayLabel=txt;
+    var units=0;
+    for(var j=0;j<txt.length;j++)units+=txt.charCodeAt(j)>255?1:.60;
+    var w=units*size+5,h=size+5,off=n.size/2+8;
+    var side=(dx>0.22?'right':dx<-.22?'left':dy<0?'top':'bottom');
+    var x=px,y=py;
+    if(side==='right'){x=px+off;y=py-h/2;}
+    else if(side==='left'){x=px-off-w;y=py-h/2;}
+    else if(side==='top'){x=px-w/2;y=py-off-h;}
+    else{x=px-w/2;y=py+off;}
+    n.labelSide=side;
+    return {left:x-3,right:x+w+3,top:y-3,bottom:y+h+3};
+  }
+  function overlaps(a,b){return a.left<b.right && b.left<a.right && a.top<b.bottom && b.top<a.bottom;}
+  function visible(b){return b.left>=19 && b.right<=right-5 && b.top>=171 && b.bottom<=H-78;}
+  nodes.filter(function(n){return n.kind==='group';}).forEach(function(n){
+    n.labelVisible=true;var b=labelBox(n);if(visible(b))occupied.push(b);
+  });
+  gArr.forEach(function(g){
+    var count=0,groupNode=nodeMap.get(g.key);
+    var candidates=nodes.filter(function(n){return n.kind==='product' && n.entity.dominant===g.name;});
+    candidates.sort(function(a,b){return b.entity.sum-a.entity.sum || String(a.sku).localeCompare(String(b.sku));});
+    candidates.forEach(function(n){
+      n.labelVisible=false;
+      if(count>=perGroupLimit || n.entity.rank>=globalRankLimit)return;
+      if(tier===0){
+        var distance=Math.abs(Math.atan2(Math.sin(n.theta-groupNode.theta),Math.cos(n.theta-groupNode.theta)));
+        if(distance<setting.labelMinAngle)return;
+      }
+      var box=labelBox(n);
+      if(!visible(box) || occupied.some(function(b){return overlaps(box,b);}))return;
+      occupied.push(box);n.labelVisible=true;count++;
+    });
+  });
+  var focused=c026FocusKey();
+  return {W:W,H:H,panel:panel,right:right,cx:cx,cy:cy,R:R,nodes:nodes,nodeMap:nodeMap,focus:focused,links:c026Data.links,range:{left:cx-R,top:cy-R,right:W-(cx+R),bottom:H-(cy+R)}};
+}
+var c026Model=c026BuildModel();
+function c026ViewPt(pt,api){
+  var center=api.coord([0,0]);
+  return [center[0]+(pt[0]-center[0])*c026View.zoom+c026View.panX,
+          center[1]+(pt[1]-center[1])*c026View.zoom+c026View.panY];
+}
+function c026Pt(api,theta,r){return c026ViewPt(api.coord([Math.cos(theta)*r,Math.sin(theta)*r]),api);}
+function c026PointWithin(x,y){
+  var m=c026Model;
+  return Number.isFinite(x)&&Number.isFinite(y)&&x>36&&x<m.right-10&&y>150&&y<m.H-76;
+}
+function c026ClampPan(){
+  var max=Math.max(0,c026Model.R*c026View.zoom*1.3);
+  c026View.panX=c026Clamp(c026View.panX,-max,max);
+  c026View.panY=c026Clamp(c026View.panY,-max,max);
+}
+function c026ZoomAt(factor,x,y){
+  var old=c026View.zoom;
+  var next=c026Clamp(old*factor,setting.zoomMin,setting.zoomMax);
+  if(Math.abs(next-old)<.000001)return;
+  var k=next/old,cx=c026Model.cx,cy=c026Model.cy;
+  if(!Number.isFinite(x))x=cx;
+  if(!Number.isFinite(y))y=cy;
+  c026View.panX=(x-cx)*(1-k)+c026View.panX*k;
+  c026View.panY=(y-cy)*(1-k)+c026View.panY*k;
+  c026View.zoom=next;c026ClampPan();
+  c026Redraw();
+}
+function c026ZoomReset(){c026View.zoom=c026Clamp(1,setting.zoomMin,setting.zoomMax);c026View.panX=0;c026View.panY=0;c026Redraw();}
+function c026MouseXY(p){
+  var e=p&&p.event?p.event:p;
+  var x=p&&p.offsetX!=null?p.offsetX:p&&p.zrX!=null?p.zrX:e&&e.offsetX!=null?e.offsetX:e&&e.zrX;
+  var y=p&&p.offsetY!=null?p.offsetY:p&&p.zrY!=null?p.zrY:e&&e.offsetY!=null?e.offsetY:e&&e.zrY;
+  return {x:Number(x),y:Number(y)};
+}
+function c026EdgeItem(params,api){
+  if(params.dataIndex===0&&!c026Instance){var c=c026ResolveChart();if(c)c026BindChart(c);}
+  var e=c026Model.links[params.dataIndex],a=c026Model.nodeMap.get(e.g),b=c026Model.nodeMap.get(e.p);
+  if(!a||!b)return;
+  var from=c026Pt(api,a.theta,.95),to=c026Pt(api,b.theta,.95);
+  var difference=Math.abs(Math.atan2(Math.sin(b.theta-a.theta),Math.cos(b.theta-a.theta)));
+  var m=c026Clamp(setting.bundling + .40*(1-difference/Math.PI),.17,.72);
+  var c1=c026Pt(api,a.theta,m),c2=c026Pt(api,b.theta,m);
+  var f=c026Model.focus,related=f&&c026IsRelated(e,f);
+  var opacity=f?(related?setting.highlightLinkOpacity:setting.fadedLinkOpacity):setting.normalLinkOpacity;
+  var lw=.65+1.25*Math.sqrt(e.weight/c026Data.maxW);
+  return {type:'bezierCurve',shape:{x1:from[0],y1:from[1],x2:to[0],y2:to[1],cpx1:c1[0],cpy1:c1[1],cpx2:c2[0],cpy2:c2[1]},
+    style:{stroke:c026Color(e.group),fill:null,lineWidth:related?lw+1:lw,opacity:opacity,lineCap:'round'},
+    emphasis:{style:{opacity:.9,lineWidth:Math.max(2,lw+1.1)}}};
+}
+// 节点改由 ECharts 原生 scatter 系列绘制：每条节点记录对应一个固定坐标点。
+// 避免在 custom series 中增量重绘 circle/group 时出现残留或重复符号。
+// 自定义贝塞尔曲线仍保留，交互、右侧明细保持不变。
+function c026ScatterData(M){
+  var scale=1.10/Math.max(1,M.R),focus=M.focus;
+  return M.nodes.map(function(n){
+    var adjacent=!focus||n.key===focus||n.entity.edges.some(function(e){return c026IsRelated(e,focus);});
+    var picked=focus===n.key,grp=n.kind==='group';
+    var px=.95*Math.cos(n.theta)*c026View.zoom+c026View.panX*scale;
+    var py=.95*Math.sin(n.theta)*c026View.zoom-c026View.panY*scale;
+    var side=n.labelSide||((Math.cos(n.theta)<-.2)?'left':'right');
+    var shouldLabel=grp||picked||!!n.labelVisible;
+    var display=c026Human(c026Label(n),grp?12:(c026View.zoom>=2?28:c026View.zoom>=1.5?18:c026View.zoom>=1.17?12:8));
+    return {
+      name:c026Label(n),value:[px,py],symbolSize:n.size+(picked?6:0),
+      itemStyle:{color:n.color,opacity:adjacent?1:.19,borderColor:picked?setting.accent:'#FFFFFF',borderWidth:picked?2.5:grp?2.0:1.1},
+      label:{show:shouldLabel,formatter:display,position:side,distance:7,
+        fontSize:grp?12:10,fontWeight:grp?'bold':'normal',
+        color:setting.text,opacity:adjacent?1:.28},
+      emphasis:{scale:false,itemStyle:{opacity:1}},
+      select:{disabled:true}
+    };
+  });
+}
+
+// ===== 05 信息面板与基础元数据 =====
+function c026Text(x,y,text,size,color,bold,extra){return {type:'text',silent:true,style:Object.assign({x:x,y:y,text:String(text),fill:color||setting.text,font:(bold?'600 ':'')+(size||11)+'px '+setting.fontFamily,textAlign:'left',textVerticalAlign:'middle'},extra||{})};}
+function c026Line(x1,y1,x2,y2,color,width){return {type:'line',silent:true,shape:{x1:x1,y1:y1,x2:x2,y2:y2},style:{stroke:color||setting.gridLine,lineWidth:width||1}};}
+function c026TitleGraphics(M){
+  return [
+    {type:'rect',silent:true,shape:{x:24,y:17,width:20,height:4},style:{fill:setting.accent}},
+    c026Text(24,52,setting.title,20,setting.text,true),
+    c026Text(24,81,setting.subtitle,12,setting.secondary,false),
+    c026Text(24,119,c026Num(c026Data.groups.length)+'类客户群  /  '+c026Num(c026Data.products.length)+'款商品  /  '+c026Num(c026Data.links.length)+'条购买关联',13,setting.text,true),
+    c026Line(24,M.H-62,M.W-22,M.H-62,setting.gridLine),
+    c026Text(24,M.H-46,'数据来源：'+setting.sourceText,10,setting.secondary),
+    c026Text(24,M.H-28,'图表说明：'+setting.noteText,10,setting.secondary)
+  ];
+}
+// 单行图例与可点击关系列表：彩色标记、名称、数值三列，永不共用同一横坐标。
+function c026TrimWidth(s,maxPx,size){
+  var txt=String(s),width=0;
+  for(var i=0;i<txt.length;i++){
+    width+=(txt.charCodeAt(i)>255?1:.6)*size;
+    if(width>maxPx-9)return txt.slice(0,Math.max(0,i-1))+'…';
+  }
+  return txt;
+}
+function c026SelectableRow(y,label,sub,key,selected,color){
+  var x=c026Model.right+25;
+  var labelX=x+(color?19:0);
+  var valueRight=c026Model.W-34;
+  var allowed=Math.max(64,valueRight-labelX-75);
+  return {type:'group',onclick:function(){c026Toggle(key);},children:[
+    {type:'rect',shape:{x:x-5,y:y-14,width:valueRight-x+10,height:29,r:3},style:{fill:selected?'#F3F6F8':'rgba(255,255,255,0)'}},
+    ...(color?[{type:'circle',silent:true,shape:{cx:x+5,cy:y,r:4.5},style:{fill:color}}]:[]),
+    c026Text(labelX,y,c026TrimWidth(label,allowed,11),11,selected?setting.accent:setting.text,selected),
+    {type:'text',silent:true,style:{x:valueRight,y:y,text:String(sub),fill:setting.secondary,font:'10px '+setting.fontFamily,textAlign:'right',textVerticalAlign:'middle'}}
+  ]};
+}
+// 右侧迷你横向条形图。通过 ECharts graphic 构建，不需要额外 Grid 或 DOM。
+// 同一面板内共用刻度；客户群概览按最大群规模、具体关联按全样本单条关系最大人数缩放。
+function c026PanelBarRow(M,y,label,valueText,key,color,current,maxValue,active){
+  var left=M.right+25,right=M.W-34,barW=Math.max(65,right-left-4);
+  var barH=c026Clamp(Number(setting.panelBarHeight)||6,3,12);
+  var selected=!!active;
+  var value=Math.max(0,Number(current)||0);
+  var k=c026Clamp(value/Math.max(1,Number(maxValue)||1),0,1);
+  var labelX=left+15;
+  var children=[
+    {type:'rect',silent:true,shape:{x:left-5,y:y-17,width:right-left+10,height:46,r:3},
+      style:{fill:selected?'#F3F6F8':'rgba(255,255,255,0)'}},
+    {type:'circle',silent:true,shape:{cx:left+4,cy:y,r:3.7},style:{fill:color}},
+    c026Text(labelX,y,c026TrimWidth(label,115,11),11,selected?setting.accent:setting.text,selected),
+    {type:'text',silent:true,style:{x:right,y:y,text:String(valueText),fill:setting.secondary,
+      font:'10px '+setting.fontFamily,textAlign:'right',textVerticalAlign:'middle'}}
+  ];
+  if(setting.showPanelBars){
+    children.push({type:'rect',silent:true,shape:{x:left,y:y+13,width:barW,height:barH,r:barH/2},
+      style:{fill:setting.panelTrackColor}});
+    if(value>0)children.push({type:'rect',silent:true,shape:{x:left,y:y+13,width:barW*k,height:barH,r:barH/2},
+      style:{fill:color,opacity:.92}});
+  }
+  // 整行点击，更新左侧选中关系；标记、标签、条形都不吞掉交互。
+  return {type:'group',onclick:function(){c026Toggle(key);},children:children};
+}
+function c026Pct(part,total){return (100*part/Math.max(1,total)).toFixed(2)+'%';}
+function c026Panel(M){
+  var x=M.right+22,panelRight=M.W-23,mid=M.right+25;
+  var items=[c026Line(M.right+8,156,M.right+8,M.H-76),c026Text(mid,171,'客户群—商品关系',14,setting.text,true),c026Line(mid,193,panelRight,193),
+    c026Text(mid,216,'跨群共享商品',11,setting.secondary),
+    c026Text(panelRight-8,216,c026Num(c026Data.shared3)+' 款（≥3群）',12,setting.text,true,{textAlign:'right'})];
+  var sel=M.focus,ent=sel&&(c026Data.groups.find(x=>x.key===sel)||c026Data.products.find(x=>x.key===sel));
+  if(!ent){
+    items.push(c026Text(mid,253,'点击客户群或商品，查看直接购买关系',11,setting.secondary));
+    items.push(c026Text(mid,291,'客户群规模对比',12,setting.text,true));
+    var maxCustomers=Math.max.apply(null,c026Data.groups.map(function(g){return g.size;}));
+    c026Data.groups.forEach(function(g,i){
+      items.push(c026PanelBarRow(M,332+i*51,g.name,c026Num(g.size)+' 人',g.key,c026Color(g.name),g.size,maxCustomers,false));
+    });
+    items.push(c026Line(mid,554,panelRight,554));
+    items.push(c026Text(mid,576,'条形长度：相对最大客户群规模',10,setting.secondary));
+  }else{
+    items.push(c026Text(mid,249,ent.kind==='group'?'已选客户群':'已选商品',11,setting.secondary));
+    items.push(c026Text(mid,279,c026Human(c026Label(ent),18),16,setting.text,true));
+    items.push(c026Text(mid,304,ent.kind==='group'?('样本客户 '+c026Num(ent.size)+' 人'):('SKU '+ent.sku),11,setting.secondary));
+    items.push(c026Line(mid,324,panelRight,324));
+    var edges=ent.edges.slice().sort(function(a,b){return b.weight-a.weight||String(a.sku).localeCompare(String(b.sku));});
+    var yy=Math.min(M.H-103,727);
+    var step=ent.kind==='product'?51:41;
+    var startY=ent.kind==='product'?394:381;
+    var maxRows=Math.max(1,Math.floor((yy-startY-20)/step)+1);
+    var limit=Math.min(edges.length,setting.detailTopCount,maxRows);
+    items.push(c026Text(mid,346,ent.kind==='group'?'关联商品购买人数（前 '+limit+' 项）':'各客户群购买人数及组内占比',11,setting.text,true));
+    if(ent.kind==='product')items.push(c026Text(mid,367,'条长统一按样本单条关系最大 '+c026Num(c026Data.maxW)+' 人计',10,setting.secondary));
+    edges.slice(0,limit).forEach(function(e,i){
+      var target=ent.kind==='group'?c026Data.productMap.get(e.sku):c026Data.groupMap.get(e.group);
+      var label=ent.kind==='group'?c026Label({kind:'product',sku:target.sku,name:target.name}):target.name;
+      var color=ent.kind==='group'?c026Color(ent.name):c026Color(target.name);
+      var base=ent.kind==='group'?ent.size:target.size;
+      var valueText=c026Num(e.weight)+' 人';
+      if(setting.showGroupPurchaseRate && ent.kind==='product')valueText+=' · '+c026Pct(e.weight,base);
+      items.push(c026PanelBarRow(M,startY+i*step,label,valueText,target.key,color,e.weight,c026Data.maxW,false));
+    });
+    if(ent.kind==='product'){
+      var lastY=startY+(limit-1)*step+39;
+      if(lastY<yy-28)items.push(c026Text(mid,lastY,'组内占比 = 购买人数 ÷ 该群样本人数',10,setting.secondary));
+    }
+    if(edges.length>limit){
+      var noteY=startY+limit*step+1;
+      if(noteY<yy-16)items.push(c026Text(mid,noteY,'另有 '+(edges.length-limit)+' 项，悬停圆周节点查看',10,setting.secondary));
+    }
+    items.push({type:'group',onclick:c026Clear,children:[
+      {type:'rect',shape:{x:mid,y:yy,width:88,height:27,r:5},style:{fill:'#FFF6F5',stroke:setting.accent,lineWidth:1}},
+      c026Text(mid+17,yy+14,'清除选择',11,setting.accent)
+    ]});
+  }
+  return items;
+}
+
+// ===== 商品定位：在现有图表 DOM 内创建真实 input，兼容中文拼音 IME =====
+// ECharts 原生 graphic 只能画文本，无法参与中文输入法的 composition 阶段。
+// 本功能仅创建控件，不另行初始化 ECharts、不依赖外部 CSS/HTML 文件。
+var c026FinderDom=null;
+var c026FinderActiveIndex=0;
+var c026FinderComposing=false;
+function c026FinderProducts(){
+  var q=c026S(c026Finder.query).toLocaleLowerCase();
+  return c026Data.products.slice().filter(function(p){
+    if(!q)return true;
+    return (p.sku+' '+p.name+' '+(setting.productAliases[p.sku]||'')).toLocaleLowerCase().indexOf(q)>=0;
+  }).sort(function(a,b){return b.sum-a.sum||a.sku.localeCompare(b.sku,'zh-CN',{numeric:true});});
+}
+function c026FinderChoose(key){
+  var entity=c026Data.productMap.get(String(key).slice(2));
+  if(!entity)return;
+  c026State.selected=key;c026State.hover=null;c026Finder.open=false;
+  c026Finder.query=c026Label(entity);c026FinderActiveIndex=0;
+  // 目标超出当前放大画面时，只复位缩放和平移，不改变各商品环上的角度。
+  if(setting.productFinderAutoResetView){
+    var node=c026Model.nodeMap.get(key);
+    if(node){
+      var x=c026Model.cx+c026Model.R*.95*Math.cos(node.theta)*c026View.zoom+c026View.panX;
+      var y=c026Model.cy-c026Model.R*.95*Math.sin(node.theta)*c026View.zoom+c026View.panY;
+      if(!c026PointWithin(x,y)){
+        c026View.zoom=c026Clamp(1,setting.zoomMin,setting.zoomMax);
+        c026View.panX=0;c026View.panY=0;
+      }
+    }
+  }
+  c026Redraw();
+  if(c026FinderDom&&c026FinderDom.input)c026FinderDom.input.blur();
+}
+function c026FinderOpen(){
+  c026Finder.open=true;c026FinderActiveIndex=0;
+  c026UpdateFinderDom();
+  if(c026FinderDom)c026FinderDom.input.focus();
+}
+function c026CloseFinder(){c026Finder.open=false;c026UpdateFinderDom();}
+function c026FinderStyle(el,properties){Object.keys(properties).forEach(function(k){el.style[k]=properties[k];});return el;}
+function c026FinderMake(doc,tag,className){var el=doc.createElement(tag);if(className)el.className=className;return el;}
+function c026UpdateFinderDom(){
+  var F=c026FinderDom;if(!F||!F.root||!F.root.isConnected)return;
+  var M=c026Model;
+  c026FinderStyle(F.root,{left:(M.right+25)+'px',top:'96px',width:Math.max(140,M.W-M.right-56)+'px'});
+  if(F.input.value!==c026Finder.query&&!c026FinderComposing)F.input.value=c026Finder.query;
+  F.input.setAttribute('aria-expanded',c026Finder.open?'true':'false');
+  F.clear.style.display=c026Finder.query?'block':'none';
+  F.popup.style.display=c026Finder.open?'block':'none';
+  if(!c026Finder.open)return;
+  var matches=c026FinderProducts();
+  c026FinderActiveIndex=c026Clamp(c026FinderActiveIndex,0,Math.max(0,matches.length-1));
+  F.results.replaceChildren();
+  F.summary.textContent=(c026Finder.query?'匹配 '+matches.length+' 款商品':'全部 '+matches.length+' 款商品 · 按购买人数排序');
+  if(!matches.length){
+    var none=c026FinderMake(F.doc,'div');none.textContent='未找到商品，可尝试商品名称、中文别名或 SKU';
+    c026FinderStyle(none,{padding:'14px 10px',fontSize:'11px',color:setting.secondary});
+    F.results.appendChild(none);
+  }
+  matches.forEach(function(p,i){
+    var btn=c026FinderMake(F.doc,'button');btn.type='button';btn.setAttribute('role','option');
+    btn.setAttribute('aria-selected',i===c026FinderActiveIndex?'true':'false');
+    btn.setAttribute('title',p.name+' · '+p.sku);
+    c026FinderStyle(btn,{display:'flex',alignItems:'center',gap:'9px',boxSizing:'border-box',width:'100%',minHeight:'40px',padding:'5px 8px',textAlign:'left',cursor:'pointer',border:'none',outline:'none',background:i===c026FinderActiveIndex?'#F2F6F8':'#FFFFFF',fontFamily:setting.fontFamily});
+    var dot=c026FinderMake(F.doc,'span');c026FinderStyle(dot,{height:'7px',width:'7px',borderRadius:'50%',flex:'0 0 7px',background:c026Color(p.dominant)});
+    var box=c026FinderMake(F.doc,'span');c026FinderStyle(box,{display:'flex',flexDirection:'column',minWidth:'0',flex:'1'});
+    var first=c026FinderMake(F.doc,'span');first.textContent=c026Label(p);c026FinderStyle(first,{fontSize:'11px',fontWeight:'600',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',color:setting.text});
+    var second=c026FinderMake(F.doc,'span');second.textContent=p.sku+' · '+c026Num(p.sum)+' 人  /  '+p.name;
+    c026FinderStyle(second,{fontSize:'10px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',color:setting.secondary});
+    box.appendChild(first);box.appendChild(second);btn.appendChild(dot);btn.appendChild(box);
+    btn.addEventListener('mouseenter',function(){c026FinderActiveIndex=i;});
+    btn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();c026FinderChoose(p.key);});
+    F.results.appendChild(btn);
+  });
+  // 列表滚动，不因每次键入或缩放让输入框失焦。
+}
+function c026MountFinder(instance){
+  if(!setting.productFinder||typeof document==='undefined'||!instance||typeof instance.getDom!=='function')return false;
+  var host=instance.getDom();if(!host||typeof host.appendChild!=='function')return false;
+  if(c026FinderDom&&c026FinderDom.host===host&&c026FinderDom.root&&c026FinderDom.root.isConnected){
+    c026UpdateFinderDom();return true;
+  }
+  // 同一 ECharts 容器上运行新版本时，清理旧版控件及事件。
+  if(host.__c026SearchFinderCleanup)host.__c026SearchFinderCleanup();
+  if(c026FinderDom&&c026FinderDom.cleanup)c026FinderDom.cleanup();
+  var doc=host.ownerDocument||document;
+  if(!host.style.position||host.style.position==='static')host.style.position='relative';
+  var root=c026FinderMake(doc,'div');root.setAttribute('data-c026-search','v0.5.7');
+  c026FinderStyle(root,{position:'absolute',zIndex:'2000',boxSizing:'border-box',fontFamily:setting.fontFamily,pointerEvents:'auto'});
+  var row=c026FinderMake(doc,'div');c026FinderStyle(row,{display:'flex',alignItems:'center',background:'#FFFFFF',height:'36px',border:'1px solid '+setting.gridLine,borderRadius:'5px',boxSizing:'border-box',padding:'0 7px'});
+  var magnifier=c026FinderMake(doc,'span');magnifier.textContent='⌕';magnifier.setAttribute('aria-hidden','true');c026FinderStyle(magnifier,{fontSize:'21px',lineHeight:'21px',color:setting.secondary,marginRight:'5px'});
+  var input=c026FinderMake(doc,'input');input.type='search';input.placeholder='搜索商品名称 / SKU';input.autocomplete='off';input.spellcheck=false;
+  input.setAttribute('aria-label','搜索商品，支持中文名称、英文名称和 SKU');input.setAttribute('aria-controls','c026-product-search-results');input.setAttribute('role','combobox');input.setAttribute('aria-autocomplete','list');input.setAttribute('aria-expanded','false');
+  c026FinderStyle(input,{background:'transparent',border:'none',outline:'none',fontSize:'11px',minWidth:'0',width:'100%',flex:'1',color:setting.text,fontFamily:setting.fontFamily});
+  var clear=c026FinderMake(doc,'button');clear.type='button';clear.textContent='×';clear.setAttribute('aria-label','清空商品搜索');
+  c026FinderStyle(clear,{fontSize:'18px',cursor:'pointer',border:'none',background:'transparent',color:setting.secondary,padding:'0 2px',display:'none'});
+  row.appendChild(magnifier);row.appendChild(input);row.appendChild(clear);root.appendChild(row);
+  var popup=c026FinderMake(doc,'div');popup.id='c026-product-search-results';popup.setAttribute('role','listbox');
+  c026FinderStyle(popup,{display:'none',marginTop:'4px',background:'#FFFFFF',border:'1px solid '+setting.gridLine,borderRadius:'5px',boxShadow:'0 8px 18px rgba(38,50,56,.13)',boxSizing:'border-box',overflow:'hidden'});
+  var summary=c026FinderMake(doc,'div');c026FinderStyle(summary,{padding:'9px 10px',fontSize:'10px',color:setting.secondary,borderBottom:'1px solid '+setting.gridLine});
+  var results=c026FinderMake(doc,'div');c026FinderStyle(results,{maxHeight:(Math.max(3,Number(setting.productFinderMaxVisible)||7)*40)+'px',overflowY:'auto',overscrollBehavior:'contain'});
+  popup.appendChild(summary);popup.appendChild(results);root.appendChild(popup);host.appendChild(root);
+  var outside=function(e){if(root.contains(e.target))return;c026CloseFinder();};
+  var handleInput=function(){if(c026FinderComposing)return;c026Finder.query=input.value;c026FinderActiveIndex=0;c026Finder.open=true;c026UpdateFinderDom();};
+  var compositionStart=function(){c026FinderComposing=true;};
+  var compositionEnd=function(){c026FinderComposing=false;c026Finder.query=input.value;c026FinderActiveIndex=0;c026Finder.open=true;c026UpdateFinderDom();};
+  var handleKey=function(e){
+    if(e.isComposing||c026FinderComposing||e.key==='Process'||e.keyCode===229)return;
+    var matches=c026FinderProducts();
+    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();c026CloseFinder();input.blur();}
+    else if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault();e.stopPropagation();c026Finder.open=true;
+      c026FinderActiveIndex=c026Clamp(c026FinderActiveIndex+(e.key==='ArrowDown'?1:-1),0,Math.max(0,matches.length-1));
+      c026UpdateFinderDom();var btn=results.children[c026FinderActiveIndex];if(btn&&btn.scrollIntoView)btn.scrollIntoView({block:'nearest'});
+    }else if(e.key==='Enter'&&c026Finder.open){
+      e.preventDefault();e.stopPropagation();if(matches.length)c026FinderChoose(matches[c026FinderActiveIndex].key);
+    }else e.stopPropagation();
+  };
+  var keepEvents=function(e){e.stopPropagation();};
+  input.addEventListener('focus',c026FinderOpen);input.addEventListener('input',handleInput);
+  input.addEventListener('compositionstart',compositionStart);input.addEventListener('compositionend',compositionEnd);
+  input.addEventListener('keydown',handleKey);
+  clear.addEventListener('click',function(e){e.stopPropagation();c026Finder.query='';input.value='';c026FinderActiveIndex=0;c026Finder.open=true;c026UpdateFinderDom();input.focus();});
+  root.addEventListener('wheel',keepEvents);root.addEventListener('pointerdown',keepEvents);
+  doc.addEventListener('pointerdown',outside);
+  var cleanup=function(){doc.removeEventListener('pointerdown',outside);if(root.parentNode)root.parentNode.removeChild(root);if(host.__c026SearchFinderCleanup===cleanup)delete host.__c026SearchFinderCleanup;};
+  host.__c026SearchFinderCleanup=cleanup;
+  c026FinderDom={host:host,doc:doc,root:root,row:row,input:input,clear:clear,popup:popup,summary:summary,results:results,cleanup:cleanup};
+  c026UpdateFinderDom();return true;
+}
+function c026FinderGraphics(){return [];}// HTML 搜索框覆盖此位置，无重复 ECharts graphic 搜索条。
+
+function c026RichTooltip(params){
+  var n,e;if(params.seriesId==='c026-nodes'){
+    n=c026Model.nodes[Number(params.dataIndex)];if(!n)return '';
+    var label=c026Esc(c026Label(n)),entity=n.entity;
+    var main=n.kind==='group'?('群组客户数：'+c026Num(entity.size)+'人'):('购买样本客户：'+c026Num(entity.sum)+'人');
+    var rows=entity.edges.slice().sort(function(a,b){return b.weight-a.weight;}).slice(0,6).map(function(r){
+      var other=n.kind==='group'?c026Data.productMap.get(r.sku):c026Data.groupMap.get(r.group);
+      return '<div style="display:flex;justify-content:space-between;gap:18px;margin:3px 0"><span>'+c026Esc(c026Human(c026Label(other),27))+'</span><strong>'+c026Num(r.weight)+'人</strong></div>';
+    }).join('');
+    return '<div style="font-weight:700;color:#263238;margin-bottom:8px">'+label+'</div><div style="border-top:1px solid #E5E9ED;padding-top:7px;color:#8493A2">'+main+'</div><div style="border-top:1px solid #E5E9ED;margin-top:7px;padding-top:5px;color:#263238">'+rows+'</div>';
+  }
+  if(params.seriesId==='c026-edges'){
+    e=c026Data.links[Number(params.value[0])];if(!e)return '';
+    var product=c026Data.productMap.get(e.sku);
+    return '<strong>'+c026Esc(e.group)+'</strong><div style="margin:7px 0;color:#8493A2">×</div><strong>'+c026Esc(c026Label({kind:'product',sku:product.sku,name:product.name}))+'</strong><hr style="border:0;border-top:1px solid #E5E9ED"><div>购买该商品的不同客户：<strong>'+c026Num(e.weight)+' 人</strong></div><div style="color:#8493A2;font-size:11px;margin-top:5px">原始商品：'+c026Esc(c026Human(product.name,36))+'</div>';
+  }
+  return '';
+}
+function c026BuildOption(){
+  c026Model=c026BuildModel();
+  var M=c026Model;
+  var err=M.W<setting.minWidth||M.H<setting.minHeight;
+  if(err)return {backgroundColor:setting.background,graphic:[c026Text(24,34,'画布较小，建议宽度至少 '+setting.minWidth+'px，高度至少 '+setting.minHeight+'px。',14,setting.accent,true)]};
+  return {
+    backgroundColor:setting.background,animation:false,
+    grid:{left:M.range.left,right:M.range.right,top:M.range.top,bottom:M.range.bottom,containLabel:false},
+    xAxis:{type:'value',min:-1.10,max:1.10,show:false},
+    yAxis:{type:'value',min:-1.10,max:1.10,show:false},
+    tooltip:{trigger:'item',confine:true,appendToBody:false,backgroundColor:'#FFFFFF',borderColor:setting.gridLine,borderWidth:1,
+      textStyle:{fontFamily:setting.fontFamily,fontSize:12,color:setting.text},padding:[11,13],extraCssText:'box-shadow:0 6px 20px rgba(38,50,56,.1);max-width:360px;',formatter:c026RichTooltip},
+    series:[
+      {id:'c026-edges',name:'客户群与商品的实际购买关联',type:'custom',coordinateSystem:'cartesian2d',silent:false,z:1,
+        renderItem:c026EdgeItem,data:M.links.map(function(e,i){return [i];}),tooltip:{show:true}},
+      {id:'c026-nodes',name:'客户群与商品节点',type:'scatter',coordinateSystem:'cartesian2d',
+        z:4,silent:false,clip:false,animation:false,emphasis:{scale:false},
+        data:c026ScatterData(M),tooltip:{show:true}}
+    ],
+    graphic:[].concat(c026TitleGraphics(M),c026Panel(M),c026FinderGraphics(M))
+  };
+}
+// ===== 06 交互：原始节点角度固定；视图缩放和平移只改变绘制坐标 =====
+function c026Redraw(){var c=c026ResolveChart();option=c026BuildOption();if(c)c.setOption(option,{notMerge:true,lazyUpdate:false,silent:true});c026UpdateFinderDom();}
+function c026Toggle(key){if(!key)return;c026State.selected=(c026State.selected===key?null:key);c026State.hover=null;c026Redraw();}
+function c026Clear(){c026State.selected=null;c026State.hover=null;c026Redraw();}
+function c026BindChart(instance){
+  if(!instance||typeof instance.setOption!=='function')return false;
+  if(c026Instance===instance&&instance.__c026Bound_v057){c026MountFinder(instance);return true;}
+  c026Instance=instance;
+  if(instance.__c026Handlers_v050){
+    instance.off('click',instance.__c026Handlers_v050.click);
+    instance.off('mouseover',instance.__c026Handlers_v050.over);
+    instance.off('mouseout',instance.__c026Handlers_v050.out);
+  }
+  ['__c026Handlers_v051','__c026Handlers_v052','__c026Handlers_v053','__c026Handlers_v054','__c026Handlers_v055','__c026Handlers_v056','__c026Handlers_v057'].forEach(function(versionKey){
+    var previous=instance[versionKey];
+    if(!previous)return;
+    instance.off('click',previous.click);
+    instance.off('mouseover',previous.over);
+    instance.off('mouseout',previous.out);
+    var oldZr=instance.getZr&&instance.getZr();
+    if(oldZr&&previous.zr)Object.keys(previous.zr).forEach(function(k){oldZr.off(k,previous.zr[k]);});
+  });
+  var drag={active:false,x:0,y:0};
+  var handlers={
+    click:function(p){if(p.seriesId==='c026-nodes'){
+      var nd=c026Model.nodes[Number(p.dataIndex)];if(nd)c026Toggle(nd.key);
+    }},
+    over:function(p){if(!setting.enableHoverFocus||c026State.selected||p.seriesId!=='c026-nodes')return;
+      var nd=c026Model.nodes[Number(p.dataIndex)];if(nd&&nd.key!==c026State.hover){c026State.hover=nd.key;c026Redraw();}},
+    out:function(p){if(!setting.enableHoverFocus||c026State.selected||!c026State.hover)return;
+      if(p.seriesId==='c026-nodes'){c026State.hover=null;c026Redraw();}}
+  };
+  handlers.zr={
+    mousewheel:function(e){
+      if(!setting.enableWheelZoom)return;
+      var pt=c026MouseXY(e);if(!c026PointWithin(pt.x,pt.y))return;
+      var delta=Number(e&&e.wheelDelta);
+      if(!Number.isFinite(delta)||!delta)delta=Number(e&&e.zrDelta!=null?e.zrDelta:e&&e.event&&e.event.zrDelta);
+      if(!Number.isFinite(delta)||!delta)delta=-(Number(e&&e.deltaY!=null?e.deltaY:e&&e.event&&e.event.deltaY)||0);
+      if(!delta)return;
+      if(e.event&&typeof e.event.preventDefault==='function')e.event.preventDefault();
+      c026ZoomAt(delta>0?setting.zoomStep:1/setting.zoomStep,pt.x,pt.y);
+    },
+    mousedown:function(e){
+      var pt=c026MouseXY(e),ev=e&&e.event;
+      if(!setting.enableDragPan||!c026PointWithin(pt.x,pt.y))return;
+      if(ev&&ev.button!=null&&ev.button!==0)return;
+      if(e&&e.target)return; // 在节点或连线上按下仍正常响应点击，不触发平移
+      drag.active=true;drag.x=pt.x;drag.y=pt.y;
+    },
+    mousemove:function(e){
+      if(!drag.active)return;
+      var pt=c026MouseXY(e),dx=pt.x-drag.x,dy=pt.y-drag.y;
+      if(!Number.isFinite(dx)||!Number.isFinite(dy))return;
+      if(!dx&&!dy)return;
+      drag.x=pt.x;drag.y=pt.y;
+      c026View.panX+=dx;c026View.panY+=dy;c026ClampPan();c026Redraw();
+    },
+    mouseup:function(){drag.active=false;},
+    globalout:function(){drag.active=false;}
+  };
+  instance.on('click',handlers.click);instance.on('mouseover',handlers.over);instance.on('mouseout',handlers.out);
+  var zr=instance.getZr&&instance.getZr();
+  if(zr&&typeof zr.on==='function')Object.keys(handlers.zr).forEach(function(k){zr.on(k,handlers.zr[k]);});
+  // 清理 v0.5.6 的模拟搜索键盘监听，输入框使用浏览器原生输入法事件。
+  var dom=typeof instance.getDom==='function'?instance.getDom():null;
+  if(dom&&dom.__c026FinderKeyboard){
+    dom.removeEventListener('keydown',dom.__c026FinderKeyboard.key);
+    dom.removeEventListener('paste',dom.__c026FinderKeyboard.paste);
+    delete dom.__c026FinderKeyboard;
+  }
+  c026MountFinder(instance);
+  instance.__c026Handlers_v057=handlers;instance.__c026Bound_v057=true;
+  return true;
+}
+option=c026BuildOption();
+// 交互对接说明：
+// 1. ECharts 官方编辑器可尝试自动找到 myChart；其他宿主如有 chart、chartInstance、echartsInstance 也自动识别。
+// 2. 在 ECharts for Power BI 中先直接运行并实测点击、滚轮、拖拽；是否暴露 ECharts 实例由视觉对象实现决定。
+// 3. 若仅显示静态图而无法交互，请在视觉对象可访问的实例初始化/更新代码中调用 c026BindChart(instance)，
+//    或通过 setting.chartInstance 指定图表实例。不要仅通过修改 option 假设能自动绑定实例事件。
+// 4. 选中后右侧详情属于图内交互；它不是 Power BI 报表的跨视觉对象筛选。
+// 注意：鼠标滚轮缩放与拖拽平移依赖上述实例绑定，画布上不再显示额外按钮。
+var c026InitialChart=c026ResolveChart();if(c026InitialChart)c026BindChart(c026InitialChart);
+
+// 商品定位：右侧原生 input，可使用中文拼音候选字、英文商品名和 SKU。
+// Power BI 中需要可访问的 ECharts 实例，且视觉对象的沙箱允许在图表 DOM 内添加输入控件。

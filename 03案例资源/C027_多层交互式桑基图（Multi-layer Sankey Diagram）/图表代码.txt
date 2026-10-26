@@ -1,0 +1,350 @@
+﻿// ===== 01 输入数据：严格保持三个平行的一维数组 =====
+// 在 Power BI 中按实际字段绑定顺序分别替换以下数组，不要输入对象数组。
+var 来源节点 = ["Solar","Solar","Solar","Solar","Nuclear","Hydro","Wind","Geothermal","Geothermal","Geothermal","Natural Gas","Natural Gas","Natural Gas","Natural Gas","Natural Gas","Coal","Coal","Coal","Biomass","Biomass","Biomass","Biomass","Biomass","Petroleum","Petroleum","Petroleum","Petroleum","Petroleum","Net Electricity Imports","Electricity Generation","Electricity Generation","Electricity Generation","Electricity Generation","Electricity Generation","Residential","Residential","Commercial","Commercial","Industrial","Industrial","Transportation","Transportation"];
+var 目标节点 = ["Electricity Generation","Residential","Commercial","Industrial","Electricity Generation","Electricity Generation","Electricity Generation","Electricity Generation","Residential","Commercial","Electricity Generation","Residential","Commercial","Industrial","Transportation","Electricity Generation","Commercial","Industrial","Electricity Generation","Residential","Commercial","Industrial","Transportation","Electricity Generation","Residential","Commercial","Industrial","Transportation","Electricity Generation","Residential","Commercial","Industrial","Transportation","Rejected Energy","Rejected Energy","Energy Services","Rejected Energy","Energy Services","Rejected Energy","Energy Services","Rejected Energy","Energy Services"];
+var 流量值 = [0.75,0.26,0.08,0.02,8.17,0.83,1.54,0.05,0.04,0.02,13.94,4.58,3.46,10.9,1.39,7.01,0.01,0.85,0.32,0.37,0.17,2.36,1.89,0.17,0.92,0.8,8.73,24.97,0.01,5.06,4.95,3.53,0.02,19.21,3.93,7.3,3.32,6.17,13.46,12.93,22.35,5.94];
+
+// ===== 02 用户配置：可自定义的样式和行为均集中在此 =====
+var setting = {
+  title: '美国2024年能源流向：哪些能源最终变成了有效服务？',
+  subtitle: '一次能源 → 发电与终端部门 → 能源去向  ·  单位：Quads（千万亿英热单位）',
+  sourceText: 'LLNL《United States Energy Consumption in 2024》；流向明细来自 Stanford Understand Energy',
+  noteText: '连线宽度=流量；前段按能源来源着色，最终流向按去向着色；服务/未利用属模型估计；独立四舍五入或有微差。',
+  unit: 'Quads',
+  fallbackWidth: 1280,
+  fallbackHeight: 820,
+  // 编辑器通常能访问 myChart；Power BI 如不能自动识别，初始化后显式调用 c027BindChart(instance)
+  chartInstance: null,
+  chartLeft: 116,
+  chartTop: 203,
+  chartBottom: 118,
+  chartRightNoPanel: 144,  // 全宽布局仍为末列节点文字预留空间
+  nodeWidth: 14,
+  nodeGap: 15,
+  nodeRound: 2,
+  labelFontSize: 11,
+  showNodeValue: false,
+  minLabelValue: 0.08,          // 极小数值的节点只在 Tooltip 显示
+  layoutIterations: 0,        // 固定节点顺序，不运行松弛优化导致的重排
+  nodeAlign: 'justify',
+  draggable: false,          // 不允许拖动节点改变拓扑位置
+  lineCurveness: 0.47,
+  normalLinkOpacity: 0.38,
+  fadedLinkOpacity: 0.16,  // 选中/悬停时非关联连线：保留结构上下文
+  highlightLinkOpacity: 0.9,
+  fadedNodeOpacity: 0.34,  // 选中/悬停时非关联节点：保持可辨认
+  enableClickLock: true,
+  enableHoverFocus: true,
+  maxWidthForTooltip: 360,
+  totalDigits: 1,
+  valueDigits: 2,
+  text: '#263238',
+  secondary: '#8493A2',
+  divider: '#E5E9ED',
+  accent: '#D9544D',
+  background: 'transparent',
+  neutralBar: '#BFC6CE',
+  // 这组色彩属于本能源案例的类别语义，全部可编辑；未知类别用 fallbackColors 顺序区分。
+  nodeColors: {
+    'Solar': '#D4AD56', 'Nuclear': '#BE706B', 'Hydro': '#5B93B5',
+    'Wind': '#9C7BA9', 'Geothermal': '#A48A6D', 'Natural Gas': '#4D98B8',
+    'Coal': '#727E89', 'Biomass': '#6BA681', 'Petroleum': '#43836C',
+    'Net Electricity Imports': '#B3BAC1', 'Electricity Generation': '#D29A58',
+    'Residential': '#C28A98', 'Commercial': '#C28A98',
+    'Industrial': '#C28A98', 'Transportation': '#C28A98',
+    'Rejected Energy': '#AEB7C1', 'Energy Services': '#528977'
+  },
+  fallbackColors: ['#4B7290','#B77E5A','#4D8D7C','#8B77A5','#6296A9','#9EAD85'],
+  // 名称、层级可以替换为任何领域；算法与数据解耦
+  nodeAliases: {
+    'Solar':'太阳能', 'Nuclear':'核能', 'Hydro':'水电', 'Wind':'风能',
+    'Geothermal':'地热', 'Natural Gas':'天然气', 'Coal':'煤炭',
+    'Biomass':'生物质能', 'Petroleum':'石油', 'Net Electricity Imports':'净电力进口',
+    'Electricity Generation':'发电环节', 'Residential':'居民部门',
+    'Commercial':'商业部门', 'Industrial':'工业部门', 'Transportation':'交通运输',
+    'Rejected Energy':'未利用能量', 'Energy Services':'有效能源服务'
+  },
+  // 4列层级。换业务时自行编辑或留空让算法自动计算（默认四列适用于本示例）。
+  nodeDepth: {
+    'Solar':0,'Nuclear':0,'Hydro':0,'Wind':0,'Geothermal':0,
+    'Natural Gas':0,'Coal':0,'Biomass':0,'Petroleum':0,'Net Electricity Imports':0,
+    'Electricity Generation':1,
+    'Residential':2,'Commercial':2,'Industrial':2,'Transportation':2,
+    'Rejected Energy':3,'Energy Services':3
+  },
+  terminalNames: ['Rejected Energy','Energy Services'],
+  // 可定制指标角色；替换为其他业务时可用新的终点名称或清空
+  primaryOutcome: 'Energy Services',
+  secondaryOutcome: 'Rejected Energy',
+  headlineUnit: 'Quads'
+};
+
+// ===== 03 通用流向数据解析、校验与聚合（无领域数字常量） =====
+function c027Txt(v){return v == null ? '' : String(v).trim();}
+function c027Esc(v){return c027Txt(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function c027Round(v, n){return Number(Number(v).toFixed(n));}
+function c027Fmt(v, n){var p=(n==null?setting.valueDigits:n); return Number(v||0).toLocaleString('zh-CN',{minimumFractionDigits:p,maximumFractionDigits:p});}
+function c027Pct(n,d){return d>0?(n*100/d).toFixed(1)+'%':'—';}
+function c027Fail(x){throw Error('C027 输入错误：'+x);}
+function c027Color(name,index){return setting.nodeColors[name] || setting.fallbackColors[index % setting.fallbackColors.length];}
+function c027Label(name){return setting.nodeAliases[name] || name;}
+function c027GetChart(){
+  function valid(x){return x&&typeof x.setOption==='function'&&!(typeof x.isDisposed==='function'&&x.isDisposed());}
+  if(valid(c027Chart))return c027Chart;
+  if(valid(setting.chartInstance))return setting.chartInstance;
+  if(typeof myChart!=='undefined'&&valid(myChart))return myChart;
+  if(typeof chartInstance!=='undefined'&&valid(chartInstance))return chartInstance;
+  if(typeof chart!=='undefined'&&valid(chart))return chart;
+  if(typeof echartsInstance!=='undefined'&&valid(echartsInstance))return echartsInstance;
+  return null;
+}
+function c027BuildData(){
+  var arr=[来源节点,目标节点,流量值];
+  if(arr.some(function(a){return !Array.isArray(a);})){c027Fail('3个字段必须为一维数组。');}
+  if(!arr[0].length||arr.some(function(a){return a.length!==arr[0].length;})){c027Fail('3个数组必须非空且长度相同。');}
+  var map=new Map(), links=[],seen=new Set();
+  function node(n){if(!map.has(n))map.set(n,{name:n,input:0,output:0,inlinks:[],outlinks:[]});return map.get(n);}
+  for(var i=0;i<arr[0].length;i++){
+    var a=c027Txt(来源节点[i]),b=c027Txt(目标节点[i]),v=Number(流量值[i]);
+    if(!a||!b||a===b)c027Fail('第'+(i+1)+'行来源/目标为空或构成自环。');
+    if(!Number.isFinite(v)||v<=0)c027Fail('第'+(i+1)+'行流量必须为正数。');
+    var key=JSON.stringify([a,b]);if(seen.has(key))c027Fail('第'+(i+1)+'行的来源—目标重复，请先聚合。');
+    seen.add(key);var s=node(a),t=node(b),edge={source:a,target:b,value:v,index:i};
+    s.output+=v;t.input+=v;s.outlinks.push(edge);t.inlinks.push(edge);links.push(edge);
+  }
+  // 使用 Kahn 算法检查有向无环图，防止错误数据导致 Sankey 运行失败。
+  var degree=new Map(),queue=[],visited=0;
+  map.forEach(function(n){degree.set(n.name,n.inlinks.length);if(n.inlinks.length===0)queue.push(n.name);});
+  while(queue.length){var k=queue.shift();visited++;map.get(k).outlinks.forEach(function(e){var next=degree.get(e.target)-1;degree.set(e.target,next);if(next===0)queue.push(e.target);});}
+  if(visited!==map.size)c027Fail('流向数据存在环路。桑基图要求无环，请先处理循环流。');
+  var all=Array.from(map.values());
+  // 默认按初次出现排序；如果提供 nodeDepth，优先遵循设置的层级。
+  var order=new Map(all.map(function(n,i){return[n.name,i];}));
+  var fallbackDepth=new Map();
+  function depthOf(k){
+    if(fallbackDepth.has(k))return fallbackDepth.get(k);
+    var nd=map.get(k),d=0;if(nd)nd.inlinks.forEach(function(e){d=Math.max(d,depthOf(e.source)+1);});
+    fallbackDepth.set(k,d);return d;
+  }
+  var maxDepth=0;
+  all.forEach(function(n){n.depth=Number.isInteger(setting.nodeDepth[n.name])?setting.nodeDepth[n.name]:depthOf(n.name);maxDepth=Math.max(maxDepth,n.depth);});
+  links.forEach(function(e){if(map.get(e.target).depth<=map.get(e.source).depth)c027Fail('层级冲突：'+e.source+' → '+e.target+'；请调整 setting.nodeDepth。');});
+  // nodes 原始顺序决定 layoutIterations=0 时的上下位置；保持初次出现，减少重排。
+  var originals=all.filter(function(n){return n.inlinks.length===0;});
+  var originTotal=originals.reduce(function(v,n){return v+n.output;},0);
+  var endpoints=all.filter(function(n){return n.outlinks.length===0;});
+  var endpointTotal=endpoints.reduce(function(v,n){return v+n.input;},0);
+  var primary=map.get(setting.primaryOutcome),secondary=map.get(setting.secondaryOutcome);
+  return {map:map, nodes:all,links:links,originals:originals,endpoints:endpoints,originTotal:originTotal,endpointTotal:endpointTotal,
+    primary:primary,secondary:secondary,maxDepth:maxDepth,order:order};
+}
+var c027Data=c027BuildData();
+var c027State={selected:null}; // {kind:'node',name:string} 或 {kind:'edge',index:number}
+var c027Chart=null;
+function c027SelectionGraph(){
+  var sel=c027State.selected,D=c027Data;
+  if(!sel)return null;
+  var nodes=new Set(),edges=new Set();
+  if(sel.kind==='edge'){
+    var only=D.links[sel.index];if(!only)return null;
+    nodes.add(only.source);nodes.add(only.target);edges.add(only.index);
+    return {nodes:nodes,edges:edges};
+  }
+  if(!D.map.has(sel.name))return null;
+  nodes.add(sel.name);
+  // 对所选节点执行上游+下游递归：高亮完整流向链，而不是仅突出直接相邻节点。
+  var backward=[sel.name],forward=[sel.name],seenB=new Set(),seenF=new Set();
+  while(backward.length){var a=backward.pop();if(seenB.has(a))continue;seenB.add(a);D.map.get(a).inlinks.forEach(function(e){edges.add(e.index);nodes.add(e.source);backward.push(e.source);});}
+  while(forward.length){var b=forward.pop();if(seenF.has(b))continue;seenF.add(b);D.map.get(b).outlinks.forEach(function(e){edges.add(e.index);nodes.add(e.target);forward.push(e.target);});}
+  return {nodes:nodes,edges:edges};
+}
+function c027RichTooltip(p){
+  var D=c027Data;
+  if(p.dataType==='edge'){
+    var d=p.data||{},from=D.map.get(d.source),to=D.map.get(d.target);
+    if(!from||!to)return '';
+    return '<div style="font-size:13px;font-weight:700;color:#263238">'+c027Esc(c027Label(d.source))+' <span style="color:#8493A2">→</span> '+c027Esc(c027Label(d.target))+'</div>'+
+      '<div style="margin-top:9px;border-top:1px solid #E5E9ED;padding-top:9px">流量 <strong style="float:right">'+c027Fmt(d.value)+' '+c027Esc(setting.unit)+'</strong></div>'+
+      '<div style="margin-top:5px;color:#8493A2">占来源总流出 <b style="float:right;color:#263238">'+c027Pct(d.value,from.output)+'</b></div>'+
+      '<div style="margin-top:5px;color:#8493A2">占目标总流入 <b style="float:right;color:#263238">'+c027Pct(d.value,to.input)+'</b></div>';
+  }
+  if(p.dataType==='node'){
+    var name=p.data&&p.data.name,nd=D.map.get(name);if(!nd)return '';
+    var side=(nd.input>0&&nd.output>0)?Math.max(nd.input,nd.output):nd.input||nd.output;
+    var arr=nd.outlinks.length?nd.outlinks:nd.inlinks;
+    var sorted=arr.slice().sort(function(a,b){return b.value-a.value;}).slice(0,5);
+    return '<div style="font-size:14px;font-weight:700;color:#263238">'+c027Esc(c027Label(name))+'</div>'+
+      '<div style="padding:9px 0 7px;border-bottom:1px solid #E5E9ED">节点规模：<b>'+c027Fmt(side)+' '+c027Esc(setting.unit)+'</b></div>'+
+      (nd.input>0?'<div style="margin-top:7px;color:#8493A2">总流入：'+c027Fmt(nd.input)+'</div>':'')+
+      (nd.output>0?'<div style="margin-top:4px;color:#8493A2">总流出：'+c027Fmt(nd.output)+'</div>':'')+
+      sorted.map(function(x){var label=nd.outlinks.length?x.target:x.source;return '<div style="display:flex;justify-content:space-between;gap:18px;margin-top:6px"><span>'+c027Esc(c027Label(label))+'</span><b>'+c027Fmt(x.value)+'</b></div>';}).join('')+
+      '<div style="font-size:11px;color:#8493A2;margin-top:8px">点击节点可固定高亮整条上、下游链路</div>';
+  }
+  return '';
+}
+// ===== 04 无侧栏的全宽像素布局（自动响应容器宽高） =====
+function c027Size(){
+  var c=c027GetChart(),w=c&&typeof c.getWidth==='function'?c.getWidth():setting.fallbackWidth,
+     h=c&&typeof c.getHeight==='function'?c.getHeight():setting.fallbackHeight;
+  return {w:Math.max(1,Number(w)||setting.fallbackWidth),h:Math.max(1,Number(h)||setting.fallbackHeight)};
+}
+function c027Layout(){
+  var sz=c027Size(),w=sz.w,h=sz.h;
+  // 为左右节点标签留下完整的像素空间，不创建右侧详情面板。
+  var left=w<950?Math.max(88,Math.round(w*0.11)):setting.chartLeft;
+  var right=w<900?Math.max(78,Math.round(w*0.14)):setting.chartRightNoPanel;
+  var top=Math.max(166,Math.min(setting.chartTop,Math.round(h*0.26)));
+  var bottom=Math.max(78,Math.min(setting.chartBottom,Math.round(h*0.15)));
+  return {w:w,h:h,left:left,right:right,top:top,bottom:bottom,
+    chartW:w-left-right,chartH:h-top-bottom};
+}
+function c027Text(x,y,text,size,color,weight,extra){return {type:'text',silent:true,style:Object.assign({x:x,y:y,text:String(text),fill:color||setting.text,font:(weight||400)+' '+(size||12)+'px sans-serif',textAlign:'left',textVerticalAlign:'top'},extra||{})};}
+function c027Rect(x,y,w,h,color,r){return {type:'rect',silent:true,shape:{x:x,y:y,width:w,height:h,r:r||0},style:{fill:color}};}
+function c027Line(x,y,w){return c027Rect(x,y,w,1,setting.divider,0);}
+function c027Header(L){
+  var a=[];
+  a.push(c027Rect(25,12,20,4,setting.accent,0));
+  a.push(c027Text(25,34,setting.title,L.w<950?17:20,setting.text,700));
+  a.push(c027Text(25,69,setting.subtitle,11,setting.secondary,400));
+  if(L.w>=1120){
+    a.push(c027Text(L.w-25,107,'悬停查看明细 · 点击锁定 · 点击空白清除',10,setting.secondary,400,{textAlign:'right'}));
+  }
+  if(L.w>=1000){
+    a.push(c027Text(25,106,'能源消费',11,setting.secondary));
+    a.push(c027Text(92,103,c027Fmt(c027Data.originTotal,setting.totalDigits)+' '+setting.headlineUnit,14,setting.text,700));
+    if(c027Data.primary){
+      a.push(c027Text(319,106,'有效能源服务',11,setting.secondary));
+      a.push(c027Text(418,103,c027Pct(c027Data.primary.input,c027Data.originTotal),14,c027Color(c027Data.primary.name,0),700));
+    }
+    if(c027Data.secondary){
+      a.push(c027Text(550,106,'未利用能量',11,setting.secondary));
+      a.push(c027Text(635,103,c027Pct(c027Data.secondary.input,c027Data.originTotal),14,setting.text,700));
+    }
+  }else{
+    a.push(c027Text(25,105,'总能源 '+c027Fmt(c027Data.originTotal,1)+' '+setting.headlineUnit,12,setting.text,600));
+  }
+  a.push(c027Text(L.left,144,'能源来源',11,setting.secondary,600));
+  var chartRight=L.w-L.right;
+  a.push(c027Text(L.left+L.chartW*0.32,144,'电力转换',11,setting.secondary,600));
+  a.push(c027Text(L.left+L.chartW*0.64,144,'使用部门',11,setting.secondary,600));
+  a.push(c027Text(chartRight-70,144,'最终去向',11,setting.secondary,600));
+  a.push(c027Line(25,L.h-61,L.w-50));
+  a.push(c027Text(25,L.h-49,'数据来源：'+setting.sourceText,10,setting.secondary,400));
+  a.push(c027Text(25,L.h-31,'图表说明：'+setting.noteText,10,setting.secondary,400));
+  return a;
+}
+function c027BuildSeries(){
+  var D=c027Data,selection=c027SelectionGraph(),maxDepth=D.maxDepth;
+  var nodes=D.nodes.map(function(n,index){
+    var active=!selection||selection.nodes.has(n.name),low=Math.max(n.input,n.output),depth=n.depth;
+    var color=c027Color(n.name,index);
+    var pos=depth===0?'left':'right';
+    return {name:n.name,depth:depth,value:low,itemStyle:{color:color,borderWidth:0,borderRadius:setting.nodeRound,opacity:active?1:setting.fadedNodeOpacity},
+      label:{show:low>=setting.minLabelValue,position:pos,distance:6,color:active?setting.text:'#9EABB5',fontSize:setting.labelFontSize,
+        fontWeight:selection&&active?600:500,formatter:(setting.showNodeValue?c027Label(n.name)+' '+c027Fmt(low,1):c027Label(n.name))}};
+  });
+  var links=D.links.map(function(e){
+    var on=!selection||selection.edges.has(e.index);
+    // 来源节点决定前两段的颜色；进入末端结果的连线改用中性灰色。
+    var sourceDepth=D.map.get(e.source).depth;
+    var color=sourceDepth>=2?c027Color(e.target,0):c027Color(e.source,D.order.get(e.source));
+    return {source:e.source,target:e.target,value:e.value,lineStyle:{color:color,opacity:selection?(on?setting.highlightLinkOpacity:setting.fadedLinkOpacity):setting.normalLinkOpacity}};
+  });
+  return {id:'c027-main',name:'能源流向',type:'sankey',orient:'horizontal',nodeAlign:setting.nodeAlign,
+    draggable:setting.draggable,layoutIterations:setting.layoutIterations,
+    left:c027Layout().left,right:c027Layout().right,top:c027Layout().top,bottom:c027Layout().bottom,
+    nodeWidth:setting.nodeWidth,nodeGap:setting.nodeGap,
+    animation:true,animationDuration:650,animationDurationUpdate:220,
+    label:{color:setting.text,fontSize:setting.labelFontSize,fontFamily:'sans-serif'},
+    lineStyle:{curveness:setting.lineCurveness,opacity:setting.normalLinkOpacity,color:'source'},
+    emphasis:{focus:setting.enableHoverFocus?'adjacency':'none',lineStyle:{opacity:0.9}},
+    blur:{itemStyle:{opacity:setting.fadedNodeOpacity},lineStyle:{opacity:setting.fadedLinkOpacity},label:{opacity:0.60}},
+    data:nodes,links:links};
+}
+function c027BuildOption(){
+  var L=c027Layout();
+  if(L.w<650||L.h<480){return {backgroundColor:'transparent',graphic:[c027Rect(25,14,20,4,setting.accent),c027Text(25,35,'请将画布增大至至少 650 × 480 px',15,setting.text,600)]};}
+  return {backgroundColor:setting.background,animation:true,
+    tooltip:{trigger:'item',confine:true,appendToBody:false,backgroundColor:'#FFFFFF',borderColor:setting.divider,borderWidth:1,
+      padding:[11,13],textStyle:{color:setting.text,fontSize:12},extraCssText:'box-shadow:0 8px 20px rgba(38,50,56,.12);max-width:'+setting.maxWidthForTooltip+'px',formatter:c027RichTooltip},
+    series:[c027BuildSeries()],graphic:c027Header(L)};
+}
+function c027Redraw(){option=c027BuildOption();var c=c027GetChart();if(c)c.setOption(option,{notMerge:true,lazyUpdate:false,silent:true});}
+function c027ToggleNode(name){if(!setting.enableClickLock)return;c027State.selected=(c027State.selected&&c027State.selected.kind==='node'&&c027State.selected.name===name)?null:{kind:'node',name:name};c027Redraw();}
+function c027ToggleLink(index){if(!setting.enableClickLock)return;c027State.selected=(c027State.selected&&c027State.selected.kind==='edge'&&c027State.selected.index===index)?null:{kind:'edge',index:index};c027Redraw();}
+function c027ClearSelection(){c027State.selected=null;c027Redraw();}
+// ===== 05 旧案例兼容清理：仅作用于当前 ECharts 实例，不操作页面其他图表 =====
+function c027CleanupLegacyC026(instance){
+  if(!instance)return;
+  var host=typeof instance.getDom==='function'?instance.getDom():null;
+  if(host){
+    // C026 v0.5.7 保存了完整销毁回调：同时移除搜索框和 document 级别的指针监听。
+    if(typeof host.__c026SearchFinderCleanup==='function'){
+      try{host.__c026SearchFinderCleanup();}catch(_e){}
+    }
+    // 兼容没有销毁回调的旧页面，仅清理明确标记为 C026 的元素。
+    if(typeof host.querySelectorAll==='function'){
+      var leftovers=host.querySelectorAll('[data-c026-search]');
+      for(var j=0;j<leftovers.length;j++){
+        var el=leftovers[j];if(el&&el.parentNode&&typeof el.parentNode.removeChild==='function')el.parentNode.removeChild(el);
+      }
+    }
+    if(host.__c026FinderKeyboard&&typeof host.removeEventListener==='function'){
+      host.removeEventListener('keydown',host.__c026FinderKeyboard.key);
+      host.removeEventListener('paste',host.__c026FinderKeyboard.paste);
+      delete host.__c026FinderKeyboard;
+    }
+  }
+  // C026 的 ZRender mousewheel/mousedown/mousemove 仍可能重绘旧案例，必须同步注销。
+  if(typeof instance.off==='function'){
+    var zr=typeof instance.getZr==='function'?instance.getZr():null;
+    var keys=['__c026Handlers_v050','__c026Handlers_v051','__c026Handlers_v052',
+      '__c026Handlers_v053','__c026Handlers_v054','__c026Handlers_v055',
+      '__c026Handlers_v056','__c026Handlers_v057'];
+    keys.forEach(function(key){
+      var h=instance[key];if(!h)return;
+      if(h.click)instance.off('click',h.click);
+      if(h.over)instance.off('mouseover',h.over);
+      if(h.out)instance.off('mouseout',h.out);
+      if(zr&&typeof zr.off==='function'&&h.zr){
+        Object.keys(h.zr).forEach(function(ev){zr.off(ev,h.zr[ev]);});
+      }
+      delete instance[key];
+    });
+    if(instance.__c026Bound_v057)delete instance.__c026Bound_v057;
+  }
+}
+function c027BindChart(instance){
+  if(!instance||typeof instance.setOption!=='function'||typeof instance.on!=='function')return false;
+  c027CleanupLegacyC026(instance);
+  if(instance.__c027Handler){instance.off('click',instance.__c027Handler);}
+  var handler=function(p){
+    if(p.seriesId!=='c027-main')return;
+    if(p.dataType==='node'&&p.data&&p.data.name)c027ToggleNode(p.data.name);
+    else if(p.dataType==='edge'&&p.data){
+      var idx=c027Data.links.findIndex(function(x){return x.source===p.data.source&&x.target===p.data.target;});
+      if(idx>=0)c027ToggleLink(idx);
+    }
+  };
+  instance.on('click',handler);instance.__c027Handler=handler;c027Chart=instance;
+  // 无侧栏后，使用空白点击恢复全图。节点和连线点击由上面的事件处理。
+  if(typeof instance.getZr==='function'){
+    var zr=instance.getZr();
+    if(zr&&typeof zr.on==='function'){
+      if(instance.__c027BlankClickHandler&&typeof zr.off==='function'){
+        zr.off('click',instance.__c027BlankClickHandler);
+      }
+      var blankHandler=function(e){if(e&&!e.target&&c027State.selected)c027ClearSelection();};
+      zr.on('click',blankHandler);instance.__c027BlankClickHandler=blankHandler;
+    }
+  }
+  return true;
+}
+// 官方 ECharts 编辑器：先清理上一案例 DOM 与事件，再构造 option。切勿写 var option。
+var c027AvailableChart=c027GetChart();
+if(c027AvailableChart)c027CleanupLegacyC026(c027AvailableChart);
+option=c027BuildOption();
+if(c027AvailableChart)c027BindChart(c027AvailableChart);
+// 若 Power BI 视觉对象不暴露 myChart，初始化 ECharts 后须调用 c027BindChart(echartsInstance)。
+// 例如：setting.chartInstance = instance; c027BindChart(instance);
+// 锁定高亮仅操作本图，不会执行 Power BI 的报表级交叉筛选。

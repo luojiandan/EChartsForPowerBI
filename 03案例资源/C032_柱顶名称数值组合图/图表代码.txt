@@ -1,0 +1,350 @@
+﻿/*
+ * C032_长名称柱顶组合图 (Top-Labeled Lollipop Column Chart)
+ * ECharts 官方编辑器：复制整段 JS，直接执行。
+ * ECharts for Power BI：替换【名称】【数值】两个数组；数据单位及业务文字在 setting 中修改。
+ * 数据来源：ACI World, 2025 Top 10 Busiest Airports by Passenger Traffic,
+ * https://aci.aero/2026/07/15/worlds-busiest-airports-atlanta-holds-asia-climbs-strong-demand-while-asia-pacific-growth-reshape-the-rankings/
+ * 机场中文名称为展示译名；旅客人数采用 ACI World 公布的整数。
+ */
+
+// =======================================================
+// 用户输入数据：每个字段独立的一维数组，顺序一一对应。
+// 可替换为：dataArr.dataObjects[0].values / [1].values。
+// =======================================================
+var 名称 = [
+  '哈茨菲尔德—杰克逊亚特兰大国际机场（ATL）',
+  '迪拜国际机场（DXB）',
+  '东京羽田机场（HND）',
+  '达拉斯—沃斯堡国际机场（DFW）',
+  '上海浦东国际机场（PVG）',
+  '芝加哥奥黑尔国际机场（ORD）',
+  '伦敦希思罗机场（LHR）',
+  '伊斯坦布尔机场（IST）',
+  '广州白云国际机场（CAN）',
+  '丹佛国际机场（DEN）'
+];
+var 数值 = [
+  106302208, 95192160, 91679814, 85660127, 84994548,
+  84856018, 84482126, 84437710, 83582952, 82427962
+];
+
+// 参数设置
+var setting = {
+  title: '2025全球最繁忙机场：客运量排名与长名称展示',
+  subtitle: '全球客运量前10名｜完整名称与数值置于柱顶｜细柱端点式布局',
+  source: '数据来源：ACI World《2025年全球机场客流量排名》，2026年7月发布',
+  note: '图表说明：柱体高度=客运量；顶部依次展示完整名称、数值；过境旅客计一次；此处仅显示排名前10的机场。',
+  metricLabel: '旅客量',
+  periodLabel: '2025年',
+  unit: '百万人次',
+  valueDivisor: 1000000,
+  valueDigits: 1,
+  sortDescending: true,
+  // 默认阻止重复类别，避免把平均值、百分率等非加总指标错误求和；确认为可加总数值时可开启。
+  enableDuplicateMerge: false,
+  palette: {
+    background: 'transparent',
+    title: '#263238',
+    secondary: '#8493A2',
+    grid: '#E5E9ED',
+    stem: '#BFC6CE',
+    stemHighlight: '#486F86',
+    tip: '#8D9AA6',
+    tipHighlight: '#486F86',
+    accent: '#D9544D'
+  },
+  highlightFirst: true,
+  columnWidth: 18,
+  tipRadius: 5,
+  label: {
+    maxWidth: 160,
+    fontSize: 11,
+    lineHeight: 16,
+    maxLines: 4,
+    nameToValueGap: 6,
+    valueToTipGap: 12,
+    horizontalPadding: 10,
+    minBandWidth: 96 // 每个类别至少预留的横向空间，超出则无滑块横向浏览
+  },
+  layout: {
+    left: 68,
+    right: 45,
+    top: 178,
+    bottom: 100,
+    referenceWidth: 1200,
+    referenceHeight: 820,
+    minCanvasHeight: 480 // 保留旧参数兼容性；实际布局不再用它伪造画布尺寸
+  }
+};
+
+// =======================================================
+// 通用函数：下方函数不含机场专用变量、名称判断或固定坐标。
+// =======================================================
+function c032EscapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function c032Thousands(v, digits) {
+  if (!isFinite(v)) return '—';
+  var fixed = Number(v).toFixed(digits);
+  var p = fixed.split('.');
+  p[0] = p[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return p.join('.');
+}
+function c032TextWidth(s, fontSize) {
+  var w = 0;
+  var chars = Array.from(String(s));
+  for (var i = 0; i < chars.length; i++) {
+    var c = chars[i];
+    w += /[\u2e80-\uffef]/.test(c) ? fontSize : /[A-Z]/.test(c) ? fontSize * 0.68 : fontSize * 0.56;
+  }
+  return w;
+}
+function c032Wrap(s, maxWidth, fontSize, maxLines) {
+  // 中文逐字可换行，连续英文、数字和括号内容尽量作为整体。
+  var tokens = String(s).match(/（[A-Za-z0-9._-]+）|\([A-Za-z0-9._-]+\)|[A-Za-z0-9._-]+|\s+|./gu) || [];
+  var out = [], part = '';
+  tokens.forEach(function (token) {
+    if (!part && /^\s+$/.test(token)) return;
+    if (c032TextWidth(part + token, fontSize) <= maxWidth) {
+      part += token;
+    } else {
+      if (part) out.push(part.trim());
+      part = token.trim();
+      // 超长不可分词（如较长英文名称）仍需字内换行。
+      while (part && c032TextWidth(part, fontSize) > maxWidth) {
+        var chars = Array.from(part), fitted = '';
+        while (chars.length && c032TextWidth(fitted + chars[0], fontSize) <= maxWidth) {
+          fitted += chars.shift();
+        }
+        if (!fitted) fitted = chars.shift();
+        out.push(fitted);
+        part = chars.join('');
+      }
+    }
+  });
+  if (part) out.push(part.trim());
+  if (out.length <= maxLines) return out;
+  var kept = out.slice(0, maxLines);
+  var tail = kept[maxLines - 1];
+  while (tail && c032TextWidth(tail + '…', fontSize) > maxWidth) {
+    tail = Array.from(tail).slice(0, -1).join('');
+  }
+  kept[maxLines - 1] = tail + '…';
+  return kept;
+}
+function c032Prepare(names, values) {
+  if (!Array.isArray(names) || !Array.isArray(values) || names.length !== values.length) {
+    throw new Error('【名称】与【数值】必须为等长的一维数组。');
+  }
+  if (!names.length) return [];
+  var entries = [], at = Object.create(null);
+  names.forEach(function (label, i) {
+    var k = String(label == null ? '' : label).trim();
+    var input = values[i];
+    if (input === null || input === undefined || typeof input === 'boolean' ||
+        (typeof input === 'string' && input.trim() === '')) {
+      throw new Error('“' + k + '”的数值为空或类型不正确。');
+    }
+    var v = Number(input);
+    if (!k) throw new Error('第 ' + (i + 1) + ' 条类别名称为空。');
+    if (!isFinite(v) || v < 0) {
+      throw new Error('“' + k + '”的数值必须是非负有限数字。');
+    }
+    if (Object.prototype.hasOwnProperty.call(at, k)) {
+      if (!setting.enableDuplicateMerge) throw new Error('类别重复：' + k);
+      entries[at[k]].raw += v;
+    } else {
+      at[k] = entries.length;
+      entries.push({name:k,raw:v,order:i});
+    }
+  });
+  if (setting.sortDescending) {
+    entries.sort(function(a,b){return b.raw - a.raw || a.order - b.order;});
+  }
+  return entries;
+}
+function c032CanvasSize() {
+  var w = setting.layout.referenceWidth, h = setting.layout.referenceHeight;
+  try {
+    if (typeof myChart !== 'undefined' && myChart && typeof myChart.getWidth === 'function') {
+      var cw = myChart.getWidth(), ch = myChart.getHeight();
+      if (isFinite(cw) && cw > 0) w = cw;
+      if (isFinite(ch) && ch > 0) h = ch;
+    }
+  } catch (e) {}
+  // 不使用“最小画布尺寸”伪造坐标；实际小容器必须按实际宽高布局。
+  return { width:w, height:h };
+}
+function c032ResponsiveLayout(size) {
+  var compact = size.width < 650;
+  var short = size.height < 600;
+  return {
+    left: compact ? 50 : setting.layout.left,
+    right: compact ? 24 : setting.layout.right,
+    top: short ? 150 : setting.layout.top,
+    bottom: short ? 82 : setting.layout.bottom
+  };
+}
+function c032Digits(v, minDigits) {
+  if (!isFinite(v) || v === 0) return minDigits;
+  // 保证非零极小值不会显示成 0.0；上限控制在 9 位小数。
+  var need = Math.max(0, Math.ceil(-Math.log(Math.abs(v)) / Math.LN10) + 1);
+  return Math.min(9, Math.max(minDigits, need));
+}
+function c032NiceCeil(v) {
+  if (!(v > 0)) return 1;
+  var magnitude = Math.pow(10, Math.floor(Math.log(v) / Math.LN10));
+  var scaled = v / magnitude, factor;
+  if (scaled <= 1) factor = 1;
+  else if (scaled <= 1.2) factor = 1.2;
+  else if (scaled <= 1.5) factor = 1.5;
+  else if (scaled <= 2) factor = 2;
+  else if (scaled <= 2.5) factor = 2.5;
+  else if (scaled <= 3) factor = 3;
+  else if (scaled <= 4) factor = 4;
+  else if (scaled <= 5) factor = 5;
+  else if (scaled <= 6) factor = 6;
+  else if (scaled <= 8) factor = 8;
+  else factor = 10;
+  return Number((factor * magnitude).toPrecision(12));
+}
+function c032BuildOption() {
+  var palette = setting.palette;
+  var rows = c032Prepare(名称, 数值);
+  var sz = c032CanvasSize();
+  var layout = c032ResponsiveLayout(sz);
+  var plotW = Math.max(100,sz.width-layout.left-layout.right);
+  var plotH = Math.max(100,sz.height-layout.top-layout.bottom);
+  // 可见容量由容器宽度与最低栏目宽度决定，避免数据增多时名称挤在一起。
+  // 类别超过容量则用无可见滑条的图内平移（拖动/滚轮）浏览。
+  var visibleCount = Math.min(rows.length, Math.max(1,Math.floor(plotW / Math.max(48,setting.label.minBandWidth))));
+  var usePan = rows.length > visibleCount;
+  var unitDivisor = Number(setting.valueDivisor);
+  if (!(unitDivisor > 0)) throw new Error('setting.valueDivisor 必须为正数。');
+  var values = rows.map(function(r){return r.raw / unitDivisor;});
+  var maxV = rows.length ? Math.max.apply(null,values) : 0;
+  var labelHeadroom = setting.label.maxLines * setting.label.lineHeight +
+    setting.label.nameToValueGap + setting.label.valueToTipGap + 34;
+  var roomRatio = Math.min(0.65, labelHeadroom / Math.max(plotH,120));
+  var maxAxis = c032NiceCeil((maxV || 1) / (1 - roomRatio));
+  var top = rows[0] || null, second = rows[1] || null;
+  var gap = top && second ? (top.raw-second.raw)/unitDivisor : 0;
+  var xLabels = rows.map(function(_,i){return String(i+1).padStart(2,'0');});
+  var isCompact = sz.width < 650;
+  var titleFont = isCompact ? 15 : 20;
+  var topStatFont = isCompact ? 14 : 17;
+  var footerWidth = Math.max(100,sz.width-56);
+  var rowsWithUnit = rows.map(function(r,i){return {
+    name:r.name,raw:r.raw,formatted:values[i],rank:i+1
+  };});
+  return {
+    backgroundColor:palette.background,
+    animation:true,
+    animationDuration:600,
+    grid:layout,
+    dataZoom:usePan ? [{
+      type:'inside', xAxisIndex:0, startValue:0, endValue:visibleCount-1,
+      filterMode:'filter',zoomLock:true,zoomOnMouseWheel:false,
+      moveOnMouseWheel:true,moveOnMouseMove:true,preventDefaultMouseMove:true
+    }] : [],
+    xAxis:{
+      type:'category', data:xLabels,
+      boundaryGap:true,
+      axisLine:{lineStyle:{color:palette.grid}},
+      axisTick:{show:false},
+      axisLabel:{color:palette.secondary,fontSize:11,margin:13,interval:0}
+    },
+    yAxis:{
+      type:'value',min:0,max:maxAxis,splitNumber:5,
+      axisLine:{show:false},axisTick:{show:false},
+      axisLabel:{color:palette.secondary,fontSize:11,
+        formatter:function(v){return c032Thousands(v,c032Digits(v,setting.valueDigits > 0 && Math.abs(v) < 1 ? setting.valueDigits:0));}},
+      splitLine:{show:true,lineStyle:{color:palette.grid,width:1}}
+    },
+    tooltip:{
+      trigger:'item',confine:true,transitionDuration:0.12,
+      backgroundColor:'rgba(255,255,255,.98)',borderColor:'#DDE3E8',borderWidth:1,
+      padding:[12,14],textStyle:{color:palette.title,fontSize:12},
+      extraCssText:'box-shadow:0 8px 22px rgba(38,50,56,0.12);border-radius:8px;',
+      formatter:function(p){
+        var originalIndex = p && p.value && p.value.length ? Math.round(Number(p.value[0])) : p.dataIndex;
+        var r=rowsWithUnit[originalIndex];
+        if (!r) return '';
+        return '<div style="min-width:185px;max-width:300px;line-height:1.65">'
+          + '<div style="font-weight:700;font-size:13px;color:'+palette.title+';white-space:normal">'+c032EscapeHtml(r.name)+'</div>'
+          + '<div style="margin:6px 0;border-top:1px solid #E5E9ED"></div>'
+          + '<div style="color:'+palette.secondary+'">排名　<strong style="color:'+palette.title+'">第 '+r.rank+' 位</strong></div>'
+          + '<div style="color:'+palette.secondary+'">'+c032EscapeHtml(setting.metricLabel)+'　<strong style="color:'+palette.title+'">'
+          + c032Thousands(r.formatted,c032Digits(r.formatted,setting.valueDigits))+' '+c032EscapeHtml(setting.unit)+'</strong></div>'
+          + '</div>';
+      }
+    },
+    series:[{
+      name:setting.metricLabel,type:'custom',coordinateSystem:'cartesian2d',
+      z:4,renderItem:function(params,api){
+        var index=Math.round(Number(api.value(0)));
+        var row=rowsWithUnit[index];
+        if(!row) return null;
+        var point=api.coord([api.value(0),api.value(1)]);
+        var base=api.coord([api.value(0),0]);
+        var band=Math.abs(api.size([1,0])[0]);
+        var centerX=point[0],tipY=point[1];
+        var colWidth=Math.min(setting.columnWidth, Math.max(6,band*0.20));
+        var maxTextWidth=Math.max(8, Math.min(setting.label.maxWidth, band-setting.label.horizontalPadding));
+        // 水平名称文字：根据实际类别宽度缩字号和自动分行，避免互相压盖。
+        var fontSize=band<64 ? Math.max(8,setting.label.fontSize-2) :
+          band<100 ? Math.max(10,setting.label.fontSize-1) : setting.label.fontSize;
+        var lines=c032Wrap(row.name,maxTextWidth,fontSize,setting.label.maxLines);
+        var nameHeight=lines.length*setting.label.lineHeight;
+        // 对零值及很短的柱子，标签最低锚点保留在绘图区内，柱长仍严格对应原始数值。
+        var labelTipY=Math.min(tipY,base[1]-Math.min(72,plotH*0.23));
+        var valueY=labelTipY-setting.tipRadius-setting.label.valueToTipGap-8;
+        var nameY=valueY-setting.label.nameToValueGap-16-nameHeight;
+        var first=index===0 && setting.highlightFirst;
+        var stemColor=first?palette.stemHighlight:palette.stem;
+        var tipColor=first?palette.tipHighlight:palette.tip;
+        return {
+          type:'group',children:[
+            {type:'rect',shape:{x:centerX-colWidth/2,y:tipY,width:colWidth,height:Math.max(0,base[1]-tipY)},
+             style:{fill:stemColor}},
+            {type:'circle',shape:{cx:centerX,cy:tipY,r:setting.tipRadius},
+             style:{fill:tipColor,stroke:'#FFFFFF',lineWidth:1.5}},
+            {type:'text',style:{x:centerX,y:nameY,text:lines.join('\n'),
+              font:'600 '+fontSize+'px sans-serif',lineHeight:setting.label.lineHeight,
+              textAlign:'center',textVerticalAlign:'top',fill:palette.title}},
+            {type:'text',style:{x:centerX,y:valueY,text:c032Thousands(row.formatted,c032Digits(row.formatted,setting.valueDigits)),
+              font:'700 16px sans-serif',textAlign:'center',textVerticalAlign:'middle',fill:palette.title}}
+          ]
+        };
+      },
+      encode:{x:0,y:1},
+      data:rowsWithUnit.map(function(r,i){return [i,r.formatted];})
+    }],
+    graphic:[
+      {type:'rect',left:28,top:12,shape:{width:20,height:4},style:{fill:palette.accent}},
+      {type:'text',left:28,top:27,style:{text:setting.title,font:'700 '+titleFont+'px sans-serif',fill:palette.title,
+        width:footerWidth,overflow:'truncate'}},
+      {type:'text',left:28,top:59,style:{text:setting.subtitle,font:'12px sans-serif',fill:palette.secondary,
+        width:footerWidth,overflow:'truncate'}},
+      {type:'text',left:28,top:99,style:{text:setting.metricLabel+'最高',font:'12px sans-serif',fill:palette.secondary}},
+      {type:'text',left:isCompact?28:105,top:isCompact?117:96,style:{text:top?c032Thousands(top.raw/unitDivisor,c032Digits(top.raw/unitDivisor,setting.valueDigits))+' '+setting.unit:'—',
+        font:'700 '+topStatFont+'px sans-serif',fill:palette.title}},
+      {type:'text',left:isCompact?sz.width*0.54:300,top:99,style:{text:'样本类别',font:'12px sans-serif',fill:palette.secondary}},
+      {type:'text',left:isCompact?sz.width*0.54:369,top:isCompact?117:96,style:{text:rows.length+' 类',font:'700 '+topStatFont+'px sans-serif',fill:palette.title}},
+      ...(!isCompact ? [
+        {type:'text',left:482,top:99,style:{text:setting.sortDescending?'前两名差距':'前两项差距',font:'12px sans-serif',fill:palette.secondary}},
+        {type:'text',left:573,top:96,style:{text:second?c032Thousands(gap,c032Digits(gap,setting.valueDigits))+' '+setting.unit:'—',
+          font:'700 17px sans-serif',fill:palette.title}}
+      ] : []),
+      {type:'text',left:layout.left,top:layout.top-26,
+        style:{text:setting.metricLabel+'（'+setting.unit+'）',font:'11px sans-serif',fill:palette.secondary}},
+      {type:'text',left:28,bottom:33,style:{text:setting.source,font:'11px sans-serif',fill:palette.secondary,
+        width:footerWidth,overflow:'truncate'}},
+      {type:'text',left:28,bottom:15,style:{text:setting.note,font:'11px sans-serif',fill:palette.secondary,
+        width:footerWidth,overflow:'truncate'}}
+    ]
+  };
+}
+
+option = c032BuildOption();

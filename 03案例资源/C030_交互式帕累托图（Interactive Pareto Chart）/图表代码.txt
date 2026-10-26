@@ -1,0 +1,404 @@
+﻿/*
+  C030_交互式帕累托图（Interactive Pareto Chart） 
+  2024 年国家/地区化石燃料与工业 CO2 排放贡献
+  数据：Global Carbon Budget 2025 / Our World in Data；前 50 条 2024 年排放数据（百万吨 CO2）
+  注：全球总体 38,600 百万吨是公开图表中“38.6B t”的取整值；80% 判断具有近似性。
+  可用于 ECharts 官方编辑器，option 不使用 var 声明。
+  在 Power BI 中仅需用字段数组替换“对象”和“数值”；如数据覆盖范围变化，请同步修改 setting.totalValue。
+*/
+
+// ========== Power BI 原始输入（两个字段对应两个独立一维数组）==========
+// 单位：百万吨 CO₂（MtCO₂）
+var 对象 = [
+  "中国", "美国", "印度", "俄罗斯", "日本", "印度尼西亚", "伊朗", "沙特阿拉伯", "韩国", "德国",
+  "加拿大", "土耳其", "巴西", "墨西哥", "南非", "澳大利亚", "越南", "英国", "意大利", "马来西亚",
+  "哈萨克斯坦", "波兰", "泰国", "法国", "台湾地区", "埃及", "伊拉克", "阿联酋", "西班牙", "阿尔及利亚",
+  "巴基斯坦", "菲律宾", "阿根廷", "乌克兰", "乌兹别克斯坦", "尼日利亚", "科威特", "卡塔尔", "委内瑞拉", "荷兰",
+  "孟加拉国", "哥伦比亚", "比利时", "阿曼", "土库曼斯坦", "智利", "捷克", "秘鲁", "摩洛哥", "罗马尼亚"
+];
+var 数值 = [
+  12289.04, 4904.12, 3193.48, 1780.52, 961.87, 812.22, 792.63, 692.13, 583.68, 572.32,
+  533.34, 513.04, 483.01, 460.99, 439.83, 386.73, 370.93, 312.91, 301.93, 290.22,
+  287.01, 272.86, 267.76, 264.16, 262.35, 258.37, 233.64, 221.99, 220.34, 198.20,
+  179.80, 174.88, 171.06, 142.50, 139.23, 135.82, 129.52, 125.81, 116.04, 114.79,
+  108.32, 92.66, 85.46, 82.66, 81.01, 78.73, 75.62, 70.25, 69.06, 68.55
+];
+
+// ========== 可修改设置（全部业务配置集中在前面）==========
+var setting = {
+  title: '2024全球CO₂排放：多少个经济体贡献了{threshold}%？',
+  subtitle: '化石燃料与工业过程排放｜按排放量降序｜前{count}个国家及地区',
+  period: '2024',
+  categoryLabel: '国家及地区',
+  valueLabel: 'CO₂排放量',
+  valueUnit: '百万吨',
+  decimals: 2,
+  threshold: 0.80, // 初始阈值：0.80 = 80%；图表左上角 + / − 可直接调整
+  thresholdControl: {
+    show: true,        // 是否在顶部“80%”右侧显示上下排列的 + / − 按钮
+    minPercent: 1,     // 最低阈值 1%
+    maxPercent: 100,   // 最高阈值 100%
+    stepPercent: 1,    // 单击一次增减的百分点
+    left: 188,         // 按钮位置，紧邻顶部阈值数值右侧（像素）
+    top: 101,          // + 按钮顶部（像素）
+    buttonWidth: 20,
+    buttonHeight: 16,
+    gap: 2
+  },
+  // 数据完整时置 null：占比自动按输入数组合计计算。
+  // 仅显示部分对象时，可提供真实总体量；此处约 38,600 百万吨（公开世界总量的取整值）。
+  totalValue: 38600,
+  totalValueIsApproximate: true,
+  // 当 totalValue 指定外部总体时，顶部覆盖率使用以下称呼；可改为“全公司”“整体市场”等。
+  totalScopeLabel: '全球',
+  showTopCount: 24,
+  showZoomWhenOver: 24,
+  barMaxWidth: 28,
+  showBarLabelCount: 5,
+  grid: { left: 86, right: 74, top: 216, bottom: 159 },
+  sourceText: '数据来源：Global Carbon Budget (2025) / Our World in Data；前{count}经济体，2024年领土排放',
+  noteText: '图表说明：柱=排放量；蓝线=占全球累计份额；红虚线={threshold}%阈值。全球总量约386亿吨（取整）；不含土地利用变化。',
+  noteText2: '提示：展示前{count}经济体，占全球总量约{coverage}%；国际航运和航空计入全球总量，不分摊到各经济体。',
+  colors: {
+    text: '#263238', sub: '#8493A2', grid: '#E5E9ED',
+    barKey: '#AEB7C1', barOther: '#D9DEE3',
+    focus: '#486F86', threshold: '#D9544D', track: '#E8EDF0'
+  }
+};
+
+// ========== 通用计算：去空值、同名汇总、排序、累计和阈值 ===========
+function c030NumText(n, precision) {
+  return Number(n).toLocaleString('zh-CN', {
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision
+  });
+}
+function c030Safe(text) {
+  return String(text).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c];
+  });
+}
+function c030BuildModel(labels, values, config) {
+  if (!Array.isArray(labels) || !Array.isArray(values) || labels.length !== values.length) {
+    throw new Error('对象与数值数组的长度必须一致。');
+  }
+  if (!(config.threshold > 0 && config.threshold <= 1)) {
+    throw new Error('setting.threshold 应大于0且不超过1。');
+  }
+  var map = Object.create(null);
+  for (var i = 0; i < labels.length; i++) {
+    var name = String(labels[i] == null ? '' : labels[i]).trim();
+    var raw = values[i];
+    if (!name || raw === '' || raw == null) continue;
+    var number = Number(raw);
+    if (!Number.isFinite(number) || number < 0) {
+      throw new Error('第' + (i + 1) + '行数值无效：只允许非负有限数字。');
+    }
+    if (number === 0) continue;
+    map[name] = (map[name] || 0) + number;
+  }
+  var rows = Object.keys(map).map(function(name) {return {name:name,value:map[name]};});
+  rows.sort(function(a,b){return b.value - a.value || a.name.localeCompare(b.name, 'zh-CN');});
+  var sampleTotal = rows.reduce(function(s,row){return s + row.value;},0);
+  var providedTotal = config.totalValue == null || config.totalValue === '' ? null : Number(config.totalValue);
+  if (providedTotal != null && (!Number.isFinite(providedTotal) || providedTotal <= 0)) {
+    throw new Error('setting.totalValue 必须是正数或 null。');
+  }
+  var denominator = providedTotal == null ? sampleTotal : providedTotal;
+  if (denominator + 1e-7 < sampleTotal) {
+    throw new Error('setting.totalValue 小于所展示的数值总和。替换业务数据时请改为 null 或正确总体量。');
+  }
+  var accum = 0, thresholdIndex = -1;
+  rows.forEach(function(row,i){
+    accum += row.value;
+    row.rank = i + 1;
+    row.share = denominator > 0 ? row.value / denominator * 100 : 0;
+    row.cumulative = denominator > 0 ? accum / denominator * 100 : 0;
+    if (thresholdIndex < 0 && row.cumulative + 1e-9 >= config.threshold * 100) thresholdIndex = i;
+  });
+  return {
+    rows:rows, sampleTotal:sampleTotal, denominator:denominator,
+    displayCoverage: denominator > 0 ? sampleTotal / denominator * 100 : 0,
+    thresholdIndex:thresholdIndex,
+    thresholdCumulative:thresholdIndex >= 0 ? rows[thresholdIndex].cumulative : null,
+    externalDenominator:providedTotal != null
+  };
+}
+var c030Model = c030BuildModel(对象, 数值, setting);
+var c030SelectedIndex = -1;
+var c030ChartInstance = null;
+var c030BoundHandler = null;
+
+
+// ========== 用户在图面上直接调整阈值（不使用额外 DOM） ==========
+function c030ClampThresholdPercent(input) {
+  var ctl = setting.thresholdControl || {};
+  var lo = Math.max(1, Math.min(100, Number(ctl.minPercent) || 1));
+  var hi = Math.max(lo, Math.min(100, Number(ctl.maxPercent) || 100));
+  var n = Number(input);
+  if (!Number.isFinite(n)) return Math.round(setting.threshold * 100);
+  return Math.max(lo, Math.min(hi, Math.round(n)));
+}
+function c030CurrentThresholdPercent() {
+  return Math.round(setting.threshold * 100);
+}
+function c030SetThresholdPercent(percent) {
+  var nextPercent = c030ClampThresholdPercent(percent);
+  if (nextPercent === c030CurrentThresholdPercent()) return false;
+  // 更新统一的 setting 配置，模型、交点、柱体和标题均从这里重新计算。
+  setting.threshold = nextPercent / 100;
+  c030Model = c030BuildModel(对象, 数值, setting);
+  var instance = c030ChartInstance;
+  if (instance && typeof instance.setOption === 'function') {
+    var nextOption = c030BuildOption();
+    // 保存当前滑块浏览区间：修改阈值时，不让已经滑动到第 N 个类别的视图跳回开头。
+    if (typeof instance.getOption === 'function') {
+      var prev = instance.getOption();
+      if (prev && Array.isArray(prev.dataZoom) && Array.isArray(nextOption.dataZoom)) {
+        nextOption.dataZoom.forEach(function(zoom, i) {
+          var old = prev.dataZoom[i];
+          if (old && Number.isFinite(Number(old.start)) && Number.isFinite(Number(old.end))) {
+            zoom.start = Number(old.start);
+            zoom.end = Number(old.end);
+          }
+        });
+      }
+    }
+    instance.setOption(nextOption, true);
+  }
+  return true;
+}
+// 左上角阈值增减按钮：不增加右侧面板、滑块或额外 HTML。
+// 使用有形状的 ECharts graphic rect 接收点击，text 仅显示字符，避免事件穿透或重复触发。
+function c030ThresholdGraphic() {
+  var ctl = setting.thresholdControl || {};
+  if (ctl.show === false) return null;
+  var x = Number.isFinite(Number(ctl.left)) ? Number(ctl.left) : 188;
+  var top = Number.isFinite(Number(ctl.top)) ? Number(ctl.top) : 101;
+  var w = Math.max(16, Number(ctl.buttonWidth) || 20);
+  var h = Math.max(14, Number(ctl.buttonHeight) || 16);
+  var gap = Math.max(1, Number(ctl.gap) || 2);
+  var current = c030CurrentThresholdPercent();
+  var step = Math.max(1, Math.round(Number(ctl.stepPercent) || 1));
+  var low = Math.max(1, Math.min(100, Number(ctl.minPercent) || 1));
+  var high = Math.max(low, Math.min(100, Number(ctl.maxPercent) || 100));
+  var normalColor = setting.colors.text;
+  var disabledColor = '#C7CED4';
+  var outlineColor = '#E5E9ED';
+
+  function c030Button(id, y, symbol, enabled, delta) {
+    return {
+      id: id, type: 'group', z: 100,
+      children: [
+        {
+          type: 'rect', cursor: enabled ? 'pointer' : 'default',
+          shape: {x:x, y:y, width:w, height:h, r:4},
+          style: {fill:enabled ? '#F8F9FA' : '#FBFCFD', stroke:outlineColor, lineWidth:0.8},
+          onclick: enabled ? function(){ c030SetThresholdPercent(current + delta); } : undefined
+        },
+        {
+          type:'text', silent:true, style:{
+            x:x+w/2, y:y+h/2, text:symbol,
+            textAlign:'center', textVerticalAlign:'middle',
+            font:'600 13px sans-serif', fill:enabled ? normalColor : disabledColor
+          }
+        }
+      ]
+    };
+  }
+  return {
+    id:'c030-threshold-control', type:'group', z:100,
+    children:[
+      c030Button('c030-threshold-increase', top, '+', current < high, step),
+      c030Button('c030-threshold-decrease', top+h+gap, '−', current > low, -step)
+    ]
+  };
+}
+
+function c030BarData() {
+  return c030Model.rows.map(function(row,i) {
+    var color = c030SelectedIndex === i ? setting.colors.focus :
+      ((c030Model.thresholdIndex < 0 || i <= c030Model.thresholdIndex) ? setting.colors.barKey : setting.colors.barOther);
+    return {value: row.value, itemStyle: {color:color}};
+  });
+}
+function c030Tooltip(params) {
+  var param = Array.isArray(params) ? params[0] : params;
+  var i = param && typeof param.dataIndex === 'number' ? param.dataIndex : -1;
+  var row = c030Model.rows[i];
+  if (!row) return '';
+  var approximate = c030Model.externalDenominator && setting.totalValueIsApproximate;
+  var line = function(label, value) {
+    return '<div style="display:flex;justify-content:space-between;gap:20px;margin-top:5px;">'
+      + '<span style="color:' + setting.colors.sub + '">' + label + '</span>'
+      + '<strong style="color:' + setting.colors.text + '">' + value + '</strong></div>';
+  };
+  var html = '<div style="padding:4px 6px;min-width:190px;line-height:1.5;">'
+    + '<div style="font-size:14px;font-weight:700;color:'+setting.colors.text+';">'
+    + c030Safe(row.name) + ' <span style="color:'+setting.colors.sub+';font-weight:400;">第' + row.rank + '位</span></div>';
+  html += line(c030Safe(setting.valueLabel), c030NumText(row.value, setting.decimals) + ' '+c030Safe(setting.valueUnit));
+  html += line('单项占总体', (approximate ? '约' : '') + row.share.toFixed(2) + '%');
+  html += line('累计贡献', (approximate ? '约' : '') + row.cumulative.toFixed(2) + '%');
+  if (c030Model.thresholdIndex >= 0) {
+    html += '<div style="padding-top:8px;margin-top:8px;border-top:1px solid #E5E9ED;color:'+setting.colors.sub+';">'
+      + (i <= c030Model.thresholdIndex ? '处于达到阈值所需的前' + (c030Model.thresholdIndex + 1) + '项' : '在' + (setting.threshold * 100).toFixed(0) + '%阈值之后') + '</div>';
+  }
+  return html + '</div>';
+}
+function c030Text(left,top,text,font,color) {
+  return {type:'text',left:left,top:top,silent:true,style:{text:text,font:font,fill:color}};
+}
+// 与柱顶数值采用同一种千分位格式；小数值则保留有效的小数位，避免全变成 0。
+function c030AxisNumber(value) {
+  var largest = c030Model.rows.length ? c030Model.rows[0].value : 0;
+  var decimals = largest < 1 && largest > 0
+    ? Math.min(8, Math.max(2, Math.ceil(-Math.log(largest) / Math.LN10) + 1))
+    : largest < 10 ? 2 : largest < 100 ? 1 : 0;
+  return c030NumText(value, decimals);
+}
+function c030CoverageLabel(rows, model, config) {
+  if (!rows.length) return '暂无有效数据';
+  // 外部总体与输入数组求和是两种不同口径，不将“已加载数据”误写成“当前缩放区间”。
+  if (model.externalDenominator) {
+    return '前' + rows.length + '项覆盖' + String(config.totalScopeLabel || '总体');
+  }
+  return '全部' + rows.length + '项占合计';
+}
+// 对标题与说明中的阈值、类别数量、覆盖率占位符进行动态替换。
+function c030DynamicText(text) {
+  return String(text == null ? '' : text)
+    .replace(/\{threshold\}/g, (setting.threshold * 100).toFixed(0))
+    .replace(/\{count\}/g, String(c030Model.rows.length))
+    .replace(/\{coverage\}/g, c030Model.displayCoverage.toFixed(1));
+}
+function c030BuildOption() {
+  var rows = c030Model.rows;
+  var cutoff = c030Model.thresholdIndex;
+  var isEmpty = rows.length === 0;
+  var approx = c030Model.externalDenominator && setting.totalValueIsApproximate ? '约' : '';
+  var thresholdLabel = cutoff < 0 ? '未达到' : '前 ' + (cutoff + 1) + ' 项达到';
+  var thresholdNumber = cutoff < 0 ? '—' : approx + c030Model.thresholdCumulative.toFixed(1) + '%';
+  var coverageLabel = c030CoverageLabel(rows, c030Model, setting);
+  var coverageValue = isEmpty ? '—' : approx + c030Model.displayCoverage.toFixed(1) + '%';
+  var topCount = Math.max(1, Math.min(rows.length, Number(setting.showTopCount)||24));
+  var zoomEnd = rows.length ? Math.max(0, Math.min(100, (topCount-1) / Math.max(1, rows.length-1) * 100)) : 100;
+  var useZoom = rows.length > setting.showZoomWhenOver;
+  var graphics = [
+    {type:'rect',left:30,top:18,silent:true,shape:{width:20,height:4},style:{fill:setting.colors.threshold}},
+    c030Text(30,32,c030DynamicText(setting.title),'700 21px sans-serif',setting.colors.text),
+    c030Text(30,66,c030DynamicText(setting.subtitle),'12px sans-serif',setting.colors.sub),
+    c030Text(30,112,'累计贡献阈值','12px sans-serif',setting.colors.sub),
+    c030Text(125,107,(setting.threshold*100).toFixed(0)+'%','700 23px sans-serif',setting.colors.threshold),
+    c030Text(230,112,thresholdLabel,'12px sans-serif',setting.colors.sub),
+    c030Text(335,107,thresholdNumber,'700 19px sans-serif',setting.colors.text),
+    c030Text(510,112,coverageLabel,'12px sans-serif',setting.colors.sub),
+    c030Text(642,108,coverageValue,'700 18px sans-serif',setting.colors.text),
+    c030Text(30,163,setting.valueLabel + '（' + setting.valueUnit + '）','11px sans-serif',setting.colors.sub),
+    {type:'text',right:62,top:163,silent:true,style:{text:'累计贡献率',font:'11px sans-serif',fill:setting.colors.sub,textAlign:'right'}},
+  ];
+  var thresholdControlGraphic = c030ThresholdGraphic();
+  if (thresholdControlGraphic) graphics.push(thresholdControlGraphic);
+  graphics.push({type:'text',left:30,bottom:39,silent:true,style:{text:c030DynamicText(setting.sourceText),font:'10.5px sans-serif',fill:setting.colors.sub}});
+  graphics.push({type:'text',left:30,bottom:24,silent:true,style:{text:c030DynamicText(setting.noteText),font:'10px sans-serif',fill:setting.colors.sub}});
+  var dynamicNote2 = c030Model.externalDenominator ? c030DynamicText(setting.noteText2)
+    : '提示：分母按输入数据合计计算；如果只显示部分对象，请通过 setting.totalValue 传入完整总体量。';
+  graphics.push({type:'text',left:30,bottom:9,silent:true,style:{text:dynamicNote2,font:'10px sans-serif',fill:setting.colors.sub}});
+  if (isEmpty) {
+    graphics.push({type:'text',left:'center',top:'middle',silent:true,style:{text:'暂无可展示的数据',font:'15px sans-serif',fill:setting.colors.sub}});
+  }
+  if (c030SelectedIndex >= 0 && rows[c030SelectedIndex]) {
+    graphics.push({type:'text',right:62,top:113,silent:true,style:{text:'关注：' + rows[c030SelectedIndex].name,fill:setting.colors.focus,font:'600 12px sans-serif',textAlign:'right'}});
+  }
+  return {
+    backgroundColor:'transparent',
+    animationDuration:450,
+    animationDurationUpdate:280,
+    grid: setting.grid,
+    graphic:graphics,
+    legend: {show:false},
+    tooltip: {
+      trigger:'axis',axisPointer:{type:'shadow',shadowStyle:{color:'rgba(191,198,206,0.11)'}},
+      backgroundColor:'#FFFFFF',borderColor:'#E5E9ED',borderWidth:1,
+      padding:10, confine:true,
+      extraCssText:'border-radius:8px;box-shadow:0 6px 18px rgba(38,50,56,0.10);',
+      textStyle:{color:setting.colors.text,fontSize:12},
+      formatter:c030Tooltip
+    },
+    xAxis:[{
+      type:'category',data:rows.map(function(row){return row.name;}),
+      axisLine:{lineStyle:{color:'#CBD3DA'}}, axisTick:{show:false},
+      axisLabel:{color:setting.colors.sub,fontSize:11,interval:0,rotate:38,margin:15,hideOverlap:false},
+      splitLine:{show:false}
+    }],
+    yAxis:[
+      {type:'value',name:'',min:0,scale:false,axisLine:{show:false},axisTick:{show:false},
+       axisLabel:{color:setting.colors.sub,fontSize:11,formatter:c030AxisNumber},
+       splitLine:{show:true,lineStyle:{color:setting.colors.grid,width:1}}},
+      {type:'value',min:0,max:100,interval:20,axisLine:{show:false},axisTick:{show:false},
+       axisLabel:{color:setting.colors.sub,fontSize:11,formatter:'{value}%'},
+       splitLine:{show:false}}
+    ],
+    dataZoom: useZoom ? [
+      {type:'inside',xAxisIndex:0,start:0,end:zoomEnd,zoomOnMouseWheel:false,moveOnMouseWheel:true,moveOnMouseMove:false},
+      {type:'slider',xAxisIndex:0,start:0,end:zoomEnd,bottom:82,height:17,
+       backgroundColor:'#F3F5F7',borderColor:'#E5E9ED',fillerColor:'rgba(72,111,134,0.13)',
+       handleStyle:{color:setting.colors.focus,borderColor:setting.colors.focus},
+       dataBackground:{lineStyle:{color:'#CBD3DA'},areaStyle:{color:'#E5E9ED'}},
+       selectedDataBackground:{lineStyle:{color:setting.colors.focus},areaStyle:{color:'#C3D1DA'}},
+       textStyle:{color:setting.colors.sub,fontSize:10},brushSelect:false}
+    ]:[],
+    series:[
+      {id:'c030-bars',name:setting.valueLabel,type:'bar',yAxisIndex:0,
+       barMaxWidth:setting.barMaxWidth,barMinHeight:2,z:2,
+       itemStyle:{borderRadius:[2,2,0,0]},
+       emphasis:{itemStyle:{color:setting.colors.focus}},
+       data:c030BarData(),
+       label:{show:true,position:'top',distance:5,fontSize:10,fontWeight:600,color:setting.colors.text,
+         formatter:function(p){return p.dataIndex<setting.showBarLabelCount?c030NumText(p.value,0):'';}}
+      },
+      {id:'c030-cumulative',name:'累计贡献率',type:'line',yAxisIndex:1,z:4,
+       smooth:false,showSymbol:false,symbol:'circle',symbolSize:6,
+       lineStyle:{width:2.6,color:setting.colors.focus},itemStyle:{color:setting.colors.focus},
+       data:rows.map(function(row){return Number(row.cumulative.toFixed(5));}),
+       markLine:{silent:true,symbol:'none',animation:false,
+         lineStyle:{color:setting.colors.threshold,width:1.2,type:'dashed',opacity:0.8},
+         label:{show:true,position:'insideEndTop',color:setting.colors.threshold,fontSize:11,formatter:(setting.threshold*100).toFixed(0)+'% 阈值'},
+         data:[{yAxis:setting.threshold*100}]},
+       markPoint:cutoff>=0?{
+         silent:true,symbol:'circle',symbolSize:11,
+         itemStyle:{color:setting.colors.threshold,borderColor:'#FFFFFF',borderWidth:2},
+         label:{show:false},
+         data:[{coord:[rows[cutoff].name,rows[cutoff].cumulative]}]
+       }:undefined,
+       emphasis:{focus:'none'}
+      }
+    ]
+  };
+}
+
+function c030Select(index) {
+  c030SelectedIndex = c030SelectedIndex === index ? -1 : index;
+  if (!c030ChartInstance) return;
+  // 只更新所需的数据和动态提示，不重建坐标轴/缩放状态。
+  var partial = {series:[{id:'c030-bars',data:c030BarData()}]};
+  c030ChartInstance.setOption(partial,false);
+}
+function c030BindChart(instance) {
+  if (!instance || typeof instance.on !== 'function') return;
+  if (c030ChartInstance && c030BoundHandler) c030ChartInstance.off('click',c030BoundHandler);
+  c030ChartInstance=instance;
+  c030BoundHandler=function(p){
+    if (!p || !p.seriesId || (p.seriesId !== 'c030-bars' && p.seriesId !== 'c030-cumulative'))return;
+    if (typeof p.dataIndex === 'number') c030Select(p.dataIndex);
+  };
+  instance.off('click',c030BoundHandler);
+  instance.on('click',c030BoundHandler);
+}
+
+// 先绑定实例后构建 option，确保图内阈值控件可以立即响应拖动/点击。
+if (typeof myChart !== 'undefined' && myChart && typeof myChart.on === 'function') {
+  c030BindChart(myChart);
+}
+option = c030BuildOption();
+// ECharts for Power BI 若使用独立图表实例，请在 setOption 后调用 c030BindChart(instance)，
+// 随后重新执行 instance.setOption(c030BuildOption(), true) 激活图内控件。

@@ -1,0 +1,342 @@
+﻿/*
+ * C031_自适应三指标对照排名图
+ * 输入：类别、本期值、对照值 —— 三个平行一维数组
+ * 只替换业务数据和展示设置即可复用；计算、排序、坐标、配色均无行业/年份依赖。
+ * 自动基准 = 当前有效类别的本期值算术平均；没有就业人数权重时，不等于官方总体加权均值。
+ */
+ 
+// 原始输入：三个字段分别映射为三个数组（类别、本期值、同期值）。
+// 在 Power BI 中按实际字段序号替换为 dataArr.dataObjects[i].values。
+var 类别 = [
+  '农、林、牧、渔业', '采矿业', '制造业',
+  '电力、热力、燃气及水生产和供应业', '建筑业', '批发和零售业',
+  '交通运输、仓储和邮政业', '住宿和餐饮业', '信息传输、软件和信息技术服务业',
+  '金融业', '房地产业', '租赁和商务服务业',
+  '科学研究和技术服务业', '水利、环境和公共设施管理业', '居民服务、修理和其他服务业',
+  '教育', '卫生和社会工作', '文化、体育和娱乐业',
+  '公共管理、社会保障和社会组织'
+];
+var 当期值 = [
+  74424, 143361, 113594, 160897, 92036,
+  135749, 133981, 62461, 248752, 211164,
+  89679, 110162, 182064, 70172, 70226,
+  133539, 146266, 129447, 119465
+];
+var 同期值 = [
+  67475, 140706, 107987, 150285, 89519,
+  129658, 127889, 60240, 238966, 201883,
+  91912, 110353, 175425, 68315, 68159,
+  126185, 143173, 126040, 114840
+];
+
+var setting = {
+  // 以下是示例的显示元数据；替换成其他业务时请同步设置这些文字，不需要修改算法。
+  title: '2025年行业工资：高工资，就一定涨得快吗？',
+  subtitle: '全国城镇非私营单位｜分行业门类年平均工资｜税前',
+  source: '数据来源：国家统计局《2025年城镇单位就业人员年平均工资情况》表2',
+  currentPeriod: '2025年', previousPeriod: '2024年',
+  metricName: '平均工资', changeLabel: '同比变化', benchmarkName: '行业简单平均',
+  divisor: 10000, unit: '万元', valueDigits: 2, percentDigits: 1,
+  // 基准直接由有效的本期值取算术平均，每个类别等权；过滤类别后自动重算。
+  // 非官方全国平均（总体加权均值）；不能用来代替需要人数权重的统计口径。
+  note: '',
+  referenceWidth: 1200, referenceHeight: 820,
+  gridTop: 224, gridBottom: 102, rowHeight: 44, maxVisibleRows: 12,
+  maxNameLines: 2, nameFontSize: 11, showVerticalScrollbar: true,
+  sortDescending: true, focusFirstBar: true, showBenchmarkLine: true,
+  ring: { outerRadius: 9, innerRadius: 5.5 },
+  wheelScroll: true,
+  colors: {
+    background: 'transparent', text: '#263238', muted: '#8493A2',
+    bar: '#BFC6CE', focus: '#486F86', grid: '#E5E9ED', reference: '#AEB7C1',
+    positive: '#239263', negative: '#D9544D', neutral: '#8493A2'
+  }
+};
+
+function c031Num(x, n) {
+  if (x == null || !isFinite(x)) return '—';
+  return Number(x).toLocaleString('zh-CN', {
+    minimumFractionDigits:n, maximumFractionDigits:n
+  });
+}
+// 正负符号与颜色使用“最终显示精度”判定，避免 ▲ 0.0% / ▼ 0.0%。
+// 例如 percentDigits=1 时，-0.049% ～ +0.049% 统一视作视觉上的接近零。
+function c031PercentDigits() {
+  var n = Math.floor(Number(setting.percentDigits));
+  return isFinite(n) ? Math.max(0, Math.min(8, n)) : 1;
+}
+function c031VisualSign(x) {
+  if (x == null || !isFinite(x)) return null;
+  var n = c031PercentDigits();
+  if (Number(Math.abs(x).toFixed(n)) === 0) return 0;
+  return x > 0 ? 1 : -1;
+}
+function c031Pct(x) {
+  var sign = c031VisualSign(x);
+  if (sign === null) return '—';
+  if (sign === 0) return (Number(x) === 0 ? '' : '≈ ') + c031Num(0, c031PercentDigits()) + '%';
+  return (sign > 0 ? '▲ ' : '▼ ') + c031Num(Math.abs(x), c031PercentDigits()) + '%';
+}
+function c031SignedColor(x) {
+  var sign = c031VisualSign(x), C = setting.colors;
+  return sign === 1 ? C.positive : sign === -1 ? C.negative : C.neutral;
+}
+// 百分比取整后接近零时，Tooltip 中仍保留必要的绝对差额精度。
+function c031AbsoluteDiff(x) {
+  var digits = Math.max(0, Math.min(8, Math.floor(Number(setting.valueDigits)) || 0));
+  if (x > 0 && Number(x.toFixed(digits)) === 0) {
+    // 原设置精度会把差额压成0时，提高有效精度并去除多余尾零。
+    digits = Math.min(8, Math.max(digits + 1, Math.ceil(-Math.log10(x)) + 1));
+    return Number(x.toFixed(digits)).toLocaleString('zh-CN', {
+      maximumFractionDigits:digits
+    });
+  }
+  return c031Num(x, digits);
+}
+function c031Text(txt,x,y,size,color,weight) {
+  return {type:'text',left:x,top:y,silent:true,
+    style:{text:String(txt),fill:color,font:(weight||'400')+' '+size+'px sans-serif'}};
+}
+function c031Esc(txt) {
+  return String(txt).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function c031Prepare(names,current,previous) {
+  if (![names,current,previous].every(Array.isArray) ||
+      names.length!==current.length || names.length!==previous.length)
+    throw new Error('C031：类别、本期值、对照值必须是等长的一维数组。');
+  var rows=[],seen=Object.create(null);
+  for(var i=0;i<names.length;i++) {
+    var name=String(names[i]==null?'':names[i]).trim();
+    if (!name) continue;
+    // 缺失值跳过整行，不将缺失误算为零。
+    if ([current[i],previous[i]].some(function(v){return v==null || v==='';})) continue;
+    var a=Number(current[i]),p=Number(previous[i]);
+    if (![a,p].every(isFinite) || a<0 || p<0)
+      throw new Error('C031：'+name+' 存在无效值；本期和对照值必须是非负数。');
+    if (seen[name])throw new Error('C031：重复类别“'+name+'”；均值类数据不能自行求和。');
+    seen[name]=true;
+    rows.push({name:name,value:a,previous:p,origin:i,
+      yoy:p>0?(a-p)/p*100:null});
+  }
+  // 当前有效类别的算术平均：类别各占一个权重，不能替代总体加权平均。
+  // 在 Power BI 替换或筛选类别后，以本次输入的数据重新计算。
+  var benchmark=rows.length?rows.reduce(function(sum,r){return sum+r.value;},0)/rows.length:null;
+  rows.forEach(function(r){
+    r.benchmark=benchmark;
+    r.gap=benchmark>0?(r.value-benchmark)/benchmark*100:null;
+  });
+  if (setting.sortDescending) rows.sort(function(a,b){return b.value-a.value||a.origin-b.origin;});
+  return rows;
+}
+function c031TextWidth(txt,fontsize) {
+  var width=0;
+  for(var i=0;i<txt.length;i++) width+=/^[\x00-\x7f]$/.test(txt[i])?.57*fontsize:fontsize;
+  return width;
+}
+function c031Wrap(txt,width,maxLines,fontSize) {
+  if (width<fontSize*2) return '…';
+  var lines=[],line='';
+  for(var i=0;i<txt.length;i++) {
+    var nxt=line+txt[i];
+    if(line&&c031TextWidth(nxt,fontSize)>width) {lines.push(line);line=txt[i];}
+    else line=nxt;
+  }
+  if(line) lines.push(line);
+  if(lines.length>maxLines) {
+    lines=lines.slice(0,maxLines);
+    var tail=lines[maxLines-1];
+    while(tail&&c031TextWidth(tail+'…',fontSize)>width)tail=tail.slice(0,-1);
+    lines[maxLines-1]=tail+'…';
+  }
+  return lines.join('\n');
+}
+function c031AxisMax(val) {
+  if(!(val>0))return 1;
+  var order=Math.pow(10,Math.floor(Math.log(val)/Math.LN10));
+  var x=val/order,m=x<=1?1:x<=1.2?1.2:x<=1.5?1.5:x<=2?2:x<=2.5?2.5:x<=3?3:x<=4?4:x<=5?5:x<=6?6:x<=8?8:10;
+  return m*order;
+}
+var c031Rows=c031Prepare(类别,当期值,同期值);
+var c031Columns={yoy:0,gap:0};
+var c031MetricScales={yoy:1,gap:1};
+var c031SharedBenchmark=null;
+function c031BaseLabel() {
+  return setting.benchmarkName;
+}
+function c031Tooltip(params) {
+  var i=params.value&&params.value.length>1?Math.round(params.value[1]):params.dataIndex;
+  var row=c031Rows[i];if(!row)return '';
+  var C=setting.colors,unit=c031Esc(setting.unit),d=Number(setting.divisor)||1;
+  var gapSign=c031VisualSign(row.gap);
+  var gapDesc=gapSign===1?'高于':gapSign===-1?'低于':row.gap==null?'无法计算':row.gap===0?'等于':'接近';
+  var baseLabel=c031BaseLabel();
+  var diff=row.benchmark==null?null:Math.abs(row.value-row.benchmark)/d;
+  var pctY='<b style="color:'+c031SignedColor(row.yoy)+'">'+c031Pct(row.yoy)+'</b>';
+  var pctG='<b style="color:'+c031SignedColor(row.gap)+'">'+c031Pct(row.gap)+'</b>';
+  var line=function(label,content) {
+    return '<div style="display:flex;justify-content:space-between;gap:20px">'+
+      '<span style="color:'+C.muted+'">'+c031Esc(label)+'</span><span>'+content+'</span></div>';
+  };
+  return '<div style="min-width:240px;padding:5px 6px;line-height:1.9;color:'+C.text+'">'+
+    '<div style="font-size:14px;font-weight:700">'+c031Esc(row.name)+'</div>'+
+    '<div style="border-top:1px solid '+C.grid+';margin:6px 0"></div>'+
+    line(setting.currentPeriod+' '+setting.metricName,'<b>'+c031Num(row.value/d,setting.valueDigits)+' '+unit+'</b>')+
+    line(setting.previousPeriod+' '+setting.metricName,'<b>'+c031Num(row.previous/d,setting.valueDigits)+' '+unit+'</b>')+
+    line(setting.changeLabel,pctY)+
+    '<div style="border-top:1px solid '+C.grid+';margin:6px 0"></div>'+
+    line(baseLabel,c031Num(row.benchmark/d,setting.valueDigits)+' '+unit)+
+    line(gapDesc+baseLabel,pctG)+
+    line('绝对差额','<b style="color:'+c031SignedColor(row.gap)+'">'+(diff==null?'—':c031AbsoluteDiff(diff)+' '+unit)+'</b>')+
+    '<div style="margin-top:5px;color:'+C.muted+'">'+c031Esc(setting.metricName)+'排名：第 '+(i+1)+' / '+c031Rows.length+' 位</div>'+
+    '<div style="color:'+C.muted+'">环弧以本列最大绝对变化量为100%标准，不是总体占比</div></div>';
+}
+function c031Ring(x,y,metric,scale,color) {
+  var o=setting.ring||{},rad=Math.max(6,Number(o.outerRadius)||9);
+  var inner=Math.min(rad-1.5,Math.max(2,Number(o.innerRadius)||5.5));
+  var fraction=c031VisualSign(metric)===0||c031VisualSign(metric)===null||!(scale>0)
+    ?0:Math.min(1,Math.abs(metric)/scale);
+  var st=-Math.PI/2;
+  return {type:'group',silent:true,children:[
+    {type:'circle',shape:{cx:x,cy:y,r:rad},style:{fill:'#FFFFFF',stroke:setting.colors.grid,lineWidth:rad-inner}},
+    ...(fraction>0?[{type:'sector',shape:{cx:x,cy:y,r:rad,r0:inner,
+      startAngle:st,endAngle:st+Math.PI*2*fraction,clockwise:true},style:{fill:color}}]:[])
+  ]};
+}
+function c031RenderBar(params,api) {
+  var index=Math.round(api.value(1)),r=c031Rows[index];if(!r)return null;
+  var st=api.coord([0,index]),end=api.coord([r.value,index]);
+  var bw=Math.max(0,end[0]-st[0]);
+  var band=Math.abs(api.size([0,1])[1]);
+  var bh=Math.min(37,Math.max(16,band*.78));
+  var sel=setting.focusFirstBar&&index===0,C=setting.colors;
+  var sz=bw<155?10:setting.nameFontSize;
+  var name=c031Wrap(r.name,bw-19,setting.maxNameLines,sz);
+  var yC=c031SignedColor(r.yoy),gC=c031SignedColor(r.gap);
+  var children=[];
+  if(bw>0.1) {
+    children.push({type:'rect',shape:{x:st[0],y:st[1]-bh/2,width:bw,height:bh},
+      style:{fill:sel?C.focus:C.bar}});
+    if (bw>24)children.push({type:'text',silent:true,style:{x:st[0]+10,y:st[1],
+      text:name,font:(sel?'600':'500')+' '+sz+'px sans-serif',lineHeight:sz+3,
+      textAlign:'left',textVerticalAlign:'middle',fill:sel?'#FFFFFF':C.text,
+      width:Math.max(0,bw-19),overflow:'truncate'}});
+  }
+  children.push({type:'text',silent:true,style:{x:end[0]+10,y:st[1],
+    text:c031Num(r.value/setting.divisor,setting.valueDigits),font:'700 12px sans-serif',
+    fill:C.text,textVerticalAlign:'middle'}});
+  children.push(c031Ring(c031Columns.yoy+9,st[1],r.yoy,c031MetricScales.yoy,yC));
+  children.push({type:'text',silent:true,style:{x:c031Columns.yoy+25,y:st[1],
+    text:c031Pct(r.yoy),font:'600 11px sans-serif',fill:yC,textVerticalAlign:'middle'}});
+  children.push(c031Ring(c031Columns.gap+9,st[1],r.gap,c031MetricScales.gap,gC));
+  children.push({type:'text',silent:true,style:{x:c031Columns.gap+25,y:st[1],
+    text:c031Pct(r.gap),font:'600 11px sans-serif',fill:gC,textVerticalAlign:'middle'}});
+  return {type:'group',children:children};
+}
+function c031BuildOption() {
+  if (!(Number(setting.divisor)>0) || !isFinite(Number(setting.divisor)))
+    throw new Error('C031：setting.divisor 必须是有效的正数。');
+  var C=setting.colors,chart=typeof myChart!=='undefined'?myChart:null;
+  var W=chart&&typeof chart.getWidth==='function'?chart.getWidth():setting.referenceWidth;
+  var H=chart&&typeof chart.getHeight==='function'?chart.getHeight():setting.referenceHeight;
+  W=Math.max(1,W);H=Math.max(1,H);
+  var compact=W<1050;
+  var grid={left:W<850?24:30,right:Math.min(W*.47,compact?270:Math.max(310,Math.round(W*.29))),
+    top:compact?250:setting.gridTop,bottom:setting.gridBottom};
+  // 右侧两列始终按容器宽度计算；任何行业名、值均不参与像素定位。
+  c031Columns={yoy:W-(compact?218:250),gap:W-(compact?112:115)};
+  var rows=c031Rows,len=rows.length;
+  c031SharedBenchmark=len?rows[0].benchmark:null;
+  c031MetricScales.yoy=Math.max(1e-9,...rows.map(function(r){return r.yoy==null?0:Math.abs(r.yoy);}));
+  c031MetricScales.gap=Math.max(1e-9,...rows.map(function(r){return r.gap==null?0:Math.abs(r.gap);}));
+  var visible=Math.min(len,setting.maxVisibleRows,Math.max(3,Math.floor((H-grid.top-grid.bottom)/setting.rowHeight)));
+  var needScroll=setting.showVerticalScrollbar&&visible<len;
+  var best=rows.slice().sort(function(a,b){return b.value-a.value;})[0];
+  var fastest=rows.filter(function(r){return r.yoy!=null;}).sort(function(a,b){return b.yoy-a.yoy;})[0];
+  var higher=rows.filter(function(r){return r.gap!=null&&r.gap>0;}).length;
+  var candidates=rows.map(function(r){return r.value;});
+  if(setting.showBenchmarkLine&&c031SharedBenchmark!=null)candidates.push(c031SharedBenchmark);
+  var maxRaw=candidates.length?Math.max.apply(null,candidates):1;
+  if(!(maxRaw>0)||!isFinite(maxRaw))maxRaw=1;
+  var xmax=c031AxisMax(maxRaw*1.09);
+  var topStats=compact?104:111;
+  var graphics=[
+    {type:'rect',left:30,top:17,shape:{width:20,height:4},style:{fill:C.negative},silent:true},
+    c031Text(setting.title,30,31,20,C.text,'700'),
+    c031Text(setting.subtitle,30,64,12,C.muted),
+    c031Text(setting.metricName+'（'+setting.unit+'）',grid.left,compact?190:163,11,C.muted,'600'),
+    c031Text(setting.changeLabel,c031Columns.yoy,compact?190:163,11,C.muted,'600'),
+    c031Text('较'+c031BaseLabel(),c031Columns.gap,compact?190:163,11,C.muted,'600'),
+    {type:'line',shape:{x1:grid.left,y1:compact?210:184,x2:W-28,y2:compact?210:184},
+      style:{stroke:C.grid,lineWidth:1},silent:true}
+  ];
+  function addStat(title,value,x,y) {
+    graphics.push(c031Text(title,x,y+5,12,C.muted));
+    var vw=c031TextWidth(title,12)+15;
+    graphics.push(c031Text(value,x+vw,y,17,C.text,'700'));
+  }
+  var baseLabel=c031BaseLabel();
+  var bmText=c031SharedBenchmark!=null?c031Num(c031SharedBenchmark/setting.divisor,setting.valueDigits)+' '+setting.unit:'—';
+  var stat=[
+    ['最高',best?c031Num(best.value/setting.divisor,setting.valueDigits)+' '+setting.unit:'—'],
+    [baseLabel,bmText],
+    ['高于'+baseLabel,higher+' / '+len+' 类'],
+    ['最大'+setting.changeLabel,fastest?c031Pct(fastest.yoy):'—']
+  ];
+  if(compact){
+    var half=Math.max(210,Math.floor(W/2));
+    stat.forEach(function(s,i){addStat(s[0],s[1],i%2===0?24:half,topStats+Math.floor(i/2)*38);});
+  } else {
+    var starts=[30,Math.round(W*.19),Math.round(W*.42),Math.round(W*.62)];
+    stat.forEach(function(s,i){addStat(s[0],s[1],starts[i],topStats);});
+  }
+  var benchmarkX=c031SharedBenchmark==null?null:
+    grid.left+(W-grid.left-grid.right)*(c031SharedBenchmark/xmax);
+  var notes=(setting.note||('图表说明：柱长='+setting.metricName+'；'+
+    (c031SharedBenchmark!=null?'虚线='+baseLabel+'（当前有效类别算术平均，非加权总体均值）；':'无有效数据，未生成基准线；')+
+    '环弧=本列最大绝对变化的相对幅度（非占比）；▲▼=变化方向。'));
+  graphics.push(c031Text(setting.source||'数据来源：请提供',30,H-53,10,C.muted));
+  graphics.push(c031Text(notes,30,H-32,10,C.muted));
+  var opt={
+    backgroundColor:C.background,animation:false,
+    grid:grid,
+    tooltip:{trigger:'item',confine:true,backgroundColor:'rgba(255,255,255,.98)',
+      borderWidth:1,borderColor:C.grid,textStyle:{color:C.text,fontSize:12},
+      extraCssText:'box-shadow:0 8px 20px rgba(38,50,56,.12);border-radius:8px;',
+      formatter:c031Tooltip},
+    xAxis:{type:'value',min:0,max:xmax,axisLine:{show:false},axisTick:{show:false},
+      axisLabel:{color:C.muted,fontSize:11,formatter:function(v){return c031Num(v/setting.divisor,0);}},
+      splitLine:{show:true,lineStyle:{color:C.grid}}},
+    yAxis:{type:'category',inverse:true,data:rows.map(function(r){return r.name;}),
+      axisLine:{show:false},axisTick:{show:false},axisLabel:{show:false}},
+    series:[{id:'c031-main',name:setting.metricName+'及对比',type:'custom',z:2,
+      coordinateSystem:'cartesian2d',clip:false,renderItem:c031RenderBar,
+      data:rows.map(function(r,i){return [r.value,i];}),encode:{x:0,y:1}}],
+    graphic:graphics,
+    dataZoom:needScroll?[{
+      type:'slider',yAxisIndex:0,orient:'vertical',right:8,top:grid.top,bottom:grid.bottom,
+      width:8,start:0,end:visible/len*100,zoomLock:true,showDetail:false,
+      showDataShadow:false,borderColor:'transparent',backgroundColor:'#F2F4F6',
+      fillerColor:'rgba(72,111,134,.12)',handleSize:10,
+      handleStyle:{color:C.muted,borderWidth:0},brushSelect:false
+    },{
+      type:'inside',yAxisIndex:0,start:0,end:visible/len*100,
+      zoomOnMouseWheel:false,moveOnMouseWheel:setting.wheelScroll!==false,moveOnMouseMove:false
+    }]:[]
+  };
+  if(setting.showBenchmarkLine&&c031SharedBenchmark!=null&&c031SharedBenchmark>0&&c031SharedBenchmark<xmax){
+    opt.series.push({id:'c031-benchmark',type:'scatter',silent:true,z:3,data:[],
+      tooltip:{show:false},markLine:{silent:true,symbol:'none',label:{show:false},
+        lineStyle:{color:C.reference,type:'dashed',width:1},
+        data:[{xAxis:c031SharedBenchmark}]}});
+    var avLabel=baseLabel+' '+bmText;
+    var tw=c031TextWidth(avLabel,10)+12;
+    var xpos=Math.max(grid.left,Math.min(W-grid.right-tw,benchmarkX-tw/2));
+    opt.graphic.push(c031Text(avLabel,xpos,grid.top-28,10,C.muted,'600'));
+  }
+  if(!len)opt.graphic.push({type:'text',left:'center',top:'middle',
+    style:{text:'暂无可展示的数据',fill:C.muted,font:'14px sans-serif'}});
+  return opt;
+}
+// 本 JS 为 ECharts 官方编辑器可直接执行格式。
+option = c031BuildOption();
