@@ -1,0 +1,550 @@
+﻿/*
+ * C033 / RFM 客户三维分群散点图 / ECharts GL
+ * 一个点 = 一个客户；R、F、M 评分决定空间位置；颜色代表 8 个 RFM 二分区域。
+ * 圆点面积近似映射消费金额的百分位得分，绝不以汇总气泡代替客户。
+ * 右侧：各群人数 + 比例圆点、点击筛选（原生 legend action）、真折叠；0 客户分群仍显示。
+ * 数据来源：前四列按 [客户ID, 最近消费距今天数R, 购买次数F, 消费金额M] 绑定。
+ * 评分：当前数据内按百分位自动排序成0~100；高低分界设置为50（可改setting.score.threshold）。
+ * 行业实践：常见为1~5分五分位；本例50为演示性二分阈值，不是行业统一的绝对标准。
+ * 注意：这里的八分区是解释性二分组合，不等同于标准 10/11 类行业评分模型。
+ * ECharts GL 已由宿主加载；直接运行 JS，无 HTML / CSS / 第三方脚本。
+ * 右侧图例用实心/空心符号、文字颜色和显隐状态提示区分。
+ */
+
+// ========================= 01. 四个一维输入数组 =========================
+// Power BI：按 客户ID / R距最近消费天数 / F消费次数 / M消费金额 的顺序绑定。
+// 官方示例编辑器无 dataArr 时自动采用下列人工合成演示数组。
+// 四列必须是客户级数据，不是订单级明细；允许重复ID，重复行以最小R、最大F/M去重。
+// 不在 Power BI 数据缺失时暗中替换为演示数据。
+var demoCustomerIds = ["D06015","D03021","D03010","D01004","D05010","D01017","D03018","D02015","D06024","D01019","D04022","D06023","D06001","D04001","D03005","D06005","D05014","D04021","D02006","D01021","D06008","D05018","D05019","D03022","D05009","D02012","D03003","D05024","D06016","D04011","D06017","D05004","D05013","D05021","D01001","D06012","D06007","D01018","D03004","D04013","D06014","D04024","D01006","D04016","D02005","D02011","D02008","D01008","D01010","D06018","D02016","D02013","D03015","D03012","D05022","D02004","D05015","D02003","D04008","D01014","D06019","D02023","D01002","D04005","D06013","D01009","D04015","D04006","D04023","D01005","D05007","D03016","D06002","D04019","D06020","D06004","D03002","D04002","D01007","D02002","D05006","D02017","D03008","D05017","D02024","D05002","D05001","D01015","D06003","D04012","D03023","D05016","D03017","D05005","D04003","D05008","D01012","D04020","D03007","D03011","D06010","D03020","D01023","D02010","D02022","D03014","D01024","D03024","D04009","D06011","D04018","D04004","D02019","D05012","D05003","D02020","D01011","D02021","D01003","D05020","D01020","D02014","D06021","D02009","D06006","D06009","D03013","D04017","D01013","D02018","D03001","D03019","D03009","D04007","D05023","D03006","D06022","D01016","D04014","D02001","D05011","D04010","D01022","D02007"];
+var demoRecencyDays = [172,85,77,27,191,13,87,93,193,50,34,168,195,21,67,181,187,27,106,40,146,191,202,89,182,87,74,181,198,25,183,201,199,198,51,177,171,19,83,11,196,14,53,38,111,80,93,39,53,196,102,119,81,97,170,96,173,84,32,49,183,110,34,26,168,23,25,28,29,41,177,69,175,43,172,149,91,16,29,126,175,110,86,198,99,198,186,35,153,47,103,201,82,198,16,197,24,13,83,100,200,75,27,124,105,106,55,63,15,158,49,18,105,180,167,89,49,107,38,172,24,115,164,79,198,185,72,23,40,91,78,103,69,20,186,83,196,37,22,115,184,30,12,104];
+var demoFrequency = [7,13,15,25,16,26,16,27,4,24,9,3,8,3,16,4,18,8,26,24,5,24,19,17,22,25,14,18,5,7,3,24,23,24,24,7,8,24,15,4,9,5,24,4,26,27,25,29,28,4,26,25,15,16,23,29,25,28,4,24,5,27,26,4,6,25,5,7,4,28,23,12,5,7,5,8,15,8,29,26,18,27,16,23,24,19,25,24,3,6,16,17,16,18,3,19,29,4,15,14,7,16,24,24,29,15,26,13,6,5,7,6,24,22,16,26,25,28,25,22,28,27,5,29,9,7,13,10,25,27,15,14,13,9,20,15,5,25,9,28,25,9,25,26];
+var demoMonetary = [926.7,3857.7,3148.5,4515.0,4167.9,4793.7,3977.4,2901.0,1013.7,4211.1,1736.1,924.9,1296.9,1169.1,3187.2,1019.4,4140.3,860.7,3303.3,4694.1,1062.6,3408.3,4193.4,3998.1,3299.1,3421.2,3507.6,3186.0,869.1,843.3,1449.9,3382.5,3712.5,3717.3,4119.9,1635.9,717.6,4536.0,4030.8,695.1,858.0,1896.9,4563.9,616.2,2661.0,2931.0,3536.4,4336.8,4795.5,878.4,3559.5,3350.1,3283.5,3987.0,3456.3,2710.2,4260.3,3566.4,1403.7,4217.4,1529.4,3196.8,3946.2,1324.5,1639.2,4352.1,761.4,679.5,1284.9,5073.9,4048.5,3339.3,483.0,1603.5,705.6,853.2,3790.5,1070.7,4150.8,2508.3,3415.8,2747.4,3669.0,3153.6,2607.6,4188.3,3401.4,4074.3,1569.9,1401.3,3711.3,2980.5,3678.9,4040.7,730.5,3967.5,4543.5,1248.6,3303.6,4022.4,1037.4,3867.6,4045.8,2780.7,3243.3,3951.9,4063.8,3686.1,942.0,976.2,1215.6,1638.6,3520.2,4023.6,4043.7,3074.4,4593.9,3344.1,4408.5,3653.4,4678.2,2576.7,1060.5,3008.4,963.0,1222.8,3252.3,1776.9,5040.6,3454.2,3795.6,3467.7,3717.3,901.8,3176.1,3033.0,1027.2,4433.7,1643.7,3418.2,3778.8,1116.3,4777.8,2610.0];
+
+// ========================= 02. 集中配置 =========================
+var setting = {
+  title: 'RFM 模型：客户价值分布在哪里？',
+  subtitle: '真实三维散点 · 每个点代表一位客户 · 圆点大小映射消费金额得分',
+  dataSourceDemo: '人工合成演示数据（非真实客户记录）',
+  dataSourcePowerBI: 'Power BI 当前筛选后的客户级 RFM 数据',
+  unit: { recency: '天', frequency: '次', monetary: '元' },
+  axis: { r: 'R 最近消费活跃度', f: 'F 消费频次', m: 'M 消费金额' },
+  score: { min: 0, max: 100, threshold: 50, interval: 25 },
+  display: {
+    font: 'Microsoft YaHei, Arial, sans-serif',
+    minPointSize: 5.5, maxPointSize: 15.5, pointOpacity: 0.86,
+    dimmedPointOpacity: 0.09, showCustomerLabels: false,
+    showZoneFill: true, zoneOpacity: 0.072,
+    showZoneEdges: true, zoneEdgeOpacity: 0.29,
+    showThresholdPlanes: true, thresholdOpacity: 0.035,
+    thresholdEdgeOpacity: 0.42,
+    minLegendBubbleRadius: 2.5, maxLegendBubbleRadius: 7.5
+  },
+  colors: {
+    bg: 'transparent', card: '#FAFBFC', white: '#FFFFFF',
+    text: '#263238', muted: '#8493A2', grid: '#E5E9ED',
+    positive: '#239263', negative: '#D9544D',
+    // 不存在 RFM 国际强制色标；本案例按客户价值/风险的语义赋色。
+    zone: ['#239263','#2E86C1','#4DB6AC','#D9A441',
+           '#D9544D','#F08C2E','#B07AA1','#9AA5B1'],
+    zoneFill: ['#79C1A2','#81B9E0','#83D2CB','#F3D391',
+               '#EAA19D','#F5BA80','#CEAFCA','#CDD4DC']
+  },
+  layout: {
+    plotLeft: 44, plotRightExpanded: 330, plotRightCollapsed: 62,
+    plotTop: 120, plotBottom: 100,
+    panelRight: 16, panelTop: 104,
+    panelWidth: 294, panelHeight: 557,
+    foldedTabWidth: 42
+  },
+  camera: {
+    alpha: 23, beta: 37, distance: 240,
+    boxWidth: 128, boxDepth: 124, boxHeight: 103,
+    minDistance: 185, maxDistance: 420,
+    minAlpha: -6, maxAlpha: 85,
+    rotateSensitivity: 1.35, panSensitivity: 1,
+    zoomSensitivity: 1
+  }
+};
+
+var hasPowerBIData = typeof dataArr !== 'undefined' && dataArr && Array.isArray(dataArr.dataObjects);
+function readPowerBIField(index) {
+  var field = dataArr.dataObjects[index];
+  if (!field || !Array.isArray(field.values)) {
+    throw new Error('C033：第 '+(index+1)+' 列缺少 values，请依次绑定：客户ID、R天数、F次数、M金额。');
+  }
+  return field.values;
+}
+if (hasPowerBIData && dataArr.dataObjects.length < 4) {
+  throw new Error('C033：至少需要绑定 4 列：客户ID、R天数、F次数、M金额。');
+}
+var customerIds = hasPowerBIData ? readPowerBIField(0) : demoCustomerIds;
+var recencyDays = hasPowerBIData ? readPowerBIField(1) : demoRecencyDays;
+var frequencyValues = hasPowerBIData ? readPowerBIField(2) : demoFrequency;
+var monetaryValues = hasPowerBIData ? readPowerBIField(3) : demoMonetary;
+if (customerIds.length !== recencyDays.length ||
+    customerIds.length !== frequencyValues.length ||
+    customerIds.length !== monetaryValues.length) {
+  throw new Error('C033：4 个输入数组长度必须一致；同一索引对应同一客户。');
+}
+
+// ========================= 03. 清洗、排名评分 =========================
+function parseMetric(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  var result = Number(String(value).replace(/[,，\s]/g,''));
+  return isFinite(result) && result >= 0 ? result : null;
+}
+function esc(value) {
+  return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function fmt(value, digits) {
+  var x = Number(value);
+  return isFinite(x) ? x.toLocaleString('zh-CN',{
+    minimumFractionDigits: digits || 0,
+    maximumFractionDigits: digits || 0
+  }) : '—';
+}
+var byId = Object.create(null), customers = [], invalidRows = 0, duplicateRows = 0;
+for (var i=0; i<customerIds.length; i++) {
+  var id = customerIds[i] == null ? '' : String(customerIds[i]).trim();
+  var r = parseMetric(recencyDays[i]);
+  var f = parseMetric(frequencyValues[i]);
+  var m = parseMetric(monetaryValues[i]);
+  if (!id || r === null || f === null || m === null) { invalidRows++; continue; }
+  var key = '$'+id;
+  if (Object.prototype.hasOwnProperty.call(byId,key)) {
+    duplicateRows++;
+    var found=customers[byId[key]];
+    // 客户级记录重复可能来自 BI 表连接，避免将汇总 F/M 再次累加。
+    found.r=Math.min(found.r,r);
+    found.f=Math.max(found.f,f);
+    found.m=Math.max(found.m,m);
+  } else {
+    byId[key]=customers.length;
+    customers.push({id:id,r:r,f:f,m:m});
+  }
+}
+// 采用并列平均秩：R的原始天数越少评分越高，F/M 原始值越多评分越高。
+// 全部相同的字段给予所有客户 50 分；样本量 1 时亦如此。
+function percentRank(list, prop, reverse) {
+  var result=new Array(list.length), n=list.length;
+  if (!n) return result;
+  if (n===1) { result[0]=50; return result; }
+  var sorted=list.map(function(v,index){return {index:index,value:v[prop]};});
+  sorted.sort(function(a,b){return a.value-b.value;});
+  for(var p=0;p<n;) {
+    var q=p+1;
+    while(q<n && sorted[q].value===sorted[p].value) q++;
+    var score=100*(p+q-1)/(2*(n-1));
+    if (reverse) score=100-score;
+    for(var j=p;j<q;j++) result[sorted[j].index]=score;
+    p=q;
+  }
+  return result;
+}
+var rScore=percentRank(customers,'r',true);
+var fScore=percentRank(customers,'f',false);
+var mScore=percentRank(customers,'m',false);
+
+// ========================= 04. 固定八分区：空间、分群、颜色同源 =========================
+// 八个名称根据各分区 R/F/M 高低特征作解释性命名，部分参考行业常见词汇。
+// “新近低频”仅表示近期、低频，不等于已核实的首次购买新客户。
+var ZONES=[
+  {key:'111',cn:'核心高价值客户',en:'Champions',condition:'R高 / F高 / M高'},
+  {key:'110',cn:'忠诚客户',en:'Loyal Customers',condition:'R高 / F高 / M低'},
+  {key:'101',cn:'近期高客单客户',en:'Recent High Spenders',condition:'R高 / F低 / M高'},
+  {key:'100',cn:'新近低频客户',en:'New / Recent Low Frequency',condition:'R高 / F低 / M低'},
+  {key:'011',cn:'高价值流失风险客户',en:'At Risk',condition:'R低 / F高 / M高'},
+  {key:'010',cn:'需关注客户',en:'Need Attention',condition:'R低 / F高 / M低'},
+  {key:'001',cn:'历史高客单客户',en:'Past High Spenders',condition:'R低 / F低 / M高'},
+  {key:'000',cn:'沉睡客户',en:'Hibernating',condition:'R低 / F低 / M低'}
+];
+var zoneLookup=Object.create(null);
+ZONES.forEach(function(z,index){
+  z.color=setting.colors.zone[index]; z.fill=setting.colors.zoneFill[index];
+  z.count=0; z.items=[]; zoneLookup[z.key]=z;
+});
+var threshold=setting.score.threshold;
+customers.forEach(function(c,index){
+  c.sR=rScore[index]; c.sF=fScore[index]; c.sM=mScore[index];
+  var key=(c.sR>=threshold?'1':'0')+
+          (c.sF>=threshold?'1':'0')+
+          (c.sM>=threshold?'1':'0');
+  c.zone=zoneLookup[key];
+  c.zone.count++;
+  c.zone.items.push(c);
+});
+var validCount=customers.length;
+var maxGroupCount=Math.max(1,Math.max.apply(null,ZONES.map(function(z){return z.count;})));
+function pointSize(score){
+  var t=Math.max(0,Math.min(1,score/100));
+  // 圆点的面积随 M 分位值增长（直径按开方映射）；同尺寸不代表相同金额。
+  return setting.display.minPointSize+(setting.display.maxPointSize-setting.display.minPointSize)*Math.sqrt(t);
+}
+function legendBubbleRadius(count){
+  if (!count) return 2.3;
+  var ratio=Math.sqrt(count/maxGroupCount);
+  return setting.display.minLegendBubbleRadius+
+    (setting.display.maxLegendBubbleRadius-setting.display.minLegendBubbleRadius)*ratio;
+}
+
+// ========================= 05. ECharts GL：八区外壳和中心剖面 =========================
+// 24个分区外表面 + 12个中心剖面小面片，让每区边界始终可辨识。
+// 与 V4 的24面/0.031透明度不同：单面0.072且绘制0.29透明度的边框。
+// 中心面细分为4片，以线框明确表示各区的独立边界。
+// surface 不参加 legend 筛选；它是坐标背景，点击客户群只筛选 scatter3D。
+function surfaceOnPlane(name,fill,bounds,axis,at,opacity,edgeOpacity){
+  var dirs=['x','y','z'],free=dirs.filter(function(d){return d!==axis;});
+  function coord(d,u,v){
+    if(d===axis)return at;
+    var t=d===free[0]?u:v;
+    return bounds[d][0]+t*(bounds[d][1]-bounds[d][0]);
+  }
+  return {
+    id:name,name:name,type:'surface',coordinateSystem:'cartesian3D',
+    silent:true,animation:false,parametric:true,shading:'color',
+    tooltip:{show:false},
+    itemStyle:{color:fill,opacity:opacity},
+    wireframe:{show:setting.display.showZoneEdges,
+      lineStyle:{color:'#A8B6C2',opacity:edgeOpacity,width:0.8}},
+    parametricEquation:{
+      u:{min:0,max:1,step:1},v:{min:0,max:1,step:1},
+      x:function(u,v){return coord('x',u,v);},
+      y:function(u,v){return coord('y',u,v);},
+      z:function(u,v){return coord('z',u,v);}
+    }
+  };
+}
+function backgroundSurfaces(){
+  var s=[],lo=setting.score.min,hi=setting.score.max,mid=threshold;
+  if(setting.display.showZoneFill){
+    ZONES.forEach(function(z,index){
+      var bits=z.key.split('').map(Number);
+      var bounds={x:bits[0]?[mid,hi]:[lo,mid],
+                  y:bits[1]?[mid,hi]:[lo,mid],
+                  z:bits[2]?[mid,hi]:[lo,mid]};
+      ['x','y','z'].forEach(function(axis,j){
+        s.push(surfaceOnPlane('C033_outer_'+index+'_'+axis,z.fill,bounds,axis,
+          bits[j]?hi:lo,setting.display.zoneOpacity,setting.display.zoneEdgeOpacity));
+      });
+    });
+  }
+  if(setting.display.showThresholdPlanes){
+    ['x','y','z'].forEach(function(axis){
+      var other=['x','y','z'].filter(function(d){return d!==axis;});
+      for(var a=0;a<2;a++)for(var b=0;b<2;b++){
+        var bounds={x:[lo,hi],y:[lo,hi],z:[lo,hi]};
+        bounds[other[0]]=a?[mid,hi]:[lo,mid];
+        bounds[other[1]]=b?[mid,hi]:[lo,mid];
+        s.push(surfaceOnPlane('C033_cut_'+axis+'_'+a+'_'+b,
+          '#BCC7CF',bounds,axis,mid,
+          setting.display.thresholdOpacity,setting.display.thresholdEdgeOpacity));
+      }
+    });
+  }
+  return s;
+}
+
+// ========================= 06. 真正的客户级 scatter3D =========================
+var customerSeries=ZONES.map(function(zone,index){
+  return {
+    id:'C033_clients_'+index,
+    name:zone.cn,type:'scatter3D',coordinateSystem:'cartesian3D',
+    symbol:'circle',
+    symbolSize:function(v){return pointSize(v[3]);},
+    // 每个 series.data 中每一项代表唯一客户，而不是客户汇总。
+    data:zone.items.map(function(c){
+      return {
+        name:c.id,
+        value:[c.sR,c.sF,c.sM,c.sM],
+        customerId:c.id,
+        rawR:c.r,rawF:c.f,rawM:c.m,
+        rScore:c.sR,fScore:c.sF,mScore:c.sM,
+        segment:zone.cn,condition:zone.condition
+      };
+    }),
+    itemStyle:{color:zone.color,opacity:setting.display.pointOpacity,
+      borderColor:'#FFFFFF',borderWidth:0.65},
+    label:{show:setting.display.showCustomerLabels,
+      formatter:function(p){return p.data ? p.data.customerId:'';},
+      textStyle:{color:zone.color,fontSize:10,fontFamily:setting.display.font}},
+    emphasis:{itemStyle:{opacity:1,borderColor:'#263238',borderWidth:1.2},
+      label:{show:true,formatter:function(p){return p.data?p.data.customerId:'';}}},
+    animation:false
+  };
+});
+
+// ========================= 07. 图例多选显隐：默认全显，点击哪类就切换哪类 =========================
+// V6：一次 legendToggleSelect 只更新一个系列，不发送7次 legendUnSelect。
+// 这既符合常规多选图例习惯，也减少 GL 场景重绘次数。
+// 图例直接修改已有 ZRender 元素样式，避免 setOption(graphic) 导致布局合并错位。
+function findChartFromEvent(element,evt){
+  if(typeof myChart!=='undefined'&&myChart&&typeof myChart.dispatchAction==='function')return myChart;
+  if(typeof chart!=='undefined'&&chart&&typeof chart.dispatchAction==='function')return chart;
+  if(typeof echartsInstance!=='undefined'&&echartsInstance&&typeof echartsInstance.dispatchAction==='function')return echartsInstance;
+  if(typeof echarts==='undefined'||!echarts||typeof echarts.getInstanceByDom!=='function')return null;
+  var cursor=element||(evt&&evt.target),zr=null;
+  for(var n=0;cursor&&n<12;n++,cursor=cursor.parent){
+    zr=cursor.__zr||cursor._zr;
+    if(zr)break;
+  }
+  if(!zr||!zr.painter||typeof zr.painter.getViewportRoot!=='function')return null;
+  var node=zr.painter.getViewportRoot();
+  for(var j=0;node&&j<12;j++,node=node.parentNode){
+    var instance=echarts.getInstanceByDom(node);
+    if(instance&&typeof instance.dispatchAction==='function')return instance;
+  }
+  return null;
+}
+var panelFolded=false;
+// 每个分群独立显隐，不再使用单选的 focusedZone。
+var zoneVisible=ZONES.map(function(){return true;});
+function updateZrStyle(node,style){
+  if(node&&typeof node.setStyle==='function'){
+    node.setStyle(style);
+    if(typeof node.dirty==='function')node.dirty();
+  }
+}
+function renderLegendVisibility(clickedRect){
+  // clickedRect(矩形) -> row(group) -> body(group)，分群行在body的5~12号子节点。
+  var row=clickedRect&&clickedRect.parent;
+  var body=row&&row.parent;
+  if(!body||typeof body.childAt!=='function')return;
+  for(var k=0;k<ZONES.length;k++){
+    var item=body.childAt(k+5);
+    if(!item||typeof item.childAt!=='function')continue;
+    var z=ZONES[k],visible=zoneVisible[k];
+    updateZrStyle(item.childAt(0),{fill:visible?'#F8FAFB':'#F0F2F4'});
+    updateZrStyle(item.childAt(1),{
+      fill:visible?z.color:'#FFFFFF',
+      stroke:visible?z.color:'#A8B3BE',lineWidth:visible?0:1.25,
+      opacity:visible?1:0.95
+    });
+    updateZrStyle(item.childAt(2),{fill:visible?setting.colors.text:'#A8B3BE'});
+    updateZrStyle(item.childAt(3),{fill:visible?setting.colors.muted:'#B7C0C9'});
+    updateZrStyle(item.childAt(4),{
+      fill:visible?(z.count?z.color:'#FFFFFF'):'#FFFFFF',
+      stroke:visible?z.color:'#A8B3BE',lineWidth:visible?0.8:1.25,
+      opacity:visible?0.85:1
+    });
+    updateZrStyle(item.childAt(5),{fill:visible?z.color:'#A8B3BE'});
+    updateZrStyle(item.childAt(6),{
+      text:visible?'显示中':'已隐藏',
+      fill:visible?setting.colors.muted:'#8995A1'
+    });
+  }
+}
+function onZoneClick(index,element,evt){
+  var target=findChartFromEvent(element,evt);
+  if(!target)return;
+  target.dispatchAction({type:'legendToggleSelect',name:ZONES[index].cn});
+  zoneVisible[index]=!zoneVisible[index];
+  renderLegendVisibility(element);
+  if(typeof target.getZr==='function'){
+    var zr=target.getZr();
+    if(zr&&typeof zr.refresh==='function')zr.refresh();
+  }
+}
+function togglePanel(element,evt){
+  // 可靠折叠与是否能获取echarts实例无关：直接在ZRender对象树中设置 ignore。
+  // Button -> state group -> root group；root下固定 [anchor, body, tab] 顺序。
+  var stateGroup=element&&element.parent;
+  var root=stateGroup&&stateGroup.parent;
+  if(!root||typeof root.childAt!=='function')return;
+  var body=root.childAt(1),tab=root.childAt(2);
+  if(!body||!tab)return;
+  panelFolded=!panelFolded;
+  body.ignore=panelFolded;
+  tab.ignore=!panelFolded;
+  if(typeof body.dirty==='function')body.dirty();
+  if(typeof tab.dirty==='function')tab.dirty();
+  var chartInstance=findChartFromEvent(element,evt);
+  if(chartInstance&&typeof chartInstance.getZr==='function'){
+    chartInstance.getZr().refresh();
+  }else{
+    // 没有宿主实例也能切换对象 ignore；事件自身刷新ZRender渲染树。
+    var zr=element.__zr||stateGroup.__zr||root.__zr;
+    if(zr&&typeof zr.refresh==='function')zr.refresh();
+  }
+}
+function gText(x,y,text,size,color,weight,align){
+  return {type:'text',silent:true,x:x,y:y,style:{
+    text:String(text),fill:color,
+    font:(weight?'bold ':'')+size+'px '+setting.display.font,
+    align:align||'left',verticalAlign:'middle'
+  }};
+}
+function buildPanelGraphic(){
+  var width=setting.layout.panelWidth,height=setting.layout.panelHeight;
+  var children=[
+    {type:'rect',silent:true,shape:{x:0,y:0,width:width,height:height,r:7},
+     style:{fill:setting.colors.card,stroke:setting.colors.grid,lineWidth:1}},
+    gText(16,23,'客户价值分群',13,setting.colors.text,true),
+    gText(16,48,'默认全部显示 · 点击隐藏/恢复对应客户群',10,setting.colors.muted),
+    {type:'rect',silent:false,cursor:'pointer',
+      shape:{x:width-42,y:8,width:34,height:32,r:5},
+      style:{fill:'#EEF2F5'},
+      onclick:function(evt){togglePanel(this,evt);}},
+    gText(width-25,24,'›',21,setting.colors.text,true,'center')
+  ];
+  var firstRowCenter=85,rowHeight=45;
+  ZONES.forEach(function(z,index){
+    var cy=firstRowCenter+index*rowHeight;
+    var row={type:'group',silent:false,children:[
+      {type:'rect',silent:false,cursor:'pointer',
+        shape:{x:8,y:cy-19,width:width-16,height:40,r:5},
+        style:{fill:'#F8FAFB'},
+        onclick:(function(idx){return function(evt){onZoneClick(idx,this,evt);};})(index)},
+      {type:'circle',silent:true,shape:{cx:22,cy:cy-4,r:4.6},style:{fill:z.color}},
+      gText(35,cy-7,z.cn,11,setting.colors.text,true),
+      gText(35,cy+10,z.condition,9,setting.colors.muted),
+      {type:'circle',silent:true,shape:{cx:width-65,cy:cy-2,r:legendBubbleRadius(z.count)},
+       style:{fill:z.count?z.color:'#FFFFFF',stroke:z.color,lineWidth:0.8,opacity:0.85}},
+      gText(width-16,cy-8,fmt(z.count)+' 人',10,z.color,true,'right'),
+      gText(width-16,cy+11,'显示中',9,setting.colors.muted,false,'right')
+    ]};
+    children.push(row);
+  });
+  children.push({type:'line',silent:true,
+    shape:{x1:16,y1:465,x2:width-16,y2:465},
+    style:{stroke:setting.colors.grid,lineWidth:1}});
+  children.push(gText(16,486,'R 高 = 最近购买距今更近',10,setting.colors.text));
+  children.push(gText(16,507,'F 高 = 购买次数更多',10,setting.colors.text));
+  children.push(gText(16,528,'M 高 = 累计消费金额更高',10,setting.colors.text));
+  children.push(gText(16,547,'分位阈值 '+threshold+' · 8个解释性分区',10,setting.colors.muted));
+  return {type:'group',id:'C033_UI_body',x:0,y:0,
+    silent:false,ignore:false,children:children};
+}
+function buildFoldedGraphic(){
+  var w=setting.layout.foldedTabWidth;
+  return {type:'group',id:'C033_UI_tab',
+    x:setting.layout.panelWidth-w,y:0,silent:false,ignore:true,
+    children:[
+      {type:'rect',silent:false,cursor:'pointer',
+        shape:{x:0,y:0,width:w,height:165,r:6},
+        style:{fill:setting.colors.card,stroke:setting.colors.grid,lineWidth:1},
+        onclick:function(evt){togglePanel(this,evt);}},
+      gText(w/2,22,'‹',20,setting.colors.text,true,'center'),
+      gText(w/2,60,'客',13,setting.colors.text,true,'center'),
+      gText(w/2,82,'户',13,setting.colors.text,true,'center'),
+      gText(w/2,104,'分',13,setting.colors.text,true,'center'),
+      gText(w/2,126,'群',13,setting.colors.text,true,'center')
+    ]};
+}
+function buildUIRoot(){
+  return {
+    type:'group',id:'C033_UI_root',right:setting.layout.panelRight,
+    top:setting.layout.panelTop,silent:false,z:100,
+    children:[
+      // 占位框确定固定布局宽高；透明且无事件，折叠后定位不跳。
+      {type:'rect',silent:true,shape:{x:0,y:0,
+       width:setting.layout.panelWidth,height:setting.layout.panelHeight},
+       style:{fill:'rgba(255,255,255,0)'}},
+      buildPanelGraphic(),
+      buildFoldedGraphic()
+    ]
+  };
+}
+
+// 3D 三轴在远端公共顶点可能同时绘制多个“0”，透视角度下形成“000”。
+// 仅保留 F 轴的 0 标签；R 和 M 轴仍保留 25/50/75/100，其原点由 F 轴 0 表达。
+// 该处理只影响刻度文字，不影响 R/F/M 数据、轴范围或网格/分区坐标。
+function axis3D(name, hideZeroLabel){
+  return {
+    type:'value',name:name,min:setting.score.min,max:setting.score.max,
+    interval:setting.score.interval,
+    nameTextStyle:{color:setting.colors.text,fontSize:11},
+    axisLine:{show:true,lineStyle:{color:setting.colors.muted,width:1}},
+    axisLabel:{
+      show:true,
+      formatter:function(value){
+        return hideZeroLabel && Math.abs(Number(value)-setting.score.min)<1e-9
+          ? '' : String(value);
+      },
+      textStyle:{color:setting.colors.muted,fontSize:10}
+    },
+    axisTick:{show:false},
+    splitLine:{show:true,lineStyle:{color:setting.colors.grid,width:1}},
+    splitArea:{show:false}
+  };
+}
+
+// ========================= 08. ECharts option =========================
+var sourceText=hasPowerBIData?setting.dataSourcePowerBI:setting.dataSourceDemo;
+var footerExplanation='图表说明：一个散点代表一个客户；R/F/M 分位评分 '+threshold+' 分切八区；点面积近似映射 M 得分。';
+if(invalidRows)footerExplanation+=' 无效行：'+invalidRows+'。';
+if(duplicateRows)footerExplanation+=' 重复ID合并：'+duplicateRows+' 行。';
+option={
+  backgroundColor:setting.colors.bg,
+  animation:false,
+  title:{
+    text:setting.title,
+    subtext:setting.subtitle+'  |  有效客户 '+fmt(validCount)+' 人',
+    left:38,top:23,itemGap:7,
+    textStyle:{color:setting.colors.text,fontSize:21,fontWeight:700},
+    subtextStyle:{color:setting.colors.muted,fontSize:12,lineHeight:20}
+  },
+  tooltip:{
+    show:true,trigger:'item',triggerOn:'mousemove|click',
+    backgroundColor:setting.colors.white,borderColor:setting.colors.grid,
+    borderWidth:1,padding:[10,13],
+    textStyle:{fontSize:12,color:setting.colors.text},
+    extraCssText:'box-shadow:0 4px 14px rgba(38,50,56,0.1);border-radius:5px;',
+    formatter:function(p){
+      if(!p || !p.data || !p.data.customerId)return '';
+      var d=p.data;
+      var z=ZONES.filter(function(q){return q.cn===d.segment;})[0];
+      var color=z?z.color:setting.colors.text;
+      return '<div style="min-width:220px;line-height:23px;color:'+setting.colors.text+'">'+
+        '<div style="font-weight:700;font-size:13px;border-bottom:1px solid '+setting.colors.grid+
+        ';padding-bottom:5px;margin-bottom:5px">'+esc(d.customerId)+'</div>'+
+        '<div style="color:'+color+';font-weight:bold">'+esc(d.segment)+'</div>'+
+        '<div style="color:'+setting.colors.muted+'">'+esc(d.condition)+'</div>'+
+        '<div style="margin-top:6px">最近购买距今天数：<b>'+fmt(d.rawR,0)+' '+esc(setting.unit.recency)+'</b></div>'+
+        '<div>购买次数：<b>'+fmt(d.rawF,0)+' '+esc(setting.unit.frequency)+'</b></div>'+
+        '<div>累计消费金额：<b>'+fmt(d.rawM,2)+' '+esc(setting.unit.monetary)+'</b></div>'+
+        '<div style="margin-top:6px;border-top:1px solid '+setting.colors.grid+';padding-top:4px">'+
+        'R 活跃度得分：'+fmt(d.rScore,1)+' / 100<br>F 频次得分：'+fmt(d.fScore,1)+
+        ' / 100<br>M 金额得分：'+fmt(d.mScore,1)+' / 100</div></div>';
+    }
+  },
+  // 默认全部选中；右侧卡片是可交互的图例外观。
+  legend:{show:false,selectedMode:'multiple',data:ZONES.map(function(z){return z.cn;}),
+    selected:ZONES.reduce(function(m,z){m[z.cn]=true;return m;}, {})},
+  grid3D:{
+    show:true,left:setting.layout.plotLeft,right:setting.layout.plotRightExpanded,
+    top:setting.layout.plotTop,bottom:setting.layout.plotBottom,
+    boxWidth:setting.camera.boxWidth,boxDepth:setting.camera.boxDepth,
+    boxHeight:setting.camera.boxHeight,
+    environment:'#FFFFFF',axisPointer:{show:false},
+    axisLine:{show:true,lineStyle:{color:setting.colors.muted,width:1}},
+    splitLine:{show:true,lineStyle:{color:setting.colors.grid,width:1}},
+    splitArea:{show:false},
+    light:{main:{intensity:1,shadow:false},ambient:{intensity:0.8}},
+    viewControl:{
+      projection:'perspective',alpha:setting.camera.alpha,beta:setting.camera.beta,
+      distance:setting.camera.distance,
+      minDistance:setting.camera.minDistance,maxDistance:setting.camera.maxDistance,
+      minAlpha:setting.camera.minAlpha,maxAlpha:setting.camera.maxAlpha,
+      rotateMouseButton:'left',panMouseButton:'right',
+      rotateSensitivity:setting.camera.rotateSensitivity,
+      panSensitivity:setting.camera.panSensitivity,
+      zoomSensitivity:setting.camera.zoomSensitivity,
+      autoRotate:false
+    }
+  },
+  xAxis3D:axis3D(setting.axis.r,true),
+  yAxis3D:axis3D(setting.axis.f,false),
+  zAxis3D:axis3D(setting.axis.m,true),
+  graphic:[
+    {type:'rect',silent:true,shape:{x:38,y:13,width:20,height:4},
+      style:{fill:setting.colors.negative}},
+    buildUIRoot(),
+    {type:'group',left:38,bottom:18,silent:true,children:[
+      gText(0,0,'数据来源：'+sourceText,10,setting.colors.muted),
+      gText(0,17,footerExplanation,10,setting.colors.muted)
+    ]}
+  ],
+  series:backgroundSurfaces().concat(customerSeries)
+};
