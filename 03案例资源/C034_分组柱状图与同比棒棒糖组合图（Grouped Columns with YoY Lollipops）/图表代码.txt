@@ -1,0 +1,455 @@
+﻿/*
+ * C019 分组柱状图、同比棒棒糖与区间累计增长率（极值强调版）
+ * ECharts for Power BI · ECharts 5.x
+ * 数据案例：Apple Inc. FY2022—FY2025，按经营地区分组
+ * 来源：Apple FY2024 / FY2025 Form 10-K，Segment Operating Performance
+ * https://www.sec.gov/Archives/edgar/data/320193/000032019324000123/aapl-20240928.htm
+ * https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/aapl-20250927.htm
+ * 原始数据单位：百万美元；示例通过 setting.valueScale 换算为亿美元。
+ * 使用方法：完整复制到 ECharts 官方编辑器 JS 面板，无需 HTML/DOM；在 Power BI 中替换三个字段数组。
+ * 2022→2025 标注 = (末年规模/首年规模 - 1) × 100%，不是 CAGR（年均复合增长率）。
+ */
+
+// ───────────────────────── 1. 三个 Power BI 输入字段 ─────────────────────────
+// 三个一维数组，逐个索引对应一条记录；仅此处需要替换实际字段。
+// 2022—2025 财年净销售额，原表单位：百万美元。顺序随意，由下方逻辑自动分组并按财年排序。
+var 年份 = [
+  '2022','2023','2024','2025', '2022','2023','2024','2025',
+  '2022','2023','2024','2025', '2022','2023','2024','2025',
+  '2022','2023','2024','2025'
+];
+var 分类 = [
+  '美洲','美洲','美洲','美洲',
+  '欧洲','欧洲','欧洲','欧洲',
+  '大中华区','大中华区','大中华区','大中华区',
+  '日本','日本','日本','日本',
+  '亚太其他地区','亚太其他地区','亚太其他地区','亚太其他地区'
+];
+var 度量值 = [
+  169658,162560,167045,178353,
+  95118,94294,101328,111032,
+  74200,72559,66952,64377,
+  25977,24257,25052,28703,
+  29375,29615,30658,33696
+];
+
+/*
+Power BI 替换示例（字段序号按视觉对象实际绑定顺序调整）：
+var 年份   = dataArr.dataObjects[0].values;
+var 分类   = dataArr.dataObjects[1].values;
+var 度量值 = dataArr.dataObjects[2].values;
+如输入数据已经以“亿美元”为单位，应同时设置 setting.valueScale = 1。
+*/
+
+// ─────────────────────────── 2. 全部可修改设置 ───────────────────────────
+var setting = {
+  title: '苹果全球营收：哪些市场在增长？',
+  subtitle: '地区分组 / 年度比较 / 同比变化 / 区间累计增长', // 年份范围在下方按输入数组自动生成
+  unit: '亿美元',
+  valueScale: 0.01,         // 原始“百万美元”×0.01 = 亿美元；其他数据如已是目标单位，改为 1
+  decimals: 1,
+  sortGroupsByLatest: true,// true 按最近一年的规模降序；false 保持输入首次出现顺序
+  showYoYLabel: true,
+  showTotalGrowth: true,  // 各分组顶部显示首年至末年累计增长率（不是 CAGR）
+  totalGrowthDecimals: 1,
+  summaryBracketDrop: 8,  // 顶部浅灰跨度标记两端向下的短线长度（像素）
+  summaryBracketOverhang: 6, // 跨度标记比首、末两柱中心各外扩的像素
+  showChangeAmount: false, // true 在棒棒糖零线旁增加同比增减额（组数较多时建议关闭）
+  emphasizeLatestYear: true,
+  showGridLines: true, // 仅绘制关键参考线，不使用默认密集网格
+  showZeroBaseline: true, // 同比 0% 主基准线，比其他参考线稍深
+  markerTop: 34,         // 红短线顶部；与标题文字的实际视觉距离约 10px
+  markerHeight: 4,
+  summaryHighlightExtremes: true, // 只强调“累计增长最快”与“累计下降最多”的分组；色彩只表达正负方向
+  summaryNormalWeight: 500,
+  summaryEmphasisWeight: 700,
+  showAllBarLabels: true, // false 仅显示末期的柱体标签，适合小画布
+  widthFallback: 1320,     // 无图表实例可读取时的默认设计宽度
+  heightFallback: 800,
+  margins: {left: 86, right: 38},
+  colors: {
+    positive: '#239263',  // 同比增长，遵循项目统一视觉规范
+    negative: '#D9544D',  // 同比下降，遵循项目统一视觉规范
+    neutral: '#8493A2',
+    historical1: '#E2E6EA',
+    historical2: '#C4CCD4',
+    historical3: '#9EAAB6',
+    latest: '#303740',    // 苹果式极简深灰，突出最新年度
+    text: '#263238',
+    textSecondary: '#8493A2',
+    rule: '#E5E9ED',
+    bracket: '#AEB7C1',  // 首末年累计增长率的浅灰辅助连接线
+    background: 'transparent'
+  },
+  sourceText: '数据来源：Apple Inc. 2024 / 2025 Form 10-K，地区净销售额',
+  noteText: '图表说明：单位亿美元；同比＝(当年－上年)/上年；顶部为首末年累计变化，非CAGR；财年非自然年。'
+};
+
+// ───────────────────────── 3. 通用数据处理与同比计算 ─────────────────────────
+var C = setting.colors;
+function fmtValue(raw, digits) {
+  if (raw === null || raw === undefined || !Number.isFinite(Number(raw))) return '—';
+  return (Number(raw) * setting.valueScale).toLocaleString('zh-CN', {
+    minimumFractionDigits: digits, maximumFractionDigits: digits
+  });
+}
+function fmtRate(rate) {
+  return rate === null || !Number.isFinite(rate) ? '—' : Math.abs(rate).toFixed(1) + '%';
+}
+function fmtSignedRate(rate,digits) {
+  if (rate === null || !Number.isFinite(rate)) return '—';
+  return (rate > 0 ? '+' : '') + rate.toFixed(digits) + '%';
+}
+function signSymbol(n) { return n > 0 ? '▲' : n < 0 ? '▼' : '·'; }
+function semColor(n) { return n > 0 ? C.positive : n < 0 ? C.negative : C.neutral; }
+function safeHtml(value) {
+  return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+if (年份.length !== 分类.length || 年份.length !== 度量值.length) {
+  throw new Error('年份、分类、度量值三个输入数组长度必须一致。');
+}
+var allYears = Array.from(new Set(年份.map(v => String(v)))).sort(function(a,b) {
+  return (Number.isFinite(Number(a)) && Number.isFinite(Number(b)))
+    ? Number(a) - Number(b) : a.localeCompare(b, 'zh-CN', {numeric: true});
+});
+var allGroups = Array.from(new Set(分类.map(v => String(v))));
+var lookup = new Map();
+for (var i = 0; i < 年份.length; i++) {
+  var year = String(年份[i]), group = String(分类[i]);
+  var numericValue = Number(度量值[i]);
+  if (度量值[i] === null || 度量值[i] === '' || !Number.isFinite(numericValue)) continue;
+  var key = JSON.stringify([group, year]);
+  lookup.set(key, (lookup.get(key) || 0) + numericValue);
+}
+function rawValue(g,y) {
+  var k = JSON.stringify([g,y]);
+  return lookup.has(k) ? lookup.get(k) : null;
+}
+if (setting.sortGroupsByLatest && allYears.length) {
+  var latestYear = allYears[allYears.length - 1];
+  allGroups.sort((a,b) => (rawValue(b,latestYear) ?? -Infinity) - (rawValue(a,latestYear) ?? -Infinity));
+}
+var gapSize = 1;
+var axisLabels = [], barPoints = [], growthPoints = [], linePoints = [], groupCenters = [], separatorIndices = [];
+var groupSummaries = new Map();
+var firstYear = allYears.length ? allYears[0] : null;
+var lastYear = allYears.length ? allYears[allYears.length-1] : null;
+var maxRevenue = 0, maxYoY = 0, minYoY = 0;
+var barColors = [C.historical1, C.historical2, C.historical3];
+allGroups.forEach(function(group, groupIndex) {
+  var start = axisLabels.length;
+  var firstRaw = firstYear !== null ? rawValue(group, firstYear) : null;
+  var lastRaw = lastYear !== null ? rawValue(group, lastYear) : null;
+  var totalGrowthRate = firstRaw !== null && lastRaw !== null && firstRaw !== 0 && allYears.length >= 2
+    ? 100 * (lastRaw - firstRaw) / Math.abs(firstRaw) : null;
+  // 比例类度量默认首期为正数；如首期为负，分母用绝对值避免符号歧义。
+  groupSummaries.set(group, {fromYear:firstYear, toYear:lastYear,
+    firstRaw:firstRaw, lastRaw:lastRaw, totalGrowthRate:totalGrowthRate});
+  allYears.forEach(function(year, yearIndex) {
+    var raw = rawValue(group, year);
+    var prevYear = yearIndex > 0 ? allYears[yearIndex-1] : null;
+    var prevRaw = prevYear !== null ? rawValue(group,prevYear) : null;
+    var hasYoY = raw !== null && prevRaw !== null && prevRaw !== 0;
+    var delta = hasYoY ? raw-prevRaw : null;
+    var rate = hasYoY ? 100*delta/prevRaw : null;
+    maxRevenue = raw !== null ? Math.max(maxRevenue,raw*setting.valueScale) : maxRevenue;
+    var axisIndex = axisLabels.length;
+    axisLabels.push(year);
+    var fill = (setting.emphasizeLatestYear && yearIndex === allYears.length-1)
+      ? C.latest : barColors[Math.min(yearIndex,barColors.length-1)];
+    barPoints.push({
+      value: raw === null ? '-' : raw * setting.valueScale,
+      itemStyle: {color:fill, borderRadius:[2,2,0,0]},
+      _meta: {group:group, year:year, raw:raw, prevYear:prevYear, prevRaw:prevRaw, delta:delta, rate:rate}
+    });
+    if (hasYoY) {
+      maxYoY = Math.max(maxYoY,rate);
+      minYoY = Math.min(minYoY,rate);
+      growthPoints.push({
+        value: [axisIndex,rate],
+        _meta: {group:group, year:year, raw:raw, prevYear:prevYear, prevRaw:prevRaw, delta:delta, rate:rate},
+        symbolSize: yearIndex === allYears.length - 1 ? 14 : 10,
+        itemStyle: {color:semColor(rate), borderColor:'#FFFFFF',borderWidth:2},
+        label: {
+          show:setting.showYoYLabel,
+          position: rate >= 0 ? 'top' : 'bottom',
+          distance: 8,
+          color:semColor(rate),
+          fontSize:11,
+          fontWeight: yearIndex === allYears.length-1 ? 700 : 500,
+          formatter:function(p) {
+            var r=p.data._meta.rate;
+            return signSymbol(r) + ' ' + fmtRate(r);
+          }
+        }
+      });
+      linePoints.push({value:[axisIndex,rate], _meta:{group:group,year:year,delta:delta,rate:rate}});
+    }
+  });
+  groupCenters.push({name:group,startIndex:start,endIndex:start+allYears.length-1,
+    axisCenter:start + (allYears.length-1)/2,summary:groupSummaries.get(group)});
+  if (groupIndex < allGroups.length-1) {
+    separatorIndices.push(axisLabels.length);
+    for (var j=0;j<gapSize;j++) {axisLabels.push('');barPoints.push('-');}
+  }
+});
+
+// ───────────────────────── 4. 自适应像素布局（Grid 四边均为像素） ─────────────────────────
+var chartInstance = typeof myChart !== 'undefined' && myChart && typeof myChart.getWidth === 'function'
+  ? myChart : (typeof chart !== 'undefined' && chart && typeof chart.getWidth === 'function' ? chart : null);
+var W = chartInstance ? chartInstance.getWidth() : setting.widthFallback;
+var H = chartInstance ? chartInstance.getHeight() : setting.heightFallback;
+if (!W || W < 200) W = setting.widthFallback;
+if (!H || H < 250) H = setting.heightFallback;
+var left = setting.margins.left, right = setting.margins.right;
+var plotWidth = Math.max(100,W-left-right);
+// 顶部依次为：标题标记 → 标题/副标题 → 图例 → 分组名称 → 首末年累计增长率 → 棒棒糖图。
+// 新增累计增长率占据单独的标题带，不侵入同比坐标系。
+var topY = Math.max(216, Math.round(H * 0.275));
+var topHeight = Math.max(118, Math.round((H - topY - 145) * 0.48));
+var bottomY = topY + topHeight + 58;
+var bottomHeight = Math.max(110, H - bottomY - 106);
+var tickWidth = plotWidth / Math.max(axisLabels.length,1);
+var rangeLo = Math.min(-10,Math.floor((minYoY-4)/5)*5);
+var rangeHi = Math.max(20,Math.ceil((maxYoY+4)/5)*5);
+var maxAxisRevenue = Math.max(1,Math.ceil(maxRevenue*1.18/100)*100);
+var zeroPixelY = topY + topHeight * rangeHi/(rangeHi-rangeLo);
+function niceMajorStep(maxValue) {
+  // 目标约每半图 1 条主刻度，如当前营收上限约 2200，则刻度间隔 1000。
+  if (!(maxValue > 0)) return 1;
+  var approximate = maxValue / 2.4;
+  var power = Math.pow(10, Math.floor(Math.log10(approximate)));
+  var factor = approximate / power;
+  return (factor <= 1.25 ? 1 : factor <= 2.5 ? 2 : factor <= 5 ? 5 : 10) * power;
+}
+var revenueMajorStep = niceMajorStep(maxAxisRevenue);
+function isMultipleOfStep(value, step) {
+  return Math.abs(value / step - Math.round(value / step)) < 1e-7;
+}
+// V5：从数据中分别挑选“正增长最高”与“负增长最低”的分组；不按绝对值 Top N 排名。
+// 如果某个方向不存在，则不强行补一个名额；两个方向各最多强调一个分组。
+var emphasisGroups = new Set();
+if (setting.summaryHighlightExtremes) {
+  var highestPositive = null;
+  var lowestNegative = null;
+  groupCenters.forEach(function(g) {
+    var rate = g.summary && g.summary.totalGrowthRate;
+    if (!Number.isFinite(rate)) return;
+    if (rate > 0 && (!highestPositive || rate > highestPositive.rate)) {
+      highestPositive = {name:g.name, rate:rate};
+    }
+    if (rate < 0 && (!lowestNegative || rate < lowestNegative.rate)) {
+      lowestNegative = {name:g.name, rate:rate};
+    }
+  });
+  if (highestPositive) emphasisGroups.add(highestPositive.name);
+  if (lowestNegative) emphasisGroups.add(lowestNegative.name);
+}
+
+// V5 为独立文件；请在 ECharts 官方编辑器 JS 面板全选覆盖旧版内容。
+var graphics = [
+  // 红线与标题左边缘对齐，仅作装饰性标记。
+  {type:'rect',silent:true,z:30,shape:{x:28,y:setting.markerTop,width:20,height:setting.markerHeight},style:{fill:C.negative}},
+  {type:'text',left:24,top:topY-3,style:{text:'同比增长率',font:'11px sans-serif',fill:C.textSecondary,textAlign:'left'}},
+  {type:'text',left:24,top:bottomY-4,style:{text:'营收规模',font:'11px sans-serif',fill:C.textSecondary,textAlign:'left'}},
+  {type:'text',left:24,top:H-62,style:{text:setting.sourceText,font:'11px sans-serif',fill:C.textSecondary}},
+  {type:'text',left:24,top:H-43,style:{text:setting.noteText,font:'11px sans-serif',fill:C.textSecondary}}
+];
+// 上层只保留 -10%、+10% 两条浅色参考线；0% 基准线略深。
+// 下层只保留 1×/2×... 主刻度线。其它辅助网格全部关闭，减轻画面灰度。
+if (setting.showGridLines) {
+  [-10, 10].forEach(function(v) {
+    if (v <= rangeLo || v >= rangeHi) return;
+    var py = topY + (rangeHi - v) / (rangeHi - rangeLo) * topHeight;
+    graphics.push({type:'line',silent:true,z:-3,
+      shape:{x1:left,y1:py,x2:W-right,y2:py},
+      style:{stroke:C.rule,lineWidth:1,opacity:0.65}});
+  });
+  for (var v = revenueMajorStep; v < maxAxisRevenue - 1e-8; v += revenueMajorStep) {
+    var py = bottomY + bottomHeight * (1-v/maxAxisRevenue);
+    graphics.push({type:'line',silent:true,z:-3,
+      shape:{x1:left,y1:py,x2:W-right,y2:py},
+      style:{stroke:C.rule,lineWidth:1,opacity:0.7}});
+  }
+}
+if (setting.showZeroBaseline) {
+  graphics.push({type:'line',silent:true,z:-2,
+    shape:{x1:left,y1:zeroPixelY,x2:W-right,y2:zeroPixelY},
+    style:{stroke:C.bracket,lineWidth:1,opacity:0.75}});
+}
+var groupTitleY = topY - 81;
+var summaryTextY = topY - 53;
+var summaryLineY = topY - 33;
+groupCenters.forEach(function(g) {
+  var cx=left+(g.axisCenter+0.5)*tickWidth;
+  graphics.push({type:'text',silent:true,z:30,x:cx,y:groupTitleY,
+    style:{text:g.name,fill:C.text,font:'600 14px sans-serif',textAlign:'center',textVerticalAlign:'middle'}});
+
+  // 同一类别的第一年到最后一年：淡灰跨度括号 + 正负语义色标签。
+  // 图形按数据位置生成，不在代码中写死地区名称或具体年份。
+  var summary=g.summary;
+  if (setting.showTotalGrowth && summary.totalGrowthRate !== null) {
+    var r=summary.totalGrowthRate;
+    var spanText=summary.fromYear+' → '+summary.toYear;
+    var rateText=fmtSignedRate(r,setting.totalGrowthDecimals);
+    var braceX1=left+(g.startIndex+0.5)*tickWidth-setting.summaryBracketOverhang;
+    var braceX2=left+(g.endIndex+0.5)*tickWidth+setting.summaryBracketOverhang;
+    var drop=setting.summaryBracketDrop;
+    graphics.push({type:'line',silent:true,z:25,shape:{x1:braceX1,y1:summaryLineY+drop,x2:braceX1,y2:summaryLineY},
+      style:{stroke:C.bracket,lineWidth:1}});
+    graphics.push({type:'line',silent:true,z:25,shape:{x1:braceX1,y1:summaryLineY,x2:braceX2,y2:summaryLineY},
+      style:{stroke:C.bracket,lineWidth:1}});
+    graphics.push({type:'line',silent:true,z:25,shape:{x1:braceX2,y1:summaryLineY,x2:braceX2,y2:summaryLineY+drop},
+      style:{stroke:C.bracket,lineWidth:1}});
+    // 保持两个独立文字元素；仅强调增长最快和下降最多的数值，字号与颜色规则不变。
+    graphics.push({type:'text',silent:true,z:30,x:cx-7,y:summaryTextY,
+      style:{text:spanText,font:'11px sans-serif',fill:C.textSecondary,
+        textAlign:'right',textVerticalAlign:'middle'}});
+    var summaryWeight = emphasisGroups.has(g.name)
+      ? setting.summaryEmphasisWeight : setting.summaryNormalWeight;
+    graphics.push({type:'text',silent:true,z:30,x:cx+7,y:summaryTextY,
+      style:{text:rateText,font:summaryWeight+' 12px sans-serif',fill:semColor(r),
+        textAlign:'left',textVerticalAlign:'middle'}});
+  }
+});
+separatorIndices.forEach(function(idx) {
+  var px=left+(idx+0.5)*tickWidth;
+  graphics.push({type:'line',silent:true,
+    shape:{x1:px,y1:groupTitleY-13,x2:px,y2:bottomY+bottomHeight+27},
+    style:{stroke:C.rule,lineWidth:1,opacity:0.55}});
+});
+var yearLegendStart = left;
+var legendY = 112;
+allYears.forEach(function(year,yi) {
+  var lx=yearLegendStart+yi*94;
+  var lc=(setting.emphasizeLatestYear && yi===allYears.length-1)
+    ? C.latest : barColors[Math.min(yi,barColors.length-1)];
+  graphics.push({type:'rect',shape:{x:lx,y:legendY,width:12,height:12},style:{fill:lc}});
+  graphics.push({type:'text',x:lx+18,y:legendY+6,
+    style:{text:year,fill:C.textSecondary,font:'12px sans-serif',textVerticalAlign:'middle'}});
+});
+// 把同比色义作为另一组简短图例，避免将“年份”和“增长方向”混为一谈。
+var semLegendX = left + allYears.length*94 + 32;
+[
+  {text:'同比增长',color:C.positive}, {text:'同比下降',color:C.negative}
+].forEach(function(it,idx) {
+  var sx=semLegendX+idx*112;
+  graphics.push({type:'circle',shape:{cx:sx+6,cy:legendY+6,r:5},style:{fill:it.color}});
+  graphics.push({type:'text',x:sx+18,y:legendY+6,
+    style:{text:it.text,fill:C.textSecondary,font:'12px sans-serif',textVerticalAlign:'middle'}});
+});
+if (setting.showChangeAmount) {
+  growthPoints.forEach(function(pt) {
+    var m=pt._meta;
+    var dy=m.rate>=0 ? 15 : -15;
+    graphics.push({type:'text',
+      x:left+(pt.value[0]+0.5)*tickWidth,y:zeroPixelY+dy,
+      style:{text:(m.delta>0?'+':'')+fmtValue(m.delta,setting.decimals),
+        fill:C.textSecondary,font:'10px sans-serif',textAlign:'center',textVerticalAlign:'middle'}});
+  });
+}
+
+function tooltipHtml(p) {
+  if (!p || !p.data || !p.data._meta) return '';
+  var m=p.data._meta;
+  var summary=groupSummaries.get(m.group);
+  var yoyKnown = m.rate !== null && Number.isFinite(m.rate);
+  var headline='<div style="font-size:13px;font-weight:700;color:'+C.text+';margin-bottom:10px;">'+safeHtml(m.group)
+    +'<span style="font-weight:400;color:'+C.textSecondary+';margin-left:12px;">'+safeHtml(m.year)+' 财年</span></div>';
+  var revenue='<div style="display:flex;justify-content:space-between;gap:35px;margin:6px 0;">'
+    +'<span style="color:'+C.textSecondary+';">净销售额</span><b>'+fmtValue(m.raw,2)+' '+safeHtml(setting.unit)+'</b></div>';
+  var comparison=yoyKnown
+    ? '<div style="display:flex;justify-content:space-between;gap:35px;margin:6px 0;">'
+      +'<span style="color:'+C.textSecondary+';">'+safeHtml(m.prevYear)+' 财年</span><span>'+fmtValue(m.prevRaw,2)+' '+safeHtml(setting.unit)+'</span></div>'
+      +'<div style="border-top:1px solid '+C.rule+';margin:8px 0;"></div>'
+      +'<div style="display:flex;justify-content:space-between;gap:35px;margin:6px 0;">'
+      +'<span style="color:'+C.textSecondary+';">同比增减额</span><b style="color:'+semColor(m.delta)+';">'
+      +signSymbol(m.delta)+' '+fmtValue(Math.abs(m.delta),2)+' '+safeHtml(setting.unit)+'</b></div>'
+      +'<div style="display:flex;justify-content:space-between;gap:35px;margin:6px 0;">'
+      +'<span style="color:'+C.textSecondary+';">同比增长率</span><b style="color:'+semColor(m.rate)+';">'
+      +signSymbol(m.rate)+' '+fmtRate(m.rate)+'</b></div>'
+    : '<div style="font-size:11px;color:'+C.textSecondary+';margin-top:8px;">首期或缺少同期数据，不计算同比</div>';
+  var totalGrowthHtml = setting.showTotalGrowth && summary && summary.totalGrowthRate !== null
+    ? '<div style="border-top:1px solid '+C.rule+';margin:9px 0 6px;"></div>'
+      + '<div style="display:flex;justify-content:space-between;gap:24px;">'
+      + '<span style="color:'+C.textSecondary+';">'+safeHtml(summary.fromYear)+' → '+safeHtml(summary.toYear)+' 累计增长</span>'
+      + '<b style="color:'+semColor(summary.totalGrowthRate)+';">'
+      +fmtSignedRate(summary.totalGrowthRate,setting.totalGrowthDecimals)+'</b></div>'
+    : '';
+  return '<div style="min-width:220px;font:12px/1.6 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;color:'+C.text+';">'
+    +headline+revenue+comparison+totalGrowthHtml+'</div>';
+}
+
+// ───────────────────────── 5. ECharts option ─────────────────────────
+option = {
+  backgroundColor: setting.colors.background,
+  animationDuration: 450,
+  animationDurationUpdate: 250,
+  textStyle: {fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif'},
+  title: {
+    left:24,top:43,
+    text:setting.title,
+    subtext:(firstYear === null ? '' : ('FY'+firstYear+'—FY'+lastYear+'  ·  ')) + setting.subtitle,
+    textStyle:{fontSize:21,fontWeight:700,color:C.text},
+    subtextStyle:{fontSize:12,color:C.textSecondary,lineHeight:20},
+    itemGap:12
+  },
+  tooltip:{
+    trigger:'item', confine:true, appendToBody:false,
+    backgroundColor:'#FFFFFF',borderColor:C.rule,borderWidth:1,padding:[12,14],
+    extraCssText:'box-shadow:0 8px 30px rgba(38,50,56,0.09);border-radius:8px;',
+    formatter:tooltipHtml
+  },
+  grid:[
+    {left:left,right:right,top:topY,bottom:H-topY-topHeight,containLabel:false},
+    {left:left,right:right,top:bottomY,bottom:H-bottomY-bottomHeight,containLabel:false}
+  ],
+  xAxis:[
+    {type:'category',gridIndex:0,data:axisLabels,axisLine:{show:false},axisTick:{show:false},
+      axisLabel:{show:false},splitLine:{show:false},boundaryGap:true},
+    {type:'category',gridIndex:1,data:axisLabels,axisLine:{show:true,lineStyle:{color:C.rule,width:1}},
+      axisTick:{show:false},axisLabel:{show:true,interval:0,color:C.textSecondary,fontSize:10,margin:11},
+      splitLine:{show:false},boundaryGap:true}
+  ],
+  yAxis:[
+    {type:'value',gridIndex:0,min:rangeLo,max:rangeHi,interval:5,
+      axisLabel:{color:C.textSecondary,fontSize:11,formatter:function(v){return (v===0 || v===10 || v===-10) ? v+'%' : '';}},
+      axisLine:{show:false},axisTick:{show:false},
+      splitLine:{show:false}},
+    {type:'value',gridIndex:1,min:0,max:maxAxisRevenue,interval:revenueMajorStep,
+      axisLabel:{color:C.textSecondary,fontSize:11,formatter:function(v){return isMultipleOfStep(v,revenueMajorStep) ? v.toLocaleString('zh-CN') : '';}},
+      axisLine:{show:false},axisTick:{show:false},
+      splitLine:{show:false}}
+  ],
+  graphic:graphics,
+  series:[
+    {
+      name:'同比连接线',type:'custom',xAxisIndex:0,yAxisIndex:0,
+      silent:true,tooltip:{show:false},z:2,
+      renderItem:function(params,api){
+        var x=api.value(0),r=api.value(1);
+        var p0=api.coord([x,0]),p1=api.coord([x,r]);
+        return {type:'line',shape:{x1:p0[0],y1:p0[1],x2:p1[0],y2:p1[1]},
+          style:{stroke:semColor(r),lineWidth:2,opacity:0.78}};
+      },
+      encode:{x:0,y:1},
+      data:linePoints
+    },
+    {
+      name:'同比增长率',type:'scatter',xAxisIndex:0,yAxisIndex:0,
+      data:growthPoints,z:5,
+      emphasis:{scale:1.16,label:{show:true}}
+    },
+    {
+      name:'年度规模',type:'bar',xAxisIndex:1,yAxisIndex:1,
+      data:barPoints,z:3,
+      barWidth:Math.max(9,Math.min(32,tickWidth*0.66)),
+      label:{show:true,position:'top',distance:5,color:C.text,fontSize:10,
+        formatter:function(p){return p.data && p.data._meta && p.data._meta.raw !== null
+          && (setting.showAllBarLabels || p.data._meta.year === lastYear)
+          ? fmtValue(p.data._meta.raw,setting.decimals) : '';}},
+      emphasis:{itemStyle:{opacity:0.78}}
+    }
+  ]
+};

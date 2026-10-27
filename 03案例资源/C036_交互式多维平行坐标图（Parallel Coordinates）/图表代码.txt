@@ -1,0 +1,615 @@
+﻿/*
+C036_Interactive_Parallel_Coordinates
+ECharts for Power BI | 多维平行坐标与坐标轴范围刷选
+
+示例数据：2023 年，30 个经济体，世界银行 WDI，经 Gapminder WDI 数据镜像获取。
+数据仓库：https://github.com/open-numbers/ddf--open_numbers--world_development_indicators
+指标代码：NY.GDP.PCAP.CD, SP.DYN.LE00.IN, IT.NET.USER.ZS,
+          SP.URB.TOTL.IN.ZS, SP.DYN.TFRT.IN
+说明：仅示例说明使用国家经济体数据；算法对业务字段和国家名称不作任何硬编码。
+      第一次使用时修改下方 6 个平行数组、setting.axisDefs、标题和数据来源。
+      图中的条件筛选属于 ECharts 内部可视化刷选，不等同于 Power BI 跨视觉对象交叉筛选。
+*/
+
+// 【一】示例输入：6 个一维平行数组；对象名称[i] 对应所有指标[i]。
+// 在 Power BI 中分别替换为 dataArr.dataObjects[i].values（核对绑定顺序，保留明细行）。
+var 对象名称 = ["中国", "美国", "印度", "日本", "德国", "英国", "法国", "巴西", "加拿大", "澳大利亚", "韩国", "印度尼西亚", "墨西哥", "南非", "尼日利亚", "埃及", "沙特阿拉伯", "土耳其", "阿根廷", "智利", "哥伦比亚", "秘鲁", "泰国", "越南", "马来西亚", "新加坡", "新西兰", "瑞典", "挪威", "瑞士"];
+var 指标1 = [12951.17824,82586.78477,2434.44826,35215.00354,54776.76682,49919.68966,44700.13842,10377.58928,54847.53701,65058.37731,35674.096,4876.2993,13830.84385,6034.27209,2138.76384,3456.78965,36156.85625,13375.09473,14261.84657,17081.51807,7012.49169,7919.04635,7210.54131,4322.82572,11386.03956,86382.59005,49302.34188,54950.28347,90984.40871,104449.75452];
+var 指标2 = [77.953,78.38537,72.003,84.04122,81.04146,81.2381,82.83171,75.848,81.62634,83.05122,83.42927,71.146,75.069,66.139,54.462,71.633,78.732,77.156,77.395,81.167,77.725,77.74,76.412,74.588,76.657,83.09756,81.75854,83.30976,83.0122,84.1561];
+var 指标3 = [90.6,93.5256,60.2523,85.0099,92.47638,95.4472,86.83636,84.1506,94.1453,96.1161,97.41597,69.20837,81.18319,78.3367,40.064,74.0119,100,85.96074,89.22897,94.45742,77.33686,79.48484,89.53525,78.08,97.69273,94.28519,93.3261,95.70327,99,97.34437];
+var 指标4 = [65.53014,80.07156,35.06769,92.08269,81.90344,83.16019,78.78043,87.61597,82.52506,87.4867,81.16456,58.11794,79.47349,63.58237,62.17468,42.70981,84.29624,89.02184,92.19451,88.81586,78.27557,84.78103,60.93419,38.12989,76.44348,100,83.8899,88.63122,83.07186,85.18542];
+var 指标5 = [0.999,1.6165,1.975,1.2,1.39,1.56,1.66,1.619,1.27,1.499,0.721,2.127,1.91,2.216,4.482,2.75,2.28,1.51,1.5,1.167,1.645,1.98,1.212,1.913,1.55,0.97,1.57,1.45,1.4,1.33];
+
+// 【二】可修改参数：优先修改这里，不需要改绘图算法。
+var setting = {
+    title: '越富裕，就一定越长寿吗？',
+    subtitle: '30个经济体 · 2023年 · 五维发展指标对比',
+    sourceText: '世界银行 WDI（经 Gapminder WDI 数据镜像获取），2023年',
+    noteText: '点击折线或下拉选择对象，数值在对应坐标轴标注；拖动坐标轴可组合筛选。各轴独立，相关不代表因果。',
+    itemLabel: '经济体',
+    axisDefs: [
+        { name: '人均 GDP', unit: '美元', decimals: 0, axisAbbrev: 'k', minBound: 0 },
+        { name: '预期寿命', unit: '岁', decimals: 1, axisAbbrev: '' },
+        { name: '互联网使用率', unit: '%', decimals: 1, axisAbbrev: '', minBound: 0, maxBound: 100 },
+        { name: '城镇人口占比', unit: '%', decimals: 1, axisAbbrev: '', minBound: 0, maxBound: 100 },
+        { name: '总和生育率', unit: '孩/妇女', decimals: 2, axisAbbrev: '' }
+    ],
+    // 原始数组顺序保持不变；只改变展示顺序。索引 1 的预期寿命移动到最右端。
+    axisDisplayOrder: [0, 2, 3, 4, 1],
+    // 0 为自动线性轴；某些高度偏态的金额数据可以将对应轴设为 'log'，但必须所有数据 > 0。
+    axisTypes: ['value', 'value', 'value', 'value', 'value'],
+    colors: {
+        background: 'transparent',
+        title: '#263238',
+        secondary: '#8493A2',
+        grid: '#E5E9ED',
+        neutral: '#AEB7C1',
+        line: '#688BA7',
+        emphasis: '#D9544D',
+        positive: '#239263'
+    },
+    layout: {
+        fallbackWidth: 1160,
+        fallbackHeight: 720,
+        chartLeft: 104,
+        chartRight: 100,
+        chartTop: 168,
+        chartBottom: 94,
+        minHeight: 310
+    },
+    lineWidth: 1.25,
+    lineOpacity: 0.32,
+    selectedOpacity: 1,
+    unselectedOpacity: 0.12,
+    clickSelectEnabled: true,
+    clickSelectedColor: '#D9544D',
+    searchEnabled: true, // 可输入/可滚动下拉选择，支持与点击折线双向联动。
+    searchPlaceholder: '搜索国家或经济体…',
+    searchWidth: 238, // 像素宽度；自适应容器窄屏布局。
+    dropdownMaxHeight: 230,
+    axisValueLabelsEnabled: true, // 选中单个对象后，在五根坐标轴与红线的交点旁显示数值。
+    axisValueLabelFontSize: 12,
+    axisValueLabelOffset: 9,
+    brushWidth: 20,
+    tooltipMaxWidth: 310,
+    showAxisTicks: true,
+    enableAxisBrush: true
+};
+
+// 【三】通用数据处理：只按输入字段索引对应，不做任何国家/年份假设。
+function 解析有限数值(v, row, col) {
+    if (v === null || v === undefined || String(v).trim() === '') {
+        throw new Error('第 ' + (row + 1) + ' 行 ' + col + ' 为空；不允许以 0 替代缺失。');
+    }
+    var n = typeof v === 'number' ? v : Number(String(v).replace(/,/g, '').trim());
+    if (!Number.isFinite(n)) {
+        throw new Error('第 ' + (row + 1) + ' 行 ' + col + ' 不是有效数字：' + String(v));
+    }
+    return n;
+}
+function 创建行数据(labels, columns, axisDefs, types) {
+    if (!Array.isArray(labels) || !Array.isArray(columns) || columns.length < 2) {
+        throw new Error('至少需要对象名称和两个数值指标数组。');
+    }
+    if (axisDefs.length !== columns.length || types.length !== columns.length) {
+        throw new Error('setting.axisDefs 与 axisTypes 数量必须等于指标数组数量。');
+    }
+    var seen = Object.create(null);
+    var rows = [];
+    for (var j = 0; j < columns.length; j++) {
+        if (!Array.isArray(columns[j]) || columns[j].length !== labels.length) {
+            throw new Error('指标' + (j + 1) + ' 的行数与对象名称不一致。');
+        }
+    }
+    for (var i = 0; i < labels.length; i++) {
+        var label = String(labels[i] == null ? '' : labels[i]).trim();
+        if (!label) { throw new Error('第 ' + (i + 1) + ' 行对象名称为空。'); }
+        if (seen[label]) { throw new Error('对象名称重复：' + label + '；请先确认数据粒度。'); }
+        seen[label] = true;
+        var nums = columns.map(function (col, j) {
+            var n = 解析有限数值(col[i], i, axisDefs[j].name);
+            if (types[j] === 'log' && n <= 0) {
+                throw new Error('对数轴 ' + axisDefs[j].name + ' 存在非正数：' + label);
+            }
+            return n;
+        });
+        rows.push({ name: label, value: nums, originalIndex: i });
+    }
+    if (rows.length < 2) { throw new Error('至少需要两个对象进行比较。'); }
+    return rows;
+}
+function 转义HTML(v) {
+    return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function 数值格式(v, decimals) {
+    var a = Number(v);
+    return a.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+function 轴短格式(v, definition) {
+    if (definition.axisAbbrev === 'k' && Math.abs(v) >= 1000) {
+        var num = v / 1000;
+        return (Math.abs(num) >= 100 ? num.toFixed(0) : num.toFixed(1)) + 'k';
+    }
+    if (Math.abs(v) >= 100) { return Number(v).toFixed(0); }
+    if (Math.abs(v) >= 10) { return Number(v).toFixed(0); }
+    return Number(v).toFixed(1);
+}
+function 读取画布尺寸() {
+    var c = null;
+    if (typeof myChart !== 'undefined' && myChart && typeof myChart.getWidth === 'function') { c = myChart; }
+    else if (typeof chart !== 'undefined' && chart && typeof chart.getWidth === 'function') { c = chart; }
+    return {
+        width: c ? c.getWidth() : setting.layout.fallbackWidth,
+        height: c ? c.getHeight() : setting.layout.fallbackHeight
+    };
+}
+function 生成提示(params, axisDefs) {
+    var dataItem = params.data || {};
+    var values = Array.isArray(dataItem) ? dataItem : dataItem.value;
+    if (!Array.isArray(values)) { return ''; }
+    var label = dataItem.name || params.seriesName || '对象';
+    var html = '<div style="font-family:Arial,Microsoft YaHei,sans-serif;color:#263238;min-width:220px;max-width:' + setting.tooltipMaxWidth + 'px">';
+    html += '<div style="font-size:14px;font-weight:700;margin-bottom:9px">' + 转义HTML(label) + '</div>';
+    html += '<div style="border-top:1px solid #E5E9ED;margin-bottom:9px"></div>';
+    var displayOrder = 验证坐标轴顺序(setting.axisDisplayOrder, axisDefs.length);
+    for (var j = 0; j < displayOrder.length; j++) {
+        var i = displayOrder[j];
+        var d = axisDefs[i];
+        html += '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:18px;margin:5px 0">';
+        html += '<span style="color:#8493A2">' + 转义HTML(d.name) + '</span>';
+        html += '<b style="font-variant-numeric:tabular-nums;white-space:nowrap">' + 数值格式(values[i], d.decimals) + (d.unit === '%' ? '%' : (' ' + 转义HTML(d.unit))) + '</b></div>';
+    }
+    return html + '</div>';
+}
+
+// 只改变轴的视觉排列，不修改数据数组顺序及 Power BI 字段绑定关系。
+function 验证坐标轴顺序(order, size) {
+    if (order == null) { return Array.from({ length: size }, function (_, i) { return i; }); }
+    if (!Array.isArray(order) || order.length !== size ||
+        order.some(function (n) { return !Number.isInteger(n) || n < 0 || n >= size; }) ||
+        (new Set(order)).size !== size) {
+        throw new Error('setting.axisDisplayOrder 必须是从 0 到 ' + (size - 1) + ' 的无重复索引排列。');
+    }
+    return order.slice();
+}
+
+// 【四】生成 ECharts option：五轴只是本例输入，可以在此数组与设置中扩展或缩减指标。
+var 维度数据 = [指标1, 指标2, 指标3, 指标4, 指标5];
+var rows = 创建行数据(对象名称, 维度数据, setting.axisDefs, setting.axisTypes);
+var box = 读取画布尺寸();
+var narrow = box.width < 760;
+var padX = narrow ? 64 : setting.layout.chartLeft;
+var rightX = narrow ? 64 : setting.layout.chartRight;
+var plotHeight = Math.max(setting.layout.minHeight, box.height - setting.layout.chartTop - setting.layout.chartBottom);
+var 显示顺序 = 验证坐标轴顺序(setting.axisDisplayOrder, setting.axisDefs.length);
+var axes = 显示顺序.map(function (originalIndex) {
+    var i = originalIndex;
+    var def = setting.axisDefs[i];
+    var arr = rows.map(function (r) { return r.value[i]; });
+    var lo = Math.min.apply(null, arr);
+    var hi = Math.max.apply(null, arr);
+    var span = hi - lo;
+    if (span < 1e-12) { span = Math.max(Math.abs(lo) * 0.08, 1); }
+    var margin = span * 0.075;
+    var axisMin = setting.axisTypes[i] === 'log' ? Math.max(lo * 0.75, 1e-6) : lo - margin;
+    var axisMax = hi + margin;
+    // 已有边界是业务指标口径；不能裁切真实数值。
+    if (Number.isFinite(def.minBound)) { axisMin = Math.max(def.minBound, axisMin); }
+    if (Number.isFinite(def.maxBound)) { axisMax = Math.min(def.maxBound, axisMax); }
+    if (axisMax <= axisMin || lo < axisMin - 1e-9 || hi > axisMax + 1e-9) {
+        throw new Error('指标 ' + def.name + ' 超出设置的坐标轴上下界；请检查业务数据或 setting.axisDefs。');
+    }
+    return {
+        dim: i, name: def.name + '\n' + (def.unit === '%' ? '(%)' : '(' + def.unit + ')'),
+        type: setting.axisTypes[i], min: axisMin, max: axisMax,
+        nameLocation: 'end', nameGap: 20,
+        nameTextStyle: { color: setting.colors.title, fontSize: narrow ? 10 : 12, fontWeight: 600, align: 'center', lineHeight: 18 },
+        axisLine: { show: true, lineStyle: { color: '#C2CAD3', width: 1 } },
+        axisTick: { show: setting.showAxisTicks, lineStyle: { color: '#C2CAD3' }, length: 3 },
+        axisLabel: { color: setting.colors.secondary, fontSize: narrow ? 9 : 10, margin: 8,
+            formatter: function (value) { return 轴短格式(value, def); } },
+        splitLine: { show: false },
+        axisPointer: { show: false },
+        realtime: true,
+        areaSelectStyle: { width: setting.brushWidth, color: 'rgba(104,139,167,0.16)', borderWidth: 1, borderColor: '#688BA7' }
+    };
+});
+// 【四·一】选择状态：点击折线、下拉选择、文字搜索共用一套渲染状态。
+// 文字搜索可同时突出多个匹配项；锁定单个对象时在相应坐标轴标出五个数值。
+var 当前选中名称 = null;
+var 当前搜索词 = '';
+function 标准化搜索词(v) { return String(v == null ? '' : v).trim().toLocaleLowerCase(); }
+function 是否命中搜索(name) {
+    var keyword = 标准化搜索词(当前搜索词);
+    return !!keyword && 标准化搜索词(name).indexOf(keyword) !== -1;
+}
+function 取得搜索匹配项() {
+    var keyword = 标准化搜索词(当前搜索词);
+    return keyword ? rows.filter(function(r) { return 是否命中搜索(r.name); }) : [];
+}
+function 取得详情对象() {
+    if (当前选中名称 != null) {
+        return rows.find(function (r) { return r.name === 当前选中名称; }) || null;
+    }
+    var matches = 取得搜索匹配项();
+    return matches.length === 1 ? matches[0] : null;
+}
+function 生成可选中系列数据() {
+    var searching = !!标准化搜索词(当前搜索词);
+    var focusing = searching || 当前选中名称 !== null;
+    var normalItems = [], highlightedItems = [];
+    rows.forEach(function (r) {
+        var hit = searching ? 是否命中搜索(r.name)
+                            : (当前选中名称 !== null && r.name === 当前选中名称);
+        var item = {
+            name: r.name,
+            value: r.value.slice(),
+            lineStyle: {
+                color: hit ? setting.clickSelectedColor : setting.colors.line,
+                width: hit ? setting.lineWidth + 1.65 : setting.lineWidth,
+                opacity: !focusing ? setting.lineOpacity
+                         : (hit ? setting.selectedOpacity : setting.unselectedOpacity)
+            },
+            emphasis: { disabled: true }
+        };
+        (hit ? highlightedItems : normalItems).push(item);
+    });
+    return normalItems.concat(highlightedItems);
+}
+function 获得实例() {
+    if (typeof myChart !== 'undefined' && myChart && typeof myChart.on === 'function') { return myChart; }
+    if (typeof chart !== 'undefined' && chart && typeof chart.on === 'function') { return chart; }
+    return null;
+}
+function 刷新折线高亮(instance) {
+    if (!instance || typeof instance.setOption !== 'function') { return; }
+    instance.setOption({ series: [{ id: 'c036-main-series', data: 生成可选中系列数据() }] });
+}
+function 显示数值与单位(raw, def) {
+    return 数值格式(raw, def.decimals) + (def.unit === '%' ? '%' : ' ' + def.unit);
+}
+// 数值直接附着在坐标轴与选中线的交点，避免底部独立详情卡重复呈现。
+// 具体单位由各轴名称提供（如“美元”“%”“岁”）；这里仅显示数值，减少干扰。
+function 选中数值格式(raw, def) {
+    return 数值格式(raw, def.decimals);
+}
+function 取得指标坐标(instance, chosen, originalIndex, visualIndex) {
+    // 优先从实际 ECharts 极坐标以外的 parallel 坐标系计算像素位置；适配缩放与尺寸变化。
+    try {
+        if (instance && typeof instance.getModel === 'function') {
+            var model = instance.getModel();
+            var parallelModel = model && model.getComponent('parallel', 0);
+            var coordSys = parallelModel && parallelModel.coordinateSystem;
+            if (coordSys && typeof coordSys.dataToPoint === 'function') {
+                var pos = coordSys.dataToPoint(chosen.value[originalIndex], 'dim' + originalIndex);
+                if (Array.isArray(pos) && Number.isFinite(pos[0]) && Number.isFinite(pos[1])) {
+                    return pos;
+                }
+            }
+        }
+    } catch (err) { /* 部分 Power BI 容器不暴露内部坐标系，使用同尺度后备计算。 */ }
+    // 标准平行坐标线性/对数轴的后备坐标映射。
+    var width = instance && typeof instance.getWidth === 'function' ? instance.getWidth() : box.width;
+    var height = instance && typeof instance.getHeight === 'function' ? instance.getHeight() : box.height;
+    var left = width < 760 ? 64 : setting.layout.chartLeft;
+    var right = width < 760 ? 64 : setting.layout.chartRight;
+    var bottom = width < 560 ? Math.max(setting.layout.chartBottom, 120)
+               : width < 760 ? Math.max(setting.layout.chartBottom, 108) : setting.layout.chartBottom;
+    var axis = axes[visualIndex];
+    var v = chosen.value[originalIndex];
+    var frac = setting.axisTypes[originalIndex] === 'log'
+        ? (Math.log(v) - Math.log(axis.min)) / (Math.log(axis.max) - Math.log(axis.min))
+        : (v - axis.min) / (axis.max - axis.min);
+    frac = Math.min(1, Math.max(0, frac));
+    var x = left + (width - left - right) * visualIndex / Math.max(1, 显示顺序.length - 1);
+    var y = setting.layout.chartTop + (height - setting.layout.chartTop - bottom) * (1 - frac);
+    return [x, y];
+}
+// ECharts graphic 的 $action: 'remove' 不能用于尚未创建的元素：
+// 否则 GraphicView.updateLeaveTo 可能读取 undefined 的内部状态并报 __ec_inner_* 错误。
+// 这里改用稳定 ID + 普通 merge 更新，并以 invisible 隐藏已经创建的标注。
+function 创建指标标签元素(instance, chosen) {
+    var elements = [];
+    var color = setting.clickSelectedColor;
+    var order = 显示顺序;
+    for (var j = 0; j < order.length; j++) {
+        var dotId = 'c036-selected-dot-' + j;
+        var textId = 'c036-selected-value-' + j;
+        var originalIndex = order[j];
+        var xy = chosen ? 取得指标坐标(instance, chosen, originalIndex, j) : [0, 0];
+        var valueStr = chosen ? 选中数值格式(chosen.value[originalIndex], setting.axisDefs[originalIndex]) : '';
+        var isLast = j === order.length - 1;
+        var fs = setting.axisValueLabelFontSize || 12;
+        var shift = setting.axisValueLabelOffset || 9;
+        var below = chosen && xy[1] < setting.layout.chartTop + 35;
+        elements.push({
+            id: dotId, type: 'circle', silent: true, invisible: !chosen, z: 100,
+            shape: { cx: xy[0], cy: xy[1], r: 3.6 },
+            style: { fill: '#FFFFFF', stroke: color, lineWidth: 1.8 }
+        });
+        elements.push({
+            id: textId, type: 'text', silent: true, invisible: !chosen, z: 101,
+            x: xy[0] + (isLast ? -shift : shift), y: xy[1] + (below ? 11 : -12),
+            style: {
+                text: valueStr, fill: color,
+                font: '600 ' + fs + 'px Arial,Microsoft YaHei,sans-serif',
+                align: isLast ? 'right' : 'left', verticalAlign: below ? 'top' : 'bottom',
+                backgroundColor: 'rgba(255,255,255,0.96)',
+                padding: [3, 5, 3, 5], borderRadius: 3
+            }
+        });
+    }
+    return elements;
+}
+function 更新指标轴标签(instance) {
+    if (!instance || typeof instance.setOption !== 'function') { return; }
+    var chosen = setting.axisValueLabelsEnabled ? 取得详情对象() : null;
+    // 关键：未曾创建任何标签且当前未选中时，直接跳过 setOption。
+    // 避免在 ECharts 主 option 初始化以前提交无意义的 graphic 更新。
+    if (!chosen && !instance.__c036AxisLabelsCreated) { return; }
+    instance.setOption({ graphic: 创建指标标签元素(instance, chosen) }, { lazyUpdate: false });
+    instance.__c036AxisLabelsCreated = true;
+}
+function 更新搜索状态提示(instance) {
+    var ui = instance && instance.__c036SearchUI;
+    if (ui && ui.input && ui.clear) {
+        ui.clear.style.display = ui.input.value ? 'block' : 'none';
+    }
+    更新指标轴标签(instance);
+}
+function 绑定折线点击选择() {
+    var instance = 获得实例();
+    if (!instance || !setting.clickSelectEnabled) { return; }
+    if (instance.__c036ParallelClick) { instance.off('click', instance.__c036ParallelClick); }
+    if (instance.__c036ParallelBrush) { instance.off('axisareaselected', instance.__c036ParallelBrush); }
+    instance.__c036ParallelClick = function (params) {
+        if (params.componentType !== 'series' || params.seriesType !== 'parallel') { return; }
+        var name = params.name || (params.data && params.data.name);
+        if (!name) { return; }
+        当前搜索词 = '';
+        if (instance.__c036SearchUI) {
+            instance.__c036SearchUI.input.value = '';
+            instance.__c036SearchUI.closeList();
+        }
+        当前选中名称 = (name === 当前选中名称) ? null : name;
+        if (instance.__c036SearchUI && 当前选中名称) {
+            instance.__c036SearchUI.input.value = 当前选中名称;
+        }
+        刷新折线高亮(instance);
+        更新搜索状态提示(instance);
+    };
+    instance.__c036ParallelBrush = function () {
+        if (当前选中名称 !== null) {
+            当前选中名称 = null;
+            if (instance.__c036SearchUI) { instance.__c036SearchUI.input.value = ''; }
+            刷新折线高亮(instance);
+            更新搜索状态提示(instance);
+        }
+    };
+    instance.on('click', instance.__c036ParallelClick);
+    instance.on('axisareaselected', instance.__c036ParallelBrush);
+}
+
+// 【四·二】组合搜索框：本 JS 在 ECharts 容器内创建 input 与滚动下拉列表。
+// 不需要外部 HTML/CSS。实际 Power BI 容器若禁用 DOM 写入，则保留图表与原生 Tooltip。
+function 安装搜索框() {
+    var instance = 获得实例();
+    if (!instance || !setting.searchEnabled || typeof document === 'undefined' ||
+        typeof document.createElement !== 'function' || typeof instance.getDom !== 'function') { return; }
+    var root = instance.getDom();
+    if (!root || typeof root.appendChild !== 'function') { return; }
+    // 避免在同一 ECharts 实例重跑脚本后保留旧节点及 document 事件。
+    if (instance.__c036SearchUI) {
+        var oldUI = instance.__c036SearchUI;
+        if (typeof oldUI.cleanup === 'function') { oldUI.cleanup(); }
+        if (oldUI.host && oldUI.host.parentNode) { oldUI.host.parentNode.removeChild(oldUI.host); }
+        instance.__c036SearchUI = null;
+    }
+    if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function' &&
+        window.getComputedStyle(root).position === 'static') { root.style.position = 'relative'; }
+
+    var host = document.createElement('div');
+    var hostTop = (typeof instance.getWidth === 'function' && instance.getWidth() < 760) ? 89 : 22;
+    host.style.cssText = 'position:absolute;top:' + hostTop + 'px;right:30px;z-index:50;width:' +
+        Math.max(160, Number(setting.searchWidth) || 238) + 'px;max-width:calc(100% - 60px);font-family:Arial,Microsoft YaHei,sans-serif;pointer-events:auto;';
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;align-items:center;height:35px;background:#FFFFFF;border:1px solid #D9DEE3;border-radius:7px;box-sizing:border-box;padding:0 8px;';
+    var glass = document.createElement('span');
+    glass.textContent = '⌕';
+    glass.setAttribute('aria-hidden', 'true');
+    glass.style.cssText = 'color:#8493A2;font-size:20px;line-height:1;margin-right:5px;';
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = setting.searchPlaceholder || '搜索对象…';
+    input.autocomplete = 'off';
+    input.setAttribute('role', 'combobox');
+    input.setAttribute('aria-label', '搜索并选择' + setting.itemLabel);
+    input.setAttribute('aria-haspopup', 'listbox');
+    input.setAttribute('aria-expanded', 'false');
+    input.style.cssText = 'min-width:0;flex:1;width:100%;height:30px;padding:0;border:0;outline:0;box-shadow:none;appearance:none;background:transparent;color:#263238;font:12px Arial,Microsoft YaHei,sans-serif;';
+    var clear = document.createElement('button');
+    clear.type = 'button'; clear.textContent = '×'; clear.title = '清除搜索或选择';
+    clear.setAttribute('aria-label', '清除搜索或选择');
+    clear.style.cssText = 'display:none;cursor:pointer;border:0;background:transparent;color:#8493A2;font:20px Arial,sans-serif;padding:0 2px 1px;margin:0;';
+    var arrow = document.createElement('button');
+    arrow.type = 'button'; arrow.textContent = '▾'; arrow.title = '展开全部' + setting.itemLabel;
+    arrow.setAttribute('aria-label', '展开候选列表');
+    arrow.style.cssText = 'background:none;border:0;color:#8493A2;font:13px Arial,sans-serif;cursor:pointer;margin:0 0 0 4px;padding:0 2px;';
+    var dropdown = document.createElement('div');
+    dropdown.setAttribute('role','listbox');
+    dropdown.setAttribute('aria-label', setting.itemLabel + '列表');
+    dropdown.style.cssText = 'display:none;position:absolute;top:39px;left:0;right:0;max-height:'+
+        Math.max(120, Number(setting.dropdownMaxHeight) || 230)+'px;overflow-y:auto;overscroll-behavior:contain;background:#FFFFFF;border:1px solid #D9DEE3;border-radius:7px;box-shadow:0 5px 18px rgba(38,50,56,0.13);padding:4px;box-sizing:border-box;z-index:51;';
+    wrap.appendChild(glass); wrap.appendChild(input); wrap.appendChild(clear); wrap.appendChild(arrow);
+    host.appendChild(wrap); host.appendChild(dropdown);
+    root.appendChild(host);
+
+    var ui = {host:host, input:input, clear:clear, arrow:arrow, dropdown:dropdown,
+              filteredNames:[], activeIndex:-1, opened:false};
+    instance.__c036SearchUI = ui;
+    function closeList() {
+        dropdown.style.display = 'none'; ui.opened = false; ui.activeIndex = -1;
+        input.setAttribute('aria-expanded', 'false');
+    }
+    function onSelection(name) {
+        当前搜索词 = '';
+        当前选中名称 = name;
+        input.value = name;
+        closeList();
+        刷新折线高亮(instance);
+        更新搜索状态提示(instance);
+    }
+    // 列表有 30+ 项时内置滚动，不使整个图表或 Power BI 页面滚动。
+    function renderList(query) {
+        var q = 标准化搜索词(query);
+        var matches = rows.filter(function (r) { return !q || 标准化搜索词(r.name).indexOf(q) !== -1; });
+        ui.filteredNames = matches.map(function (r) { return r.name; });
+        ui.activeIndex = -1;
+        while (dropdown.firstChild) { dropdown.removeChild(dropdown.firstChild); }
+        if (!matches.length) {
+            var empty = document.createElement('div');
+            empty.textContent = '无匹配的' + setting.itemLabel;
+            empty.style.cssText = 'padding:12px 10px;font-size:12px;color:#8493A2;';
+            dropdown.appendChild(empty);
+        } else {
+            matches.forEach(function (r, i) {
+                var rowEl = document.createElement('button');
+                rowEl.type = 'button'; rowEl.textContent = r.name;
+                rowEl.title = r.name;
+                rowEl.setAttribute('role', 'option');
+                rowEl.setAttribute('aria-selected', String(r.name === 当前选中名称));
+                rowEl.style.cssText = 'display:block;width:100%;text-align:left;box-sizing:border-box;border:0;border-radius:4px;background:'+
+                    (r.name === 当前选中名称 ? '#FFF1F0' : 'transparent') + ';padding:8px 10px;font:12px Arial,Microsoft YaHei,sans-serif;color:#263238;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+                rowEl.addEventListener('mouseenter', function () { rowEl.style.background = '#F1F4F7'; });
+                rowEl.addEventListener('mouseleave', function () { rowEl.style.background = r.name === 当前选中名称 ? '#FFF1F0' : 'transparent'; });
+                // pointerdown 防止 input 失焦导致列表在 click 前消失。
+                rowEl.addEventListener('pointerdown', function(evt) { if (evt.preventDefault) { evt.preventDefault(); } });
+                rowEl.addEventListener('click', function (evt) { if (evt.stopPropagation) { evt.stopPropagation(); } onSelection(r.name); });
+                dropdown.appendChild(rowEl);
+            });
+        }
+    }
+    function openList(query) {
+        renderList(query);
+        dropdown.style.display = 'block'; ui.opened = true;
+        input.setAttribute('aria-expanded', 'true');
+    }
+    ui.closeList = closeList;
+    function onTyped() {
+        当前搜索词 = input.value;
+        当前选中名称 = null;
+        刷新折线高亮(instance);
+        更新搜索状态提示(instance);
+        openList(input.value);
+    }
+    var composing = false;
+    input.addEventListener('compositionstart', function() { composing = true; });
+    input.addEventListener('compositionend', function() { composing = false; onTyped(); });
+    input.addEventListener('input', function() { if (!composing) { onTyped(); } });
+    input.addEventListener('focus', function() { openList(''); }); // 单击立即展示全部候选项
+    input.addEventListener('click', function() { if (!ui.opened) { openList(''); } });
+    input.addEventListener('keydown', function(evt) {
+        if (evt.key === 'Escape') { closeList(); evt.stopPropagation(); return; }
+        if (evt.key === 'ArrowDown' || evt.key === 'ArrowUp') {
+            if (!ui.opened) { openList(''); }
+            else if (ui.filteredNames.length) {
+                var dx = evt.key === 'ArrowDown' ? 1 : -1;
+                ui.activeIndex = ui.activeIndex < 0 ? (dx > 0 ? 0 : ui.filteredNames.length - 1)
+                    : (ui.activeIndex + dx + ui.filteredNames.length) % ui.filteredNames.length;
+                for (var k = 0; k < dropdown.children.length; k++) {
+                    dropdown.children[k].style.background = k === ui.activeIndex ? '#F1F4F7'
+                        : (ui.filteredNames[k] === 当前选中名称 ? '#FFF1F0' : 'transparent');
+                }
+                var child = dropdown.children[ui.activeIndex];
+                if (child && typeof child.scrollIntoView === 'function') { child.scrollIntoView({block:'nearest'}); }
+            }
+            if (evt.preventDefault) { evt.preventDefault(); }
+        }
+        if (evt.key === 'Enter' && ui.opened && ui.filteredNames.length) {
+            onSelection(ui.filteredNames[ui.activeIndex >= 0 ? ui.activeIndex : 0]);
+            if (evt.preventDefault) { evt.preventDefault(); }
+        }
+    });
+    arrow.addEventListener('click', function(evt) {
+        if (evt.stopPropagation) { evt.stopPropagation(); }
+        if (ui.opened) { closeList(); } else { openList(''); input.focus(); }
+    });
+    clear.addEventListener('click', function(evt) {
+        if (evt.stopPropagation) { evt.stopPropagation(); }
+        当前选中名称 = null; 当前搜索词 = ''; input.value = '';
+        closeList(); 刷新折线高亮(instance); 更新搜索状态提示(instance);
+        input.focus();
+    });
+    ['click', 'pointerdown', 'mousedown', 'wheel'].forEach(function(eventName) {
+        host.addEventListener(eventName, function(evt) { evt.stopPropagation(); });
+    });
+    function outside(evt) {
+        if (!ui.opened || !evt || !evt.target) { return; }
+        if (typeof host.contains === 'function' && !host.contains(evt.target)) { closeList(); }
+    }
+    if (typeof document.addEventListener === 'function') { document.addEventListener('pointerdown', outside); }
+    ui.cleanup = function() {
+        if (typeof document.removeEventListener === 'function') { document.removeEventListener('pointerdown', outside); }
+    };
+    更新搜索状态提示(instance);
+}
+
+var series = [{
+    id: 'c036-main-series', type: 'parallel', name: '多维指标', coordinateSystem: 'parallel',
+    progressive: 200, smooth: false, animationDuration: 250,
+    lineStyle: {
+        width: setting.lineWidth, color: setting.colors.line,
+        opacity: setting.lineOpacity,
+        activeOpacity: setting.selectedOpacity,
+        inactiveOpacity: setting.unselectedOpacity
+    },
+    emphasis: { disabled: true }, // 悬停只显示 tooltip，不再触发临时高亮。
+    data: 生成可选中系列数据()
+}];
+option = {
+    backgroundColor: setting.colors.background,
+    animation: true,
+    title: {
+        left: 30, top: 25,
+        text: setting.title,
+        subtext: setting.subtitle,
+        textStyle: { fontSize: narrow ? 17 : 21, color: setting.colors.title, fontWeight: 700 },
+        subtextStyle: { color: setting.colors.secondary, fontSize: narrow ? 10 : 12, lineHeight: 16 },
+        itemGap: 9
+    },
+    graphic: [
+        { type: 'rect', left: 30, top: 14, silent: true,
+          shape: { width: 20, height: 4 }, style: { fill: setting.colors.emphasis } },
+        { type: 'text', left: 30, bottom: 38, silent: true,
+          style: { text: '数据来源：' + setting.sourceText, font: '10px Microsoft YaHei, sans-serif', fill: setting.colors.secondary } },
+        { type: 'text', left: 30, bottom: 23, silent: true,
+          style: { text: '图表说明：' + setting.noteText, font: '10px Microsoft YaHei, sans-serif', fill: setting.colors.secondary } }
+    ],
+    parallel: {
+        left: padX, right: rightX,
+        top: setting.layout.chartTop,
+        bottom: box.width < 560 ? Math.max(setting.layout.chartBottom, 120)
+            : box.width < 760 ? Math.max(setting.layout.chartBottom, 108) : setting.layout.chartBottom,
+        parallelAxisDefault: {
+            type: 'value', nameLocation: 'end', nameGap: 20,
+            axisLine: { lineStyle: { color: setting.colors.grid } },
+            areaSelectStyle: { width: setting.brushWidth },
+            areaSelect: setting.enableAxisBrush
+        }
+    },
+    parallelAxis: axes,
+    tooltip: {
+        trigger: 'item', triggerOn: 'mousemove|click', confine: true, appendToBody: false,
+        renderMode: 'html', backgroundColor: '#FFFFFF', borderColor: setting.colors.grid,
+        borderWidth: 1, padding: [12, 14],
+        extraCssText: 'box-shadow:0 4px 16px rgba(38,50,56,0.10);border-radius:8px;',
+        textStyle: { color: setting.colors.title, fontSize: 12 },
+        formatter: function (params) { return 生成提示(params, setting.axisDefs); }
+    },
+    series: series
+};
+
+// 【五】绑定点击选中、输入联想、可滚动下拉和坐标轴上的数值标签。
+绑定折线点击选择();
+安装搜索框();
