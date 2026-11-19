@@ -1,0 +1,579 @@
+﻿/*
+ * C044 | 中国主要繁忙航线 · 交互式地理 OD 飞线图 
+ * 数据：民航局运行监控中心《2024年全国民航航班运行效率报告》表9（20条单向航线）
+ * 官方报告：https://www.caac.gov.cn/XXGK/XXGK/ZFGW/202505/t20250528_227622.html
+ * 提醒：航班班次不是旅客人数；航线为示意弧线，不是实际飞行轨迹。
+ * 地图素材：Apache ECharts v3.7.1 /map/json/china.json 的34个省级区域轮廓，
+ *           从原始边界节点重新抽稀（约0.13经纬度容差），保留主要次级外环；
+ *           不是通过 V2 的稀疏边界插值生成，未凭空补造地理节点。
+ *           原始来源：https://github.com/apache/echarts/tree/3.7.1/map/json
+ *           原项目授权：Apache License 2.0，https://www.apache.org/licenses/LICENSE-2.0
+ *           包含原项目派生地图数据，原版权及许可归原作者与贡献者。
+ *           本图未经地图审核，不得视为有审图号的标准地图；对外公开须换用合规底图并办理必要审核。
+ * V5 新增选中详情栏：点击航线/节点后固定展示指标，鼠标悬停仍使用原 Tooltip；
+ * 点击地图空白处清除选择，详情栏恢复样本概览。
+ * 修改业务数据时：替换第2节的9个平行数组，并修改 setting 中标题、单位、年份、来源及字段文案。
+ * 内部函数按“原始输入 → 聚合计算 → 数据视图 → 图表绘制 → 交互”组织，便于 AI 按模块改造。
+ * 在 ECharts 官方编辑器直接粘贴执行，不需要外部 JS / HTTP / HTML。
+ */
+
+// ============================================================
+// 1. 原始输入：一个 Power BI 字段对应一个一维数组（相同索引同一条航线）
+// ============================================================
+var 到达纬度 = [22.6393,31.1979,40.0799,31.1979,23.3924,31.1979,30.2295,22.6393,30.2295,23.3924,40.0799,22.6393,30.5785,29.7192,22.6393,40.0799,30.2295,40.0799,29.7192,23.3924];
+var 到达经度 = [113.8107,121.3363,116.5975,121.3363,113.2988,121.3363,120.4345,113.8107,120.4345,113.2988,116.5975,113.8107,103.9461,106.6417,113.8107,116.5975,120.4345,116.5975,106.6417,113.2988];
+var 出发纬度 = [31.1979,22.6393,31.1979,40.0799,31.1979,23.3924,22.6393,30.2295,23.3924,30.2295,22.6393,40.0799,40.0799,22.6393,29.7192,30.5785,40.0799,30.2295,23.3924,29.7192];
+var 出发经度 = [121.3363,113.8107,121.3363,116.5975,121.3363,113.2988,113.8107,120.4345,113.2988,120.4345,113.8107,116.5975,116.5975,113.8107,106.6417,103.9461,116.5975,120.4345,113.2988,106.6417];
+var 平均飞行距离 = [1424,1352,1223,1250,1306,1325,1173,1279,1133,1171,2064,2232,1758,1282,1257,1696,1284,1293,1167,1178];
+var 班次同比 = [-2.48,-2.41,-4.11,-4.15,-0.99,-1.04,-0.84,-0.53,3.17,2.85,2.13,1.32,8.75,4.39,4.19,8.82,9.21,8.86,-4.51,-3.97];
+var 航班班次 = [13949,13931,13159,13156,12687,12649,11466,11340,11301,11258,10732,10643,8686,8682,8646,8643,8488,8437,8400,8213];
+var 到达机场 = ["深圳宝安","上海虹桥","北京首都","上海虹桥","广州白云","上海虹桥","杭州萧山","深圳宝安","杭州萧山","广州白云","北京首都","深圳宝安","成都双流","重庆江北","深圳宝安","北京首都","杭州萧山","北京首都","重庆江北","广州白云"];
+var 出发机场 = ["上海虹桥","深圳宝安","上海虹桥","北京首都","上海虹桥","广州白云","深圳宝安","杭州萧山","广州白云","杭州萧山","深圳宝安","北京首都","北京首都","深圳宝安","重庆江北","成都双流","北京首都","杭州萧山","广州白云","重庆江北"];
+
+// ============================================================
+// 2. 用户可调整设置（请在最前面修改）
+// ============================================================
+var setting = {
+  title: '中国最繁忙的20条国内航线在哪里？',
+  year: '2024',
+  metricName: '航班班次',
+  metricUnit: '班',
+  dataSource: '中国民用航空局《2024年全国民航航班运行效率报告》表9',
+  mapNote: '弧线表示机场连接方向，非实际航迹；底图未经审图，公开发布须使用合规地图',
+  topN: 20,                   // 仅展示前 N 条单向航线，0=全部
+  showMovingDots: true,       // 飞线上的流动点
+  animateTopN: 7,            // 无聚焦时仅给前 N 条添加流动点，避免画面拥挤
+  showArrow: true,           // 航线终点箭头
+  enableRoam: true,          // 鼠标滚轮缩放、拖动
+  mapExtentPadding: 2.3,    // 初始全图经纬度边界的额外留白（单位：度），避免边缘裁切
+  showAirportLabels: true,
+  arcCurveness: 0.25,        // 单方向航线默认曲率
+  reverseArcCurveness: 0.36, // 存在往返双向的机场对采用更显著的镜像弧线
+  showProvinceBorders: true, // 显示省级行政区域之间的细分割线（仅供技术预览）
+  autoAirportLabelPosition: true, // 自动计算标签方向，适配不同机场数据
+  lineMinWidth: 1.05,
+  lineMaxWidth: 3.0,
+  airportMinSize: 8,
+  airportMaxSize: 15,
+  focusDimOpacity: 0.055,
+  tooltipMaxWidth: 300,
+  showSelectionDetails: true, // V5：在标题下方持续显示当前选中对象的统计详情
+  detailsCompactWidth: 780,   // 容器小于该宽度时，详情栏由4列改为2列
+  routeLabel: '航线',           // 其他 OD 场景可改为“物流线路”“流向”
+  nodeLabel: '机场',            // 其他 OD 场景可改为“城市”“网点”“仓库”
+  originLabel: '出发',          // 节点汇总的来源方向名称
+  destinationLabel: '到达',     // 节点汇总的到达方向名称
+  yoyLabel: '班次同比',         // 如“订单同比”；置空表示不强调同比含义
+  distanceLabel: '平均实际飞行距离', // 如“运输距离”
+  distanceUnit: '公里',
+  // 更换数据后，可按业务修改 title、year、metricName、metricUnit、dataSource 与 mapNote。
+  colors: {
+    accent: '#D9544D',
+    text: '#263238',
+    textSecondary: '#8493A2',
+    boundary: '#DDE6ED',
+    mapFill: '#F7F9FB',
+    line: '#387BB5',
+    lineStrong: '#1263A3',
+    lineFade: '#96B8CF',
+    airport: '#186AA6',
+    focus: '#F39A54',
+    positive: '#239263',
+    negative: '#D9544D'
+  }
+};
+
+// ============================================================
+// 3. 机场位置及省界示意底图（地理坐标由输入数组提供）
+// ============================================================
+// 离线内嵌供官方编辑器技术预览；未经审图，不用于正式公开地图发布。
+// V3 用原始 Apache ECharts China GeoJSON 重新提取轮廓、合理抽稀。
+// 精度 0.001 度的 Polyline 差分存储；每个省级单位可有多个独立外环。
+// 此数据与官方审图批准的标准地图并不等价。
+var c044ProvincePacked = [["台湾",["wfjFqyj@jYwe@cD_g@qx@wrAcc@oOsX|QrfAnaE"]],["河北",["gc}Ew_fArOoTkSmIn@}OiVe`@dRs]`QoEc@_QiPoK|BgMaj@sKmEaWxIkQh]aHwe@uSpLs@|]ol@kKkGrGoK_UcDz@gPoUmTwQx@E~^oV\\yc@qU}O`IgMiMw`@D}A_X{u@oLgShc@iJa@kA`LxKlEyLhXov@l@jW`_@al@hO{Qpc@jSzBpMb]nVjPbUOdDxMnj@m[{FuLhR[jFmS_PwGlb@mZcReI`a@yAdSaUzQzFqFbInk@pMoLbPd_@tMwBhZox@jHsVyIcF~]jJ|U}v@zF{RpOr_@x^nf@Btr@`_@~j@ns@eLxTdb@fE"]],["山西",["m|}EcqnAsWjXre@|Ri]`HyIjQlE`W`j@rK}BfMhPnKb@~PaQnEeRr]hVd`@o@|OjSlIsO|StEfm@pk@bWft@aAJtMd]pKboAhM_Ss~@nMmuAeYea@|P}e@aV}OcVws@~FyCsVwPeZbBsVig@ukAiDy_@uJ"]],["内蒙古",["k`xEm{kAWyLb[~Rz`@{JqCbJzS^kAxHju@bi@a@rX~Os@VnU|f@dCnfByi@a]mk@~UkUdk@tc@nGv|@paBrWjr@uf@yIeFlFoNuo@ic@nEcZnbA|Rxa@uHve@~HaNvKrQlMv[uFpD{MbOtC|Fu[rvAa]ql@mWzBkd@hy@b@fVtNjGkIfSvKT}Txk@aa@mM_Kdi@efA}pCfMusAoEw~Chp@mdANJhLk]zCqxCuu@euA|B}mAoN_x@{i@cy@uUl`@oh@o]oj@_kBdRox@cg@yq@Isq@oQuXwd@cp@eCaB}Lk|A_Ki}@pEdK{_@xfAwp@dn@q@vYlVlb@_O|u@jLpXm\\iQqEf@mOux@irAccA|S}~Agg@e@sJfNoAe{@qoAsj@{\\lIgKyE_Klh@wAbAoJip@_^wt@x@uEvLxd@jYg`@pPg[kKye@lObIrJqVbn@}oAZrHxl@zU|Lib@tHqKfa@cZiOkNhEB`e@vXtCjTn~@~KiZ`rBbiAid@hf@mUgFpCcIgSlHj@~Hpd@bF_JjS`W~I~@zTfz@}QpI~O_RrAcQfZbKnVcMfg@kt@{NsOtTeH~_@zL|GkXlGlGnTvl@bRnYqGdA|HzY_@nOhOfkAfS`WdYdNa_@|TeJpOxJkJlf@tLzPds@mAtMiYyKmEjAaLhJ`@fSic@zu@nL|A~Wv`@EfMhM|OaIxc@pUnV]D__@vQy@nUlT{@fPlUbE}Jlv@~pAnUnZoDrVhg@dZcB","qarFaicB_w@mOel@bh@br@zt@l@lO`OwBbZhOpKga@_EeUlQm@"]],["辽宁",["{aiFibmAtPoa@fl@yOya@sh@tFgp@{LyFwT|IkNh_@aWeYgkAgSoOiOqmAyFiAoImSe@yK{\\w]hOuIjXqZeRl@dTqe@|g@xIt[u\\|^jLpO{EdG`p@|P~m@bm@hw@In_Cj_AhE_L_c@eIoBaP|[SbAiJ_o@yb@wP{TfGaK|ScMfi@n@jh@bj@"]],["吉林",["qiwFubpAfKmPvNrBxh@bt@~ZNgLcPt\\{^yIu[pe@}g@m@eTnZdRxIkXn]iOlV`DdFyGwLaH~W{q@jt@zNbMgg@cKoVbQgZ~QqAkFkNe|@hQgB}UugAsL{An_@kWlSglA{CcVlUc{@p@qDtb@u^QpCzIwQrS{RaCdBkLcSgIs^z{@uT}A{@oMui@_LyG~JwOoLcC~W_[jLw[sB~I|a@nm@~K}MbRhV_]dVeErJvb@zUk@dZjZvu@XuPxWxE~J"]],["黑龙江",["qm_G}}sAtZ`C~ZkLbC_XvOnLxG_Kti@~Kz@nMtT|Ar^{{@bSfIeBjLzR`CvQsSqC{It^PpDub@b{@q@bVmUzkA`DvWsSvAm_@vo@pA~IkSqd@eFImKdR}EqCbIlUfFhd@if@arBciA}OhWmPo{@wXuCgAax@ib@yZ|BsK{QaQxy@ye@rk@hWvvAqApVcn@cIsJxe@mOtSnMxg@qRuf@c\\zRePc}ByLusAt[um@b@eBrL{Z|DrGvHoc@`]fElJ{[`b@dEdFwHkBrBnOwVrRkAhYuObE~BfYwPvLshBjI}k@ta@uZYzGzOgRlRfJfKwS|Wo`BYaa@uX_{B_SnX`K`GpOiMdPrd@jWfOhaAlo@hs@DxQrJxEraAgSrWjVz_@dFmTjq@"]],["江苏",["megF_q|@h^{`@cSaPtGwNi_@jGgEiVvSiG`EzL`WZ~Hw\\bP}@qNe_@rZ`AjEgRdd@gGzC{Mrd@_OwCsNi`@p@_MxY}v@gL_FfP_c@qTcDeRiYiD~AtRcbAv]o_@b_A{Dhh@u]bJoB~Qa^dYbo@gFwIrPhu@tp@nc@wXfeAsB"]],["浙江",["oshFux{@oQoAoc@vXk]_OA~JoPrDlHdN__Abd@jRdNkItB`Av`@jUgFoIbQvM~LwEpVbc@nI|C`IoK|FrWtAfPxf@|OqQ~\\hGpH_VxTxN|UsApDyn@~Uk@xBq`@rTkRst@os@^qVo_@iB`IaN{KsA"]],["安徽",["mhbFatbAed@tNkJbRu]~BkEfRsZaApNd_@cP|@gI|\\yVa@aE{LwShGfEhVh_@kGuGvNnTbXq^`S`DrVqb@kCkPvPvWtXaI`Nn_@hB_@pVhc@f_@fo@mIrSeTt]tUcJaWpM}Fd`@`OhVeu@qQmS~i@_TyFiS{XkFe@ko@zUfIvU{JpQq`@}WY{AsUiQaDYu\\sRrBcKjQ_]kJtB_WhYqJ"]],["福建",["aphFksp@jXu@}LjItO|BQlKfNgMyElUpTjAqGhDxKtNd\\mBuA~Qho@`k@fYgR`Iar@fPrCbGaPx_@cDgOew@{\\{_@vBo[se@uYbHaWk^sSsLjJgj@y]wV`CwDzn@wUpAyTyNqH~U{\\iGkJfJpW~WiExLxQtFaG_PjW~HcW~NlUvKiFvJdNtTiH|H{HcKsEjE"]],["江西",["cq}Ee`q@kPeb@|Pb@gIoXnNyD_@{k@fOhAjA_Kii@cp@jRmj@iFqJecAeRtAyIaXyHmn@nByVgQoN|FbJ`Wu]uUsSdTed@bDfEpXsThReEl\\jm@h_@rLkJj^rScH`Wre@tYqDjVzo@pmALfg@rZgMx}@lQnM}Jyb@qc@|K{Gl^hI"]],["山东",["_q`FqaeApHbD}GuZxK_O_k@os@ur@a_@of@Cw[a[maA~JwRtVhPbEThQiT~LaYg@s\\sa@i`@iHyq@|W{a@_Gad@nIlKx^j`@gC|eAfTqFbH`P~Ca@rOpYfDuCqHnJK}FhMdg@|VrOb^d`@zBbDdRjb@lTfOwQhn@zMtXk`@rT~CtKlT|k@s@zQ{V`XwDcoAcaA"]],["河南",["wp`FireArF~Uem@gShbAvl@lKnUuWfBqSnWmg@Kc@~JaVvEiCnRr]zNbKkQrRsBXt\\hQ`DzArU|WXqQp`@wUzJ{UgId@jo@zXjFtFxO`LmK~c@bBSeLvd@VfOoh@|uA~Ddn@aPl`@kb@bAcY~XiR~Kqk@miAeNe]qKKuMyg@vDsp@qSaM}s@iiAtR"]],["湖北",["qwwEo}_Awc@hh@en@`P}uA_EgOnh@{d@Ul@tKwOlEoT_HuWb[aRJkKzJhRzOiVdu@~e@i@`XxHuAxI~u@xHrVfS`Q_MiHaKnJeX`]bYhJgVdf@hRt\\qXb}@}LxRnCcCjTdo@eBvg@bd@z\\wi@lQbAoLcZlIcMef@_JoRpIw`@yXwJfEiFmUnBmMza@cTrDyb@aGqQeX`BgGuL`l@_WieAmEgHzH"]],["湖南",["eq}E}_q@vGzPp_@yJnZfJiJnGdBnPbp@sOvAzTve@pKrGw]`YjLa_@sz@zQgDwD{Rxh@}BlUdV|PqMdAu_@bY@nAcYti@dB_i@a]rP}`A{Sw}@md@iIgOtHyOqGbHuPeSoCofAbQ}RjTkd@gQcLdUa]cYeF|n@c\\nNuEr[pi@|r@kAnKgOiA^zk@oNxDfInX}Pc@","atuE_bs@oD`ZdRjUrLaZzJHKkW"]],["广东",["ox|Eikj@hP|SdKqN|GvPnq@`B|OvM`yAvUlN|P_V|\\tf@tK~Nmi@uNg`@tGoM}e@_MpA_RuSl@aDsXkd@eRqAgc@y`@__@Xog@gOua@o\\fBcLxMiI_RjJqGuQwH}YrJcYqGiA`Km^mIeKnQlb@dZiOpKa|@gRkZlMmAmV__@vBcG`PiPoCkWrdAjQtAjWtc@bj@rKzIiGlChLlVuIlRtPvJqN~JxTjFiIh^`I|JmQ"]],["广西",["qglEauo@{x@nQcGqSys@mPqDoSgn@h[s]kYcQlMcCyRiWlDCoJjJFuZ]{GsQcRbIcJoSkTfM_R{UsUgB{RhGtAbWcNC`_@rz@aYkLiAvZib@uC_ChXjh@hv@pAfc@jd@dR`DrXtSm@wAxQjX\\pKlYzf@jCNgJl_@eFxW~Jzs@qEzTsTxSo@jGu]mPuT~nAuPoCwR{^oItDo_@np@t@lH}TxXtDfNwR}Pd@"]],["海南",["u`vEubf@}c@oGuT|W`a@ndAdx@t^zx@{RK_x@od@c`@"]],["四川",["o~qEqt{@vI|OfVyAhZfq@lkAeXtP|OqK~QxXzXmWpHcDlU{Y|AqHzVvX{NpTdNa@|Kmb@`JmGtRr_AbFdOsWz\\dO`PyKgIgKlLwPcJiEzb@qAm@pUlYnJkAhS|d@h^qEfz@~fA|QbgAktBbUtK|H_JfHsNwHcJr[s_@vRxQ?tWdMuNrLwrCfUoY{PqJzh@s{@rp@oUxB}MwWu[dWoZoZyU{c@nFm[ny@mu@rY}IcS}KnXcQiFoOtMo@wHk^S`Ck`@w^nFgLi^d@d]_WsEyOyRdTyYgo@iTwOpMj@zOe~@jKyO`Q|Gl]}TzIe^vBmRmGAiKwGrM{ZiIqUlNeh@{D}HbQ_L}Eia@dWc^uFpLxQ}PzQfUzI"]],["贵州",["wxtE_ls@nJhGP~V_NrJxIvWvZ^kJGlB~K~S}E~BvRfQkMrLlSvTxDta@u]jL~Uxs@lPbGpSxq@uU`]pVxJcK_QqYl_@mYiUko@fNkPpd@nJtLk`@wSyVaNfJuJyK{^bJ}RaDeIqVg|@cCfDkPdV}@|NuWqTeNoXtP{DgUaOvVeFgSkX^sRu[_RlOoZqFu@dXyQlAlBhQ_HeHmAxQgSHuJiRyJ`y@~h@`]ui@eB"]],["云南",["oqfE}xj@dYwCpLxOqPxe@nCp\\b`@eDrEga@z`@dSrX}@fKub@`r@sE}Hac@oNyJhi@}N?aZpLuJgLwTpsAxLeMwM`MkPc@qQuNyEzCqMmY}Qu@yMo`@uMdGkOyKg]rCqz@vO}EpF`HbJ{e@}GwNiFbQqRwFrD}l@wTlGKoVqGa@cK`}@uXse@s[r_@vHbJgHrN}H~IcUuKcgAjtB_gA}QpEgz@}d@i^jAiSmYoJl@qU{b@pAbJhEmLvPfIfK_PvKy\\aO_MjEfDff@|r@eEjJvK`NgJvS|VuLf`@qd@oJgNjPhUjo@m_@lYpV`d@}F~Lc`@LqH~Tum@}BkGta@z^nIpDpLpL{KlZzLlHrTre@XrG`R~g@_RjQ|Uz`@_T"]],["西藏",["_hlDc~eA_}@fNdRrC{WtIfAzUxR|NcGxScQ`DbHzEgH~UtMhQao@zo@oeA|Hcl@vVcn@g@__@vOoe@lAy\\}Mwd@hPtGhFmUpFuCpXi\\eCcJlLw@}Qsc@jMbBwToc@eBkAq]et@tKcj@p|@zPpJgUnY}Ejs@~DrcAzTkGsD|l@pRvFhFcQ|GvNrb@}WvLdRiA|ThQbHxmA{a@d`Brk@x[va@viBtI~Aea@v\\uGlF{[fWvHdoA{Wva@~ZzNtc@pK{Nd@wd@~~A|Nj_@aQlQhKjMoOnJhOxPq\\|c@~AmBkRrj@wDrV{a@n_@bFzRoW~bAa^rCmPzi@sChPlXxFkN`x@iR~YwXzb@UjTwU]gc@`SeLjBiWsToIiMdVeTuOnHgc@n\\u\\n@_ZoWiT{n@aCee@uz@ylAjL{o@i]m^|AkI`Pk`ApAst@kWmb@jE}[qKaG{Pwa@_IaeB{J"]],["陕西",["cgqEq}hAi]dNeg@{Bg@yU_Pr@`@sXku@ci@hBaHyTw@pCcJ{`@zJg\\{QzDhIsJnEfTvo@|W|S}P|e@dYda@oMluAtVfr@_q@f{AzR~MfH{H~`Ap@uj@fd@tc@nAbAbu@~QRpq@qa@z]xFha@eWdJxFvJ_Rdh@zDpUmNzZhIhE{IkYoF_BeL`O_JoNoM_f@hArIwSeR{[hXcLuOmKfAeRqcAlI}LyC`HgRaw@s@EadAvqA}]a@oi@"]],["甘肃",["wbnEaidAfHtCg\\|IoCc[w]mFe@uRrZ_H|GcRwPmH|@wXmb@Q}FnM{rA~_@lChcAxt@WaHfR|LxCrcAiIiA`RtOlKiXbLdRz[gHpVrd@cDnNnMaO~I~AdLv]zBbGfPd}@}IqGw]xOaQd~@kKk@{OvOqMfo@hToT`_@re@dUe@s\\pk@{ClXw_@sJwK{}@bP}QiNhSqM`@_Qk]}QpFmL}LcK_PdCzBmQuMg@fCoNsJaGre@gn@uJqHzf@wd@xp@sF~OcSju@}TeCbQdqAqt@jMxHhQsEfKrNreAwXyDvd@jOY`GrV|WfDdb@}N|fAbBjJyXxhAwHrCgO`k@xGlCkKyQkP_QcaAas@wDgo@ss@ud@sOgI|Kem@oU_Cki@yaA_Kei@dfAlM~Jyk@`a@U|TgSwKkGjIgVuNiy@c@{Bjd@pl@lWsvA`]}Ft[cOuCqDzMw[tFsQmM`NwKwe@_Iya@tHobA}RsE~Yxo@lc@Z|`@{o@l[a^AjBrKu`@dL{T~s@nG|T"]],["青海",["}{tDkmkAmBzLyhAvHkJxX}fAcBeb@|N}WgDaGsVkOXxDwd@seAvXgKsNiQrEkMyHeqApt@dCcQku@|T_PbSyp@rFwd@pa@pHvKwe@rn@vJtF_CvNvNdAeDfP~OeC|LbKqFlLj]|Qa@~PiSrMv_@`Pv^qNjYtAuUhf@_e@rFfF~Wx\\mGkAfa@j`@xAn@vHnOuMbQhF|KoX|IbSnu@uYd[iy@`d@sFtZ~VkWhYrXt^{V`VhW}@`Af]nc@dBcBvTrc@kMc@`R~LqLh\\dCtCqXlUqFuGiFvd@iPx\\|Mne@mA~^wObn@f@hn@eWrp@w@be@uSr[}b@uMiQfH_VaH_F`Q}CbGuSyRaOgA{UzWyIy`@}AwBeLcdAnJvCcZlQoBb@iL}c@{L|Mm[ra@yNS}c@rNbDpIaN"]],["宁夏",["eroEewkAyHzTx\\nf@qhAn\\vTtMFx^|j@u@qAfXvPlHmc@pf@|CrKzY`BzCb[b|@ya@oG}TzT_t@t`@eLkBsKpWg@a{AiVeLgdAwRuU"]],["新疆",["klhDsp~AgHeLey@qAuDbKlIrEaUvHvFzGadAxc@s]eBar@pWyh@|x@rHhX}FbQhUr\\gLhUecD|L{jAff@cj@rAlDzOoKh@mU`m@{\\bV`W|[oKtLtGhQdm@nUfI}Ktd@rOfo@rs@`s@vD~PbaAxQjPyCbM`oCf`@qI`NsNcDR|c@mn@hb@_AfHxc@pLc@hLmQnBeDxYpdAeJbN|KxoAqXj`AlBpfA~Nri@x_@lb@kEnt@jWn`AqAjIaPl^}Azo@h]rlAoLje@xz@vo@zHdo@yQzNqd@{FcO`z@q@ve@aX|X~D`Qss@xXmBxAqM`x@eFUsIag@{IdOmNhA{r@daAuFuAuWbTmV{ZaLB{Yc{@yRnCiJkXnCkS_LgGjVeg@uBk`@ui@mw@B}VqU}{B}g@cEcp@_a@cUpXwy@c@w]x_@uQeuBs\\}o@dJlQ_Ysn@}bBkwBlU{c@kKuHkMbFkw@wKgMup@wF"]],["北京",["s|cFehmA~YbBaGdUn\\tMri@kClSiO}GmAbFqLe_@uMnLcPgk@oM|FmHoQwGeTdUaa@zAxQfHcKhS"]],["天津",["uidFqrmAiUxJ~M~BEtMcJlMkLaB|FpLkO|FfYjXeDfHt\\vF`a@oVsLuJzFg]gVcASkY"]],["上海",["ajlFgi|@sZvTMbOlj@~EvPaHjGsPgLwA{CmQ"]],["重庆",["ebpEwty@iYup@u\\cAwMue@gU{I|P{Q}GgM{kBnq@|Bvc@tJgEx`@xXlRqIff@dJoI|LnLbZmQcAaO|_@cIaC}MpTpMxt@hSKdBkRbGzHkBiQxQoA|@mXfZxFfFaNrTVvHpYhXa@fFhS`OwVkBdOjJtApDySn[mCbDmU~NLhIiNuZqSpK{QqPaP"]],["香港",["qb~Ey_k@eJbG`HbLvJaGhMtG"]],["澳门",["cx|Ewdj@j@gCc@mAkB`DbBr@"]]];
+function c044DecodeOutline(encoded) {
+  var i=0, x=0, y=0, pts=[];
+  function nextDelta() {
+    var shift=0, result=0, b;
+    do { b=encoded.charCodeAt(i++)-63; result|=(b&31)<<shift; shift+=5; } while (b>=32 && i<=encoded.length);
+    return result&1 ? ~(result>>1) : result>>1;
+  }
+  while(i<encoded.length) {
+    x += nextDelta(); y += nextDelta();
+    pts.push([x/1000,y/1000]);
+  }
+  if (pts.length > 2 && (pts[0][0]!==pts[pts.length-1][0] || pts[0][1]!==pts[pts.length-1][1])) {
+    pts.push([pts[0][0],pts[0][1]]);
+  }
+  return pts;
+}
+var c044MapGeoJSON = {
+  type:'FeatureCollection',
+  features:c044ProvincePacked.map(function(item,i){
+    var parts=item[1].map(c044DecodeOutline);
+    return {
+      type:'Feature',id:'province-'+i, properties:{name:item[0]},
+      geometry:parts.length>1
+        ? {type:'MultiPolygon',coordinates:parts.map(function(ring){return [ring];})}
+        : {type:'Polygon',coordinates:[parts[0]]}
+    };
+  })
+};
+
+function c044Num(v) { return Number(v); }
+function c044Format(v, digits) {
+  return Number(v).toLocaleString('en-US', { minimumFractionDigits: digits || 0, maximumFractionDigits: digits || 0 });
+}
+function c044Safe(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function c044Percent(v) {
+  if (!Number.isFinite(v)) return '—';
+  return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+}
+function c044Clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function c044ReadChart() {
+  if (typeof myChart !== 'undefined' && myChart && typeof myChart.setOption === 'function') return myChart;
+  if (typeof chart !== 'undefined' && chart && typeof chart.setOption === 'function') return chart;
+  if (typeof echartsInstance !== 'undefined' && echartsInstance && typeof echartsInstance.setOption === 'function') return echartsInstance;
+  return null;
+}
+
+var c044Inputs = [出发机场, 到达机场, 航班班次, 班次同比, 平均飞行距离, 出发经度, 出发纬度, 到达经度, 到达纬度];
+var c044Length = 出发机场.length;
+if (c044Inputs.some(function(a) { return !Array.isArray(a) || a.length !== c044Length; })) {
+  throw new Error('C044: 所有输入字段必须是一维数组，且长度相同。');
+}
+var c044Rows = [];
+for (var c044I = 0; c044I < c044Length; c044I++) {
+  var v = Number(航班班次[c044I]);
+  var xy = [Number(出发经度[c044I]), Number(出发纬度[c044I]), Number(到达经度[c044I]), Number(到达纬度[c044I])];
+  if (!出发机场[c044I] || !到达机场[c044I] || !Number.isFinite(v) || v < 0 || xy.some(function(n){return !Number.isFinite(n);})) {
+    throw new Error('C044: 第 ' + (c044I + 1) + ' 条记录中机场、班次或经纬度无效。');
+  }
+  c044Rows.push({
+    from: String(出发机场[c044I]), to: String(到达机场[c044I]), value: v,
+    yoy: 班次同比[c044I] === '' || 班次同比[c044I] == null ? null : Number(班次同比[c044I]),
+    distance: 平均飞行距离[c044I] === '' || 平均飞行距离[c044I] == null ? null : Number(平均飞行距离[c044I]),
+    fromCoord: [xy[0],xy[1]], toCoord: [xy[2],xy[3]], originalIndex: c044I
+  });
+}
+c044Rows.sort(function(a,b){return b.value - a.value;});
+if (setting.topN > 0) c044Rows = c044Rows.slice(0, Math.floor(setting.topN));
+c044Rows.forEach(function(row,i){row.rank=i+1;});
+// 按无序机场对识别是否存在双向航线；相反方向使用同号曲率，
+// 因为 ECharts 的法线方向随 from/to 交换而反转，所以画面上形成镜像双弧。
+var c044DirectedKeys = {};
+c044Rows.forEach(function(r){ c044DirectedKeys[r.from+'\u001f'+r.to]=true; });
+function c044LineCurveness(r) {
+  var reverse = !!c044DirectedKeys[r.to+'\u001f'+r.from];
+  return reverse ? setting.reverseArcCurveness : setting.arcCurveness;
+}
+
+var c044Total = c044Rows.reduce(function(a,b){return a+b.value;},0);
+var c044Min = c044Rows.length ? Math.min.apply(null,c044Rows.map(function(r){return r.value;})) : 0;
+var c044Max = c044Rows.length ? Math.max.apply(null,c044Rows.map(function(r){return r.value;})) : 1;
+var c044AirportMap = {};
+c044Rows.forEach(function(r){
+  [ ['from',r.from,r.fromCoord], ['to',r.to,r.toCoord] ].forEach(function(pair){
+    var k=pair[1];
+    if (!c044AirportMap[k]) c044AirportMap[k]={name:k,coord:pair[2],departures:0,arrivals:0,links:0};
+    if (pair[0] === 'from') c044AirportMap[k].departures += r.value;
+    else c044AirportMap[k].arrivals += r.value;
+    c044AirportMap[k].links++;
+  });
+});
+var c044Airports = Object.keys(c044AirportMap).map(function(k){return c044AirportMap[k];});
+var c044AirportMax = Math.max.apply(null,[1].concat(c044Airports.map(function(d){return d.departures+d.arrivals;})));
+// 在当前机场集合上做一次确定性的标签布局，避免局部集中机场互相压盖。
+// 仅根据地理坐标与字符长度选择标签方向，不对机场名称做任何硬编码。
+function c044BuildLabelDirections() {
+  var result={}, placed=[];
+  var ordered=c044Airports.slice().sort(function(a,b){
+    return b.departures+b.arrivals-(a.departures+a.arrivals);
+  });
+  var directions=['right','left','top','bottom'];
+  var xs=14.0, ys=14.0;
+  ordered.forEach(function(a){
+    var ax=a.coord[0]*xs, ay=-a.coord[1]*ys;
+    var labelWidth=Math.max(40,Array.from(a.name).length*11+8), labelHeight=18;
+    var bestScore=Infinity,bestDir='right',bestBox=null;
+    directions.forEach(function(dir,idx){
+      var x=dir==='right'?ax+14:dir==='left'?ax-14-labelWidth:ax-labelWidth/2;
+      var y=dir==='top'?ay-14-labelHeight:dir==='bottom'?ay+14:ay-labelHeight/2;
+      var box={x:x,y:y,w:labelWidth,h:labelHeight};
+      var score=idx*0.035;
+      placed.forEach(function(p){
+        var dx=Math.min(box.x+box.w,p.x+p.w)-Math.max(box.x,p.x);
+        var dy=Math.min(box.y+box.h,p.y+p.h)-Math.max(box.y,p.y);
+        if(dx>0&&dy>0)score+=120+dx*dy;
+      });
+      c044Airports.forEach(function(b){
+        if(b.name===a.name)return;
+        var bx=b.coord[0]*xs,by=-b.coord[1]*ys;
+        if(bx>=box.x-5&&bx<=box.x+box.w+5&&by>=box.y-5&&by<=box.y+box.h+5)score+=18;
+      });
+      if(score<bestScore){bestScore=score;bestDir=dir;bestBox=box;}
+    });
+    result[a.name]=bestDir;
+    placed.push(bestBox);
+  });
+  return result;
+}
+var c044LabelDirections=c044BuildLabelDirections();
+function c044AirportLabelPosition(a) {
+  return setting.autoAirportLabelPosition ? (c044LabelDirections[a.name]||'right') : 'right';
+}
+
+// 按底图几何范围和输入坐标自动确定初始经纬度边界，避免固定中心+放大导致裁切。
+// 用户替换机场数据时也重新计算，不把中国地图的中心点硬编码为缩放中心。
+function c044InitialGeoBounds() {
+  var minLng=Infinity,maxLng=-Infinity,minLat=Infinity,maxLat=-Infinity;
+  function addPoint(point) {
+    if (!Array.isArray(point) || point.length<2) return;
+    var lng=Number(point[0]), lat=Number(point[1]);
+    if (!Number.isFinite(lng)||!Number.isFinite(lat)) return;
+    minLng=Math.min(minLng,lng);maxLng=Math.max(maxLng,lng);
+    minLat=Math.min(minLat,lat);maxLat=Math.max(maxLat,lat);
+  }
+  c044MapGeoJSON.features.forEach(function(feature){
+    var g=feature.geometry;
+    var polygons=g.type==='MultiPolygon' ? g.coordinates : [g.coordinates];
+    polygons.forEach(function(rings){rings.forEach(function(ring){ring.forEach(addPoint);});});
+  });
+  c044Airports.forEach(function(a){addPoint(a.coord);});
+  var pad=Math.max(0,Number(setting.mapExtentPadding)||0);
+  return [[minLng-pad,maxLat+pad],[maxLng+pad,minLat-pad]];
+}
+var c044GeoBounds=c044InitialGeoBounds();
+
+var c044Focus = {kind:null,key:null};
+var c044Tag = 'c044_china_province_preview_v4';
+if (typeof echarts !== 'undefined' && typeof echarts.registerMap === 'function' &&
+    (!echarts.getMap || !echarts.getMap(c044Tag))) {
+  echarts.registerMap(c044Tag, c044MapGeoJSON);
+}
+function c044Active(r) {
+  if (!c044Focus.kind) return true;
+  if (c044Focus.kind==='airport') return r.from===c044Focus.key || r.to===c044Focus.key;
+  return r.originalIndex===c044Focus.key;
+}
+function c044Weight(v) {
+  var ratio = c044Max === c044Min ? 0.65 : (v-c044Min)/(c044Max-c044Min);
+  return setting.lineMinWidth + (setting.lineMaxWidth-setting.lineMinWidth)*ratio;
+}
+function c044LineRow(r, active) {
+  return {
+    name:r.from+' → '+r.to,
+    coords:[r.fromCoord,r.toCoord], value:r.value,
+    rank:r.rank, rowId:r.originalIndex, from:r.from, to:r.to,
+    yoy:r.yoy, distance:r.distance,
+    lineStyle:{
+      color: active ? (c044Focus.kind ? setting.colors.focus : setting.colors.line) : setting.colors.lineFade,
+      opacity: active ? (c044Focus.kind ? 0.90 : 0.58) : setting.focusDimOpacity,
+      width: c044Weight(r.value),
+      curveness: c044LineCurveness(r)
+    }
+  };
+}
+function c044NodeRow(a) {
+  var total=a.departures+a.arrivals;
+  var focused=!c044Focus.kind || c044Focus.kind==='airport' && c044Focus.key===a.name || c044Focus.kind==='route' && c044Rows.some(function(r){return r.originalIndex===c044Focus.key && (r.from===a.name||r.to===a.name);});
+  return {
+    name:a.name, value:[a.coord[0],a.coord[1],total],
+    departures:a.departures, arrivals:a.arrivals, links:a.links,
+    symbolSize:setting.airportMinSize+(setting.airportMaxSize-setting.airportMinSize)*Math.sqrt(total/c044AirportMax),
+    itemStyle:{color: focused ? (c044Focus.kind ? setting.colors.focus : setting.colors.airport) : '#B6C5D2',borderColor:'#FFFFFF',borderWidth:1.8,opacity: focused ? 1 : 0.42},
+    label:{show:setting.showAirportLabels,formatter:a.name,position:c044AirportLabelPosition(a),color:focused?setting.colors.text:'#A5B1BD',opacity:focused?1:0.42}
+  };
+}
+function c044SeriesData() {
+  var live = c044Rows.filter(c044Active);
+  var animated=(!c044Focus.kind ? live.slice(0,setting.animateTopN) : live);
+  return {
+    routes: c044Rows.map(function(r){return c044LineRow(r,c044Active(r));}),
+    active: animated.map(function(r){
+      return {name:r.from+' → '+r.to,coords:[r.fromCoord,r.toCoord],value:r.value, rowId:r.originalIndex,
+        lineStyle:{width:1.15,color:c044Focus.kind ? setting.colors.focus : setting.colors.lineStrong,opacity:0.32,curveness:c044LineCurveness(r)}};
+    }),
+    nodes:c044Airports.map(c044NodeRow)
+  };
+}
+function c044Tooltip(params) {
+  var data=params.data || {};
+  var line = params.seriesId==='c044-route-lines';
+  var heading = line ? data.from+' → '+data.to : data.name;
+  var html='<div style="min-width:205px;max-width:'+setting.tooltipMaxWidth+'px;font-family:Arial,Microsoft YaHei,sans-serif;color:'+setting.colors.text+';">'
+    +'<div style="font-size:13px;font-weight:700;margin-bottom:7px;">'
+    +'<span style="display:inline-block;background:'+setting.colors.lineStrong+';width:9px;height:9px;border-radius:50%;margin-right:7px;"></span>'+c044Safe(heading)+'</div>';
+  if (line) {
+    var delta=data.yoy;
+    var deltaColor=delta > 0 ? setting.colors.positive : (delta < 0 ? setting.colors.negative : setting.colors.textSecondary);
+    html+='<div style="font-size:11px;color:'+setting.colors.textSecondary+';margin-bottom:8px;">第'+data.rank+'名 · 单向'+c044Safe(setting.routeLabel)+'</div>';
+    html+='<div style="display:flex;justify-content:space-between;gap:15px;margin:5px 0;"><span>'+c044Safe(setting.metricName)+'</span><b>'+c044Format(data.value)+' '+c044Safe(setting.metricUnit)+'</b></div>';
+    html+='<div style="display:flex;justify-content:space-between;gap:15px;margin:5px 0;"><span>占当前样本</span><b>'+(c044Total?100*data.value/c044Total:0).toFixed(2)+'%</b></div>';
+    html+='<div style="display:flex;justify-content:space-between;gap:15px;margin:5px 0;"><span>'+c044Safe(setting.yoyLabel)+'</span><b style="color:'+deltaColor+'">'+(Number.isFinite(delta)?(delta>0?'▲ ':delta<0?'▼ ':'')+Math.abs(delta).toFixed(2)+'%':'—')+'</b></div>';
+    html+='<div style="display:flex;justify-content:space-between;gap:15px;margin:5px 0;"><span>'+c044Safe(setting.distanceLabel)+'</span><b>'+(Number.isFinite(data.distance)?c044Format(data.distance)+' '+c044Safe(setting.distanceUnit):'—')+'</b></div>';
+  } else {
+    html+='<div style="font-size:11px;color:'+setting.colors.textSecondary+';margin-bottom:8px;">仅统计图中展示的单向'+c044Safe(setting.routeLabel)+'</div>';
+    html+='<div style="display:flex;justify-content:space-between;gap:15px;margin:5px 0;"><span>样本内'+c044Safe(setting.originLabel)+c044Safe(setting.metricName)+'</span><b>'+c044Format(data.departures)+' '+c044Safe(setting.metricUnit)+'</b></div>';
+    html+='<div style="display:flex;justify-content:space-between;gap:15px;margin:5px 0;"><span>样本内'+c044Safe(setting.destinationLabel)+c044Safe(setting.metricName)+'</span><b>'+c044Format(data.arrivals)+' '+c044Safe(setting.metricUnit)+'</b></div>';
+    html+='<div style="display:flex;justify-content:space-between;gap:15px;margin:5px 0;"><span>涉及单向'+c044Safe(setting.routeLabel)+'</span><b>'+data.links+' 条</b></div>';
+  }
+  return html+'</div>';
+}
+// ============================================================
+// 4. 选中详情栏的数据计算（不引用演示数据中的任何固定机场名）
+// ============================================================
+// 详情栏与 Tooltip 共享 c044Rows / c044AirportMap，因此只需替换第2节输入数组。
+// 这里把“数据计算”和“graphic 位置”分开，方便用户让 AI 只修改其中一个模块。
+function c044SelectionDetails() {
+  function m(label, value, tone) { return {label:String(label),value:String(value),tone:tone||'normal'}; }
+  if (c044Focus.kind==='route') {
+    var row=c044Rows.filter(function(r){return r.originalIndex===c044Focus.key;})[0];
+    if (row) {
+      var tone=Number.isFinite(row.yoy) ? row.yoy>0?'positive':row.yoy<0?'negative':'normal' : 'normal';
+      var yoyText=Number.isFinite(row.yoy) ? (row.yoy>0?'▲ ':row.yoy<0?'▼ ':'')+Math.abs(row.yoy).toFixed(2)+'%' : '—';
+      return {
+        heading:row.from+' → '+row.to+'  ·  第'+row.rank+'名',
+        metrics:[
+          m(setting.metricName,c044Format(row.value)+' '+setting.metricUnit),
+          m('当前样本占比',(c044Total?100*row.value/c044Total:0).toFixed(2)+'%'),
+          m(setting.yoyLabel||'同比变化',yoyText,tone),
+          m(setting.distanceLabel,Number.isFinite(row.distance)?c044Format(row.distance)+' '+setting.distanceUnit:'—')
+        ]
+      };
+    }
+  }
+  if (c044Focus.kind==='airport') {
+    var node=c044AirportMap[c044Focus.key];
+    if (node) {
+      var sum=node.departures+node.arrivals;
+      return {
+        heading:node.name+'  ·  当前样本关联'+setting.routeLabel,
+        metrics:[
+          m('关联'+setting.routeLabel,node.links+' 条'),
+          m('关联'+setting.metricName,c044Format(sum)+' '+setting.metricUnit),
+          m('当前样本占比',(c044Total?100*sum/c044Total:0).toFixed(2)+'%'),
+          m(setting.originLabel+' / '+setting.destinationLabel,c044Format(node.departures)+' / '+c044Format(node.arrivals))
+        ]
+      };
+    }
+  }
+  // 取消选择后展示当前 Top N 样本概览。这里的全部数字也由输入数据自动计算。
+  return {
+    heading:'当前样本概览',
+    metrics:[
+      m('单向'+setting.routeLabel,c044Rows.length+' 条'),
+      m(setting.nodeLabel,c044Airports.length+' 个'),
+      m('样本'+setting.metricName,c044Format(c044Total)+' '+setting.metricUnit),
+      m('最大单向'+setting.metricName,c044Rows.length?c044Format(c044Rows[0].value)+' '+setting.metricUnit:'—')
+    ]
+  };
+}
+
+// ============================================================
+// 5. 详情栏视觉布局：只负责 graphic 的位置与样式（不参与业务计算）
+// ============================================================
+function c044ChartWidth(chartInst) {
+  return chartInst && typeof chartInst.getWidth==='function' && chartInst.getWidth()>0
+    ? chartInst.getWidth() : 1200;
+}
+function c044DetailsLayout(width) {
+  var compact=width < setting.detailsCompactWidth;
+  var left=width < 540 ? 20 : 46;
+  var right=width < 540 ? 20 : 46;
+  var usable=Math.max(180,width-left-right);
+  var cols=compact?2:4;
+  var cell=usable/cols;
+  return {
+    compact:compact,left:left,right:right,width:width,cols:cols,cell:cell,
+    // 详情栏始终预留空间，切换选择时地图不跳动。
+    geoTop:compact?229:195,
+    headerY:115, firstY:compact?143:142, nextY:compact?179:0,
+    dividerY:compact?215:181
+  };
+}
+function c044DetailGraphics(layout) {
+  var info=c044SelectionDetails();
+  var active=!!c044Focus.kind;
+  var colors=setting.colors;
+  var items=[
+    {id:'c044-detail-title',type:'text',left:layout.left,top:layout.headerY,silent:true,z:200,
+      style:{text:info.heading,fill:active?colors.text:colors.textSecondary,
+        font:'600 12px sans-serif',width:Math.max(130,layout.width-layout.left-layout.right-4),
+        overflow:'truncate',ellipsis:'…'}},
+    {id:'c044-detail-divider',type:'rect',left:layout.left,top:layout.dividerY,silent:true,z:199,
+      shape:{width:Math.max(1,layout.width-layout.left-layout.right),height:1},
+      style:{fill:'#E9EFF4'}}
+  ];
+  for(var i=0;i<4;i++) {
+    var metric=info.metrics[i]||{label:'',value:'',tone:'normal'};
+    var col=i%layout.cols, row=Math.floor(i/layout.cols);
+    var x=Math.round(layout.left+col*layout.cell);
+    var y=layout.firstY+row*36;
+    var textWidth=Math.max(50,Math.floor(layout.cell-12));
+    var valueColor=metric.tone==='positive'?colors.positive:metric.tone==='negative'?colors.negative:colors.text;
+    items.push({id:'c044-detail-label-'+i,type:'text',left:x,top:y,silent:true,z:200,
+      style:{text:metric.label,fill:colors.textSecondary,font:'10px sans-serif',
+        width:textWidth,overflow:'truncate',ellipsis:'…'}});
+    items.push({id:'c044-detail-value-'+i,type:'text',left:x,top:y+14,silent:true,z:200,
+      style:{text:metric.value,fill:valueColor,font:'600 12px sans-serif',
+        width:textWidth,overflow:'truncate',ellipsis:'…'}});
+  }
+  return items;
+}
+function c044ApplyDetailLayout(chartInst, skipSeries) {
+  if (!chartInst || typeof chartInst.setOption!=='function')return;
+  var layout=c044DetailsLayout(c044ChartWidth(chartInst));
+  var update={
+    geo:{top:setting.showSelectionDetails?layout.geoTop:114},
+    graphic:setting.showSelectionDetails?c044DetailGraphics(layout):[]
+  };
+  if (!skipSeries){
+    var data=c044SeriesData();
+    update.series=[
+      {id:'c044-route-lines',data:data.routes},
+      {id:'c044-route-effect',data:data.active,effect:{color:c044Focus.kind?setting.colors.focus:setting.colors.lineStrong}},
+      {id:'c044-airports',data:data.nodes}
+    ];
+    update.graphic.push({id:'c044-focus-state',type:'text',style:{text:c044FocusText()}});
+  }
+  chartInst.setOption(update);
+}
+function c044FocusText() {
+  if (setting.showSelectionDetails && c044Focus.kind) return '已选中 · 点击地图空白处取消';
+  if (c044Focus.kind==='airport')return '当前聚焦：'+c044Focus.key+' · 点击地图空白处取消';
+  if (c044Focus.kind==='route'){
+    var r=c044Rows.filter(function(d){return d.originalIndex===c044Focus.key;})[0];
+    return r ? '当前聚焦：'+r.from+' → '+r.to+' · 点击地图空白处取消' : '';
+  }
+  return '点击'+setting.nodeLabel+'或'+setting.routeLabel+'选中并聚焦；点击地图空白处取消选择';
+}
+function c044Update(chartInst) {
+  c044ApplyDetailLayout(chartInst, false);
+}
+function c044ClearFocus(inst) {
+  if (!c044Focus.kind) return;
+  c044Focus.kind=null;c044Focus.key=null;
+  c044Update(inst);
+}
+function c044BindEvents(inst){
+  if (!inst || typeof inst.on!=='function') return;
+  // 重跑编辑器代码时只移除本案例自身的旧监听器，不影响宿主其他事件。
+  if (inst.__c044ClickCallback && typeof inst.off==='function') inst.off('click',inst.__c044ClickCallback);
+  var zr=typeof inst.getZr==='function' ? inst.getZr() : null;
+  if (zr && inst.__c044BlankCallback && typeof zr.off==='function') zr.off('click',inst.__c044BlankCallback);
+  // ECharts 先转发 series / geo click，再由 ZRender 通知底层 click。
+  // 同一鼠标事件内避免 ZRender 的空白识别抵消刚做出的选择。
+  inst.__c044HandledShapeClick=false;
+  inst.__c044ClickCallback=function(params){
+    if(params && params.seriesId==='c044-airports' && params.data){
+      inst.__c044HandledShapeClick=true;
+      c044Focus.kind='airport';c044Focus.key=params.data.name;
+      c044Update(inst);
+    } else if(params && params.seriesId==='c044-route-lines' && params.data){
+      inst.__c044HandledShapeClick=true;
+      c044Focus.kind='route';c044Focus.key=params.data.rowId;
+      c044Update(inst);
+    } else if(params && params.componentType==='geo') {
+      // 单击灰色省区背景也是“空白处”：取消聚焦，不把省份当成航线选中。
+      inst.__c044HandledShapeClick=true;
+      c044ClearFocus(inst);
+    }
+  };
+  inst.on('click',inst.__c044ClickCallback);
+  // 图表由 Power BI 或官方编辑器 resize 后，根据新宽度自动切换 4列/2列详情。
+  // rendered 只检查尺寸变化；宽度不变时不再 setOption，避免形成渲染循环。
+  if(inst.__c044ResizeCheck && typeof inst.off==='function') inst.off('rendered',inst.__c044ResizeCheck);
+  inst.__c044LastLayoutWidth=c044ChartWidth(inst);
+  inst.__c044ResizeCheck=function(){
+    if(!setting.showSelectionDetails)return;
+    var width=c044ChartWidth(inst);
+    if(Math.abs(width-inst.__c044LastLayoutWidth)<1)return;
+    inst.__c044LastLayoutWidth=width;
+    c044ApplyDetailLayout(inst,true);
+  };
+  inst.on('rendered',inst.__c044ResizeCheck);
+  if (zr && typeof zr.on==='function') {
+    inst.__c044BlankCallback=function(event){
+      if (inst.__c044HandledShapeClick){inst.__c044HandledShapeClick=false;return;}
+      // 白色空白画布没有 ZRender 图形命中目标。
+      if (!event || !event.target) c044ClearFocus(inst);
+    };
+    zr.on('click',inst.__c044BlankCallback);
+  }
+}
+var c044Prepared=c044SeriesData();
+option = {
+  backgroundColor:'transparent',
+  animationDurationUpdate:380,
+  title: [{
+    text:setting.title,
+    subtext:(setting.year?String(setting.year)+(/^[0-9]{4}$/.test(String(setting.year))?'年':'')+' · ':'')+'TOP '+c044Rows.length+' 单向'+setting.routeLabel+' · '+c044Airports.length+' '+setting.nodeLabel+' · 线宽表示'+setting.metricName+'规模',
+    left:46,top:32,
+    itemGap:8,
+    textStyle:{fontSize:21,fontWeight:700,color:setting.colors.text},
+    subtextStyle:{fontSize:12,fontWeight:400,color:setting.colors.textSecondary}
+  }],
+  tooltip:{
+    trigger:'item',confine:true,enterable:false,appendToBody:false,
+    backgroundColor:'rgba(255,255,255,0.98)',borderWidth:1,borderColor:'#E5E9ED',
+    padding:[12,14],textStyle:{fontSize:12,color:setting.colors.text},
+    formatter:c044Tooltip
+  },
+  geo:{
+    map:c044Tag,
+    roam:setting.enableRoam,
+    scaleLimit:{min:0.85,max:5},
+    top:setting.showSelectionDetails?c044DetailsLayout(c044ChartWidth(c044ReadChart())).geoTop:114,
+    bottom:92,left:46,right:46,
+    boundingCoords:c044GeoBounds,zoom:1,
+    aspectScale:0.8,
+    selectedMode:false,
+    itemStyle:{areaColor:setting.colors.mapFill,borderColor:setting.showProvinceBorders?setting.colors.boundary:'transparent',borderWidth:0.55},
+    emphasis:{disabled:true},
+    label:{show:false}
+  },
+  series:[
+    {
+      id:'c044-route-lines',type:'lines',name:'航线班次',coordinateSystem:'geo',
+      polyline:false,zlevel:1,
+      symbol:setting.showArrow?['none','arrow']:['none','none'],symbolSize:setting.showArrow?[0,7]:[0,0],
+      lineStyle:{color:setting.colors.line,opacity:0.58,width:1.4,curveness:setting.arcCurveness},
+      emphasis:{lineStyle:{color:setting.colors.focus,width:3.7,opacity:1}},
+      data:c044Prepared.routes
+    },
+    {
+      id:'c044-route-effect',type:'lines',name:'流动方向',coordinateSystem:'geo',
+      zlevel:2,silent:true,
+      effect:{show:setting.showMovingDots,constantSpeed:29,trailLength:0.10,symbol:'circle',symbolSize:3.2,color:setting.colors.lineStrong},
+      lineStyle:{color:setting.colors.lineStrong,width:1.1,opacity:0.16,curveness:setting.arcCurveness},
+      data:c044Prepared.active
+    },
+    {
+      id:'c044-airports',type:'scatter',name:'主要机场',coordinateSystem:'geo',
+      zlevel:3,
+      symbol:'circle',
+      labelLayout:{hideOverlap:true},
+      label:{show:setting.showAirportLabels,formatter:function(params){return params.data&&params.data.name?params.data.name:params.name;},position:'right',distance:9,
+        fontSize:11,fontWeight:600,color:setting.colors.text,
+        backgroundColor:'rgba(255,255,255,0.78)',padding:[2,3],borderRadius:3},
+      emphasis:{scale:1.3,label:{show:true,formatter:function(params){return params.data&&params.data.name?params.data.name:params.name;},fontSize:12,fontWeight:700}},
+      data:c044Prepared.nodes
+    }
+  ],
+  graphic:[
+    {id:'c044-accent',type:'rect',left:46,top:16,silent:true,shape:{width:18,height:4},style:{fill:setting.colors.accent}},
+    {id:'c044-focus-state',type:'text',left:46,top:94,silent:true,
+      style:{text:c044FocusText(),font:'11px sans-serif',fill:setting.colors.textSecondary}},
+    {id:'c044-source',type:'text',left:46,bottom:35,silent:true,
+      style:{text:'数据来源：'+setting.dataSource,fill:setting.colors.textSecondary,font:'10px sans-serif'}},
+    {id:'c044-note',type:'text',left:46,bottom:17,silent:true,
+      style:{text:'图表说明：'+setting.mapNote,fill:setting.colors.textSecondary,font:'10px sans-serif'}}
+  ].concat(setting.showSelectionDetails?c044DetailGraphics(c044DetailsLayout(c044ChartWidth(c044ReadChart()))):[])
+};
+
+// 机场/飞线点击选中、空白点击取消；图表 resize 时重新布局详情栏。
+// 官方编辑器使用 myChart；Power BI 宿主需暴露图表实例，否则仅显示初始图表，不能交互。
+c044BindEvents(c044ReadChart());

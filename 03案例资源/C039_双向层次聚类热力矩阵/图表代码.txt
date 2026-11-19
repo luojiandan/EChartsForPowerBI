@@ -1,0 +1,764 @@
+﻿/*
+ * C039 双向层次聚类热力矩阵（V0.9.0）
+ * ECharts for Power BI / ECharts 官方编辑器
+ * 原始输入：对象、指标、数值（三个等长的一维数组）；每一行是一个“对象×指标”组合。
+ * 技术特点：零外部依赖双向聚类、原生图例行组显隐；聚类树点击双向聚焦、分支及标签同步强调、交叉区域描边；聚焦数值标签、可靠重置按钮、富文本 Tooltip。
+ * V9 修复：行、列选择相互独立，点击一棵树时不更新另一棵树的数据，事件分支用稳定 ID 识别。
+ * 数据为人工模拟；正式来源须在 setting 中修改。
+ */
+
+// ========== 1. 示例输入（仅演示）：每一列一个平行一维数组 ==========
+var 示例对象 = [
+  "门店01", "门店01", "门店01", "门店01", "门店01", "门店01", "门店01", "门店01", "门店01",
+  "门店02", "门店02", "门店02", "门店02", "门店02", "门店02", "门店02", "门店02", "门店02",
+  "门店03", "门店03", "门店03", "门店03", "门店03", "门店03", "门店03", "门店03", "门店03",
+  "门店04", "门店04", "门店04", "门店04", "门店04", "门店04", "门店04", "门店04", "门店04",
+  "门店05", "门店05", "门店05", "门店05", "门店05", "门店05", "门店05", "门店05", "门店05",
+  "门店06", "门店06", "门店06", "门店06", "门店06", "门店06", "门店06", "门店06", "门店06",
+  "门店07", "门店07", "门店07", "门店07", "门店07", "门店07", "门店07", "门店07", "门店07",
+  "门店08", "门店08", "门店08", "门店08", "门店08", "门店08", "门店08", "门店08", "门店08",
+  "门店09", "门店09", "门店09", "门店09", "门店09", "门店09", "门店09", "门店09", "门店09",
+  "门店10", "门店10", "门店10", "门店10", "门店10", "门店10", "门店10", "门店10", "门店10",
+  "门店11", "门店11", "门店11", "门店11", "门店11", "门店11", "门店11", "门店11", "门店11",
+  "门店12", "门店12", "门店12", "门店12", "门店12", "门店12", "门店12", "门店12", "门店12",
+  "门店13", "门店13", "门店13", "门店13", "门店13", "门店13", "门店13", "门店13", "门店13",
+  "门店14", "门店14", "门店14", "门店14", "门店14", "门店14", "门店14", "门店14", "门店14",
+  "门店15", "门店15", "门店15", "门店15", "门店15", "门店15", "门店15", "门店15", "门店15",
+  "门店16", "门店16", "门店16", "门店16", "门店16", "门店16", "门店16", "门店16", "门店16",
+  "门店17", "门店17", "门店17", "门店17", "门店17", "门店17", "门店17", "门店17", "门店17",
+  "门店18", "门店18", "门店18", "门店18", "门店18", "门店18", "门店18", "门店18", "门店18"
+];
+
+var 示例指标 = [
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)",
+  "营业收入(万元)", "毛利率(%)", "复购率(%)", "客单价(元)", "转化率(%)", "新客占比(%)", "会员活跃率(%)", "退货率(%)", "投诉率(‰)"
+];
+
+var 示例数值 = [
+  1671.2, 30.1, 50.7, 224.8, 6.3, 33.0, 40.8, 7.6, 3.9,
+  1406.5, 25.7, 34.8, 228.8, 9.9, 53.0, 51.8, 8.6, 4.6,
+  965.1, 20.7, 26.8, 203.4, 7.7, 44.9, 44.2, 10.6, 7.4,
+  1109.3, 25.4, 42.4, 251.4, 7.5, 37.5, 63.9, 6.3, 3.7,
+  1671.1, 30.3, 51.4, 240.6, 6.8, 33.6, 42.0, 7.8, 4.1,
+  945.3, 19.3, 21.6, 184.1, 7.7, 46.7, 43.6, 10.7, 7.0,
+  1423.5, 25.8, 34.0, 213.8, 9.9, 53.5, 54.3, 9.1, 4.5,
+  1203.6, 27.9, 49.1, 276.1, 8.7, 42.7, 65.1, 7.0, 4.4,
+  838.8, 20.9, 26.6, 192.6, 8.0, 47.8, 48.9, 11.2, 7.1,
+  1615.3, 29.6, 49.3, 232.4, 5.7, 31.6, 42.6, 7.2, 3.8,
+  1278.6, 26.5, 48.6, 257.3, 7.9, 42.0, 64.2, 6.8, 3.6,
+  1474.7, 27.7, 35.8, 225.5, 11.1, 56.6, 56.2, 9.5, 5.0,
+  1673.2, 29.8, 50.9, 228.3, 6.3, 33.1, 42.0, 7.2, 3.7,
+  1245.8, 27.9, 49.8, 272.9, 9.5, 45.0, 65.1, 7.4, 4.7,
+  1320.4, 24.9, 33.5, 202.8, 10.1, 48.3, 48.7, 8.3, 4.0,
+  865.1, 19.6, 22.5, 188.8, 7.6, 45.2, 45.8, 10.9, 7.1,
+  1797.0, 31.2, 54.3, 239.9, 6.3, 36.2, 48.6, 7.3, 4.2,
+  1047.5, 26.4, 46.6, 239.8, 7.7, 40.1, 65.0, 7.3, 3.8
+];
+
+// Power BI 当前数据可用时自动读取前三列。字段顺序：对象 / 指标 / 数值。
+// 不假设额外字段，也不依赖具体产品、年份、门店名称。
+var 使用PowerBI数据 = typeof dataArr !== 'undefined' && dataArr &&
+  Array.isArray(dataArr.dataObjects) && dataArr.dataObjects.length >= 3 &&
+  [0,1,2].every(function(i){return dataArr.dataObjects[i] && Array.isArray(dataArr.dataObjects[i].values);});
+var 对象 = 使用PowerBI数据 ? dataArr.dataObjects[0].values : 示例对象;
+var 指标 = 使用PowerBI数据 ? dataArr.dataObjects[1].values : 示例指标;
+var 数值 = 使用PowerBI数据 ? dataArr.dataObjects[2].values : 示例数值;
+
+// ========== 2. 可调整设置：用户仅需替换数据来源，计算函数不用修改 ==========
+var setting = {
+  title: '哪些经营单元的指标表现更相似？',
+  subTitlePrefix: '双向层次聚类 · 指标画像',
+  sourceDemo: '人工合成演示数据（非真实企业经营数据）',
+  sourcePowerBI: 'Power BI 当前数据集（请按实际来源修改）',
+  maxRows: 48,
+  maxColumns: 22,
+  distance: 'euclidean',   // euclidean：基于标准化值计算欧氏距离
+  linkage: 'average',     // average / complete / single
+  rowClusterCount: 4,    // 行聚类截取为几组，仅用于显示组标记/分界线，不改变树结构
+  columnClusterCount: 3,
+  colorZLimit: 2.0,       // 热力图颜色范围为 [-colorZLimit, colorZLimit]
+  missingCellMode: 'error', // 'error'：缺失项明确报错；'columnMean'：按对应指标均值填补，并在 Tooltip 标记
+  showClusterBoundary: true,
+  clusterBoundaryColor: '#BFCAD4',  // 行列分组边界使用轻量辅助色
+  clusterBoundaryOpacity: 0.40,     // 避免隐藏对象组时分界线比热力单元更突出
+  clusterBoundaryWidth: 0.8,        // px：不盖过热力矩阵和聚焦边框
+  showValueOnCells: false, // V5 兼容开关：若设为 true 则强制全部显示（优先于下一项）
+  cellLabelMode: 'focus', // none 不显示 / focus 仅聚焦区域 / all 全部显示；默认 focus
+  cellValueMode: 'zscore', // zscore 标准化分数 / raw 原始值；默认 Z-score 保留1位
+  maxFocusedValueLabels: 60, // 聚焦区域大于此单元数时隐藏标签，避免密集图拥挤；Tooltip 不受影响
+  animationDuration: 420,
+  focusOpacity: 0.35,   // 聚焦时非选中单元格透明度（0-1）；保留整体对照信息
+  focusColor: '#315F89', // 聚焦强调蓝，与热力图冷暖色及正负业务色区分
+  branchHitWidth: 12,  // 树枝交互热区宽度（px），扩大细线点击范围
+  rowTreeMinBranchGapPx: 12, // 仅调整对象树的显示间距：防止距离极近的相邻合并节点在屏幕上压盖；不改变真实距离/分组/树结构
+  layout: {
+    mainLeft: 282, mainRight: 50, mainTop: 281, mainBottom: 112,
+    rowTreeLeft: 47, rowTreeWidth: 125,
+    columnTreeTop: 140, columnTreeHeight: 92
+  },
+  colors: {
+    positive: '#239263', negative: '#D9544D', title: '#263238',
+    secondary: '#8493A2', grid: '#E5E9ED', reference: '#AEB7C1',
+    tree: '#8D9BA8',
+    cluster: ['#239263','#568CB5','#DCA559','#AE8AA3','#667E96','#8DAA79','#C68875','#6B9F9B'],
+    // 相对均值低→中→高（颜色不等于业务好坏）
+    heat: ['#477EAA','#B9D5E7','#F8FAFB','#F4D7CD','#D9544D']
+  }
+};
+
+// ========== 3. 数据校验与算法：不使用外部聚类库 ==========
+function c039Number(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : NaN;
+  if (typeof v === 'string' && v.trim() !== '') {
+    var s = v.replace(/,/g,'').trim();
+    return /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/.test(s) ? Number(s) : NaN;
+  }
+  return NaN;
+}
+function c039Fmt(n, digits) {
+  if (!Number.isFinite(n)) return '—';
+  return n.toLocaleString('zh-CN',{maximumFractionDigits:digits===undefined?2:digits});
+}
+function c039Escape(s) {
+  return String(s).replace(/[&<>"']/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];});
+}
+function c039Prepare(names, metrics, values) {
+  if (!Array.isArray(names) || !Array.isArray(metrics) || !Array.isArray(values)) throw Error('输入字段必须为三个平行的一维数组。');
+  if (names.length !== metrics.length || names.length !== values.length) throw Error('对象、指标、数值三列长度不一致，请检查 Power BI 字段绑定与聚合粒度。');
+  if (names.length === 0) throw Error('当前没有有效数据，请提供“对象、指标、数值”三列。');
+  var rowMap=new Map(), colMap=new Map(), pairs=new Map();
+  for (var k=0; k<names.length; k++) {
+    var n = names[k] === null || names[k] === undefined ? '' : String(names[k]).trim();
+    var m = metrics[k] === null || metrics[k] === undefined ? '' : String(metrics[k]).trim();
+    if (!n || !m) throw Error('第 '+(k+1)+' 行对象或指标为空。');
+    if (/\u0000/.test(n+m)) throw Error('对象/指标名称不能包含特殊分隔符。');
+    var v=c039Number(values[k]);
+    if (!Number.isFinite(v)) throw Error('第 '+(k+1)+' 行数值不是有效数字：'+ n+' / '+m+'。');
+    var key=JSON.stringify([n,m]);
+    if (pairs.has(key)) throw Error('出现重复的对象×指标：'+n+' / '+m+'。请在 Power BI 中先按两列汇总。');
+    pairs.set(key,v);
+    if (!rowMap.has(n)) rowMap.set(n,rowMap.size);
+    if (!colMap.has(m)) colMap.set(m,colMap.size);
+  }
+  var rows=Array.from(rowMap.keys()).sort(function(a,b){return a.localeCompare(b,'zh-CN');});
+  var cols=Array.from(colMap.keys()).sort(function(a,b){return a.localeCompare(b,'zh-CN');});
+  if(rows.length<3||cols.length<3) throw Error('双向聚类至少需要 3 个对象和 3 项指标。');
+  if(rows.length>setting.maxRows||cols.length>setting.maxColumns) throw Error('当前为 '+rows.length+'×'+cols.length+'，超过模板安全上限 '+setting.maxRows+'×'+setting.maxColumns+'；请先筛选对象/指标。');
+  var matrix=[], imputed=[];
+  for(var r=0;r<rows.length;r++) {
+    var record=[], rowFlags=[];
+    for(var c=0;c<cols.length;c++) {
+      var key2=JSON.stringify([rows[r],cols[c]]);
+      record.push(pairs.has(key2)?pairs.get(key2):null);
+      rowFlags.push(false);
+    }
+    matrix.push(record);imputed.push(rowFlags);
+  }
+  var missing=[];
+  for(var ri=0;ri<rows.length;ri++)for(var ci=0;ci<cols.length;ci++)if(matrix[ri][ci]===null)missing.push(rows[ri]+' / '+cols[ci]);
+  if(missing.length) {
+    if(setting.missingCellMode!=='columnMean') throw Error('发现 '+missing.length+' 个缺失单元格（例如 '+missing.slice(0,2).join('、')+'），默认不插补以免影响聚类；可补齐数据或设置 missingCellMode=columnMean。');
+    for(var j=0;j<cols.length;j++){
+      var observed=matrix.map(function(row){return row[j];}).filter(function(v){return v!==null;});
+      if(!observed.length)throw Error('指标“'+cols[j]+'”整列缺失，无法插补。');
+      var mean=observed.reduce(function(a,b){return a+b;},0)/observed.length;
+      for(var i=0;i<rows.length;i++)if(matrix[i][j]===null){matrix[i][j]=mean;imputed[i][j]=true;}
+    }
+  }
+  var normal=rows.map(function(){return new Array(cols.length);}), means=[], sds=[], constant=[];
+  for(var col=0;col<cols.length;col++){
+    var x=matrix.map(function(a){return a[col];});
+    var mu=x.reduce(function(a,b){return a+b;},0)/x.length;
+    var variance=x.reduce(function(s,a){return s+Math.pow(a-mu,2);},0)/x.length;
+    var sd=Math.sqrt(variance);
+    means.push(mu);sds.push(sd);constant.push(sd<1e-12);
+    for(var row=0;row<rows.length;row++)normal[row][col]=sd<1e-12?0:(matrix[row][col]-mu)/sd;
+  }
+  return {rows:rows,cols:cols,matrix:matrix,normal:normal,means:means,sds:sds,constant:constant,imputed:imputed,missingCount:missing.length};
+}
+function c039Euclidean(a,b) {
+  var s=0;
+  for(var i=0;i<a.length;i++) s+=Math.pow(a[i]-b[i],2);
+  return Math.sqrt(s/a.length);
+}
+function c039Cluster(vectors, linkage, minBranchGapPx, treePixelWidth) {
+  var n=vectors.length, nodes=[], active=[], distances=new Map();
+  function pair(a,b){return a<b?a+'|'+b:b+'|'+a;}
+  for(var i=0;i<n;i++){nodes.push({id:i,leaf:i,size:1,height:0});active.push(i);}
+  for(var i=0;i<n;i++)for(var j=i+1;j<n;j++)distances.set(pair(i,j),c039Euclidean(vectors[i],vectors[j]));
+  var nextId=n;
+  while(active.length>1){
+    var best=Infinity,aId=-1,bId=-1;
+    for(var a=0;a<active.length;a++)for(var b=a+1;b<active.length;b++){
+      var ai=active[a],bi=active[b],d=distances.get(pair(ai,bi));
+      if(d<best-1e-12 || (Math.abs(d-best)<1e-12&&(ai<aId||aId<0||ai===aId&&bi<bId))){best=d;aId=ai;bId=bi;}
+    }
+    var left=nodes[aId],right=nodes[bId];
+    var parent={id:nextId,left:left,right:right,size:left.size+right.size,height:best};
+    nodes[nextId]=parent;
+    for(var z=0;z<active.length;z++){
+      var other=active[z];if(other===aId||other===bId)continue;
+      var da=distances.get(pair(aId,other)), db=distances.get(pair(bId,other));
+      var dist=linkage==='single'?Math.min(da,db):linkage==='complete'?Math.max(da,db):(left.size*da+right.size*db)/(left.size+right.size);
+      distances.set(pair(nextId,other),dist);
+    }
+    active=active.filter(function(q){return q!==aId&&q!==bId;});active.push(nextId);nextId++;
+  }
+  var root=nodes[active[0]],order=[];
+  function visit(node){if(node.leaf!==undefined){order.push(node.leaf);return;}visit(node.left);visit(node.right);}
+  visit(root);
+  var leafPos=new Map();order.forEach(function(idx,i){leafPos.set(idx,i);});
+  function locate(node){
+    if(node.leaf!==undefined){node.pos=leafPos.get(node.leaf);return node.pos;}
+    node.pos=(locate(node.left)+locate(node.right))/2;
+    return node.pos;
+  }
+  locate(root);
+  // V0.8.0：聚类的真实 height 保持不变；另外生成显示坐标 displayHeight。
+  // 原始距离非常接近时，固定像素宽度会把两个内部节点压缩到 1px 以内。
+  // 使用树形拓扑约束，给每一代父子合并节点预留可辨识的最小横向间距。
+  // 这里的横向展示非严格距离等比例缩放：距离的真实值仍保存在 height / branchMeta 中。
+  var gapPx=Number(minBranchGapPx);
+  var spanPx=Number(treePixelWidth);
+  var displayStep=(Number.isFinite(gapPx)&&gapPx>0&&Number.isFinite(spanPx)&&spanPx>0)
+    ? gapPx/Math.max(1,spanPx)*Math.max(root.height,0.05)*1.06 : 0;
+  function layoutHeight(node){
+    if(node.leaf!==undefined){node.displayHeight=0;return 0;}
+    var lh=layoutHeight(node.left),rh=layoutHeight(node.right);
+    node.displayHeight=Math.max(node.height,lh+displayStep,rh+displayStep);
+    return node.displayHeight;
+  }
+  layoutHeight(root);
+  function cut(k){
+    var pending=[root];
+    while(pending.length<Math.min(n,k)){
+      var split=-1;
+      for(var p=0;p<pending.length;p++)if(pending[p].left && (split<0||pending[p].height>pending[split].height))split=p;
+      if(split<0)break;
+      var part=pending.splice(split,1)[0];pending.push(part.left,part.right);
+    }
+    function smallest(node){return node.leaf!==undefined?node.pos:Math.min(smallest(node.left),smallest(node.right));}
+    pending.sort(function(a,b){return smallest(a)-smallest(b);});
+    var groups=new Array(n);
+    function color(node,id){if(node.leaf!==undefined){groups[node.leaf]=id;return;}color(node.left,id);color(node.right,id);}
+    pending.forEach(function(node,i){color(node,i);});return groups;
+  }
+  var branches=[],branchMeta=[];
+  function leavesOf(node){
+    if(node.leaf!==undefined)return [node.leaf];
+    return leavesOf(node.left).concat(leavesOf(node.right));
+  }
+  function collect(node){
+    if(!node.left)return;
+    branches.push([node.left.pos,node.left.displayHeight,node.right.pos,node.right.displayHeight,node.displayHeight]);
+    branchMeta.push({id:node.id,leaves:leavesOf(node),height:node.height,size:node.size});
+    collect(node.left);collect(node.right);
+  }
+  collect(root);
+  return {order:order,branches:branches,branchMeta:branchMeta,groups:cut(1),getGroups:cut,
+    maxHeight:Math.max(root.displayHeight,0.05),rawMaxHeight:Math.max(root.height,0.05)};
+}
+
+
+// ========== 4. 交互状态（V9 行列聚焦状态独立；禁止原生选中与自定义选中互相覆盖） ==========
+// V0.6 保留 V5 树节点交互；新增聚焦数值标签、可点击重置矩形和简洁状态文字。
+var c039FocusState = {row:null,col:null,rowNode:null,colNode:null,heat:[],chart:null};
+function c039CellLabelMode(){
+  // V5 的 Boolean 开关仍兼容；新增模式只控制数值标签，不参与聚类算法。
+  if(setting.showValueOnCells === true) return 'all';
+  return ['none','focus','all'].indexOf(setting.cellLabelMode)>=0?setting.cellLabelMode:'focus';
+}
+function c039CellLabelText(p){
+  var cell=p&&p.data;
+  if(!cell)return '';
+  if(setting.cellValueMode==='raw')return c039Fmt(cell.raw,1);
+  var score=Number(cell.value&&cell.value[2]);
+  if(!Number.isFinite(score))return '';
+  return (score>0?'+':'')+score.toFixed(1);
+}
+function c039SelectedLabelCount(){
+  if(!c039FocusState.row && !c039FocusState.col)return 0;
+  return (c039FocusState.row?c039FocusState.row.length:c039FocusState.rowLabels.length)*
+    (c039FocusState.col?c039FocusState.col.length:c039FocusState.colLabels.length);
+}
+function c039ShouldShowCellLabel(isFocused){
+  var mode=c039CellLabelMode();
+  if(mode==='all')return true;
+  if(mode!=='focus'||!isFocused||(!c039FocusState.row&&!c039FocusState.col))return false;
+  var max=Number(setting.maxFocusedValueLabels);
+  if(!Number.isFinite(max)||max<1)max=60;
+  return c039SelectedLabelCount()<=max;
+}
+function c039FindChart(element, event) {
+  // 优先从点击元素所在 ZRender 的原生画布向上查找 ECharts 容器。
+  // 只访问 ECharts 已创建的容器，不创建 HTML 元素，也不绑定额外全局监听。
+  var zr = element && element.__zr;
+  if(!zr && event && event.target) zr = event.target.__zr;
+  if(!zr && event && event.topTarget) zr = event.topTarget.__zr;
+  if(typeof echarts!=='undefined' && echarts && typeof echarts.getInstanceByDom==='function' && zr && zr.painter) {
+    var root=zr.painter.getViewportRoot && zr.painter.getViewportRoot();
+    var dom=root,depth=0;
+    while(dom && depth<9){
+      try{
+        var found=echarts.getInstanceByDom(dom);
+        if(found && typeof found.getZr==='function' && found.getZr()===zr) return found;
+      }catch(err){}
+      dom=dom.parentNode || dom.host;
+      depth++;
+    }
+  }
+  // 与某些官方编辑器、宿主的全局实例命名兼容；不依赖其存在。
+  if(typeof myChart!=='undefined' && myChart && typeof myChart.setOption==='function') return myChart;
+  if(typeof chart!=='undefined' && chart && typeof chart.setOption==='function') return chart;
+  if(typeof echartsInstance!=='undefined' && echartsInstance && typeof echartsInstance.setOption==='function') return echartsInstance;
+  return null;
+}
+function c039SameMembers(a,b){
+  if(!a||!b||a.length!==b.length)return false;
+  var keys=new Set(a);
+  return b.every(function(v){return keys.has(v);});
+}
+// 用行列聚焦状态构造可辨认的聚类标签，不需要修改原始输入数据。
+function c039FocusAxisLabels(axis){
+  var groupLookup=axis==='row'?c039FocusState.rowGroupLookup:c039FocusState.colGroupLookup;
+  var selected=c039FocusState[axis];
+  var allowed=selected?new Set(selected):null;
+  var rich=Object.assign({},c039FocusState.labelRich||{}, {
+    normalLabel:{color:setting.colors.title,fontWeight:'normal',fontSize:10},
+    selectedLabel:{color:setting.focusColor,fontWeight:'bold',fontSize:10,backgroundColor:'#E7F0F7',padding:[1,2]},
+    mutedLabel:{color:'#B1BBC5',fontWeight:'normal',fontSize:10}
+  });
+  return {formatter:function(name){
+    var group=groupLookup[name]||0;
+    var key=allowed?(allowed.has(name)?'selectedLabel':'mutedLabel'):'normalLabel';
+    return '{cg'+group+'|●} {'+key+'|'+name+'}';
+  },rich:rich};
+}
+function c039FocusCaption(){
+  if(!c039FocusState.row&&!c039FocusState.col)
+    return '点击树枝节点聚焦 · 支持行列交叉选择';
+  var r=c039FocusState.row?c039FocusState.row.length:c039FocusState.rowLabels.length;
+  var c=c039FocusState.col?c039FocusState.col.length:c039FocusState.colLabels.length;
+  var labelHint=c039CellLabelMode()==='focus' && c039SelectedLabelCount()>Number(setting.maxFocusedValueLabels||60)?' · 区域过大，数值见悬浮提示':'';
+  return '聚焦：对象 '+r+'/'+c039FocusState.rowLabels.length+' · 指标 '+c+'/'+c039FocusState.colLabels.length+' · 再点节点取消'+labelHint;
+}
+function c039BranchSelected(axis,meta){
+  var allowed=c039FocusState[axis];if(!allowed)return false;
+  var names=c039FocusState[axis+'Labels'],selected=new Set(allowed);
+  return meta.leaves.every(function(idx){return selected.has(names[idx]);});
+}
+function c039CrossData(){
+  if(!c039FocusState.row||!c039FocusState.col)return [];
+  var ri=c039FocusState.row.map(function(x){return c039FocusState.rowPosition[x];});
+  var ci=c039FocusState.col.map(function(x){return c039FocusState.colPosition[x];});
+  return [{value:[Math.min.apply(null,ci),Math.min.apply(null,ri),Math.max.apply(null,ci),Math.max.apply(null,ri)]}];
+}
+function c039RefreshFocus(chart, changedAxis){
+  if(!chart || typeof chart.setOption!=='function') return false;
+  // V0.9.0：row 和 col 是互不覆盖的独立选择状态。
+  // 仅更新本次改变的树系列，绝不因对象树操作重建指标树（反之亦然）。
+  var selectedRows=c039FocusState.row?new Set(c039FocusState.row):null;
+  var selectedCols=c039FocusState.col?new Set(c039FocusState.col):null;
+  var n=Number(setting.focusOpacity);
+  var faded=Number.isFinite(n)?Math.max(0.08,Math.min(0.85,n)):0.35;
+  var nextHeat=c039FocusState.heat.map(function(item){
+    var visible=(!selectedRows||selectedRows.has(item.rowName)) && (!selectedCols||selectedCols.has(item.colName));
+    return {
+      value:item.value.slice(),raw:item.raw,rowName:item.rowName,colName:item.colName,
+      rowGroup:item.rowGroup,colGroup:item.colGroup,imputed:item.imputed,constant:item.constant,
+      itemStyle:{opacity:visible?1:faded,borderColor:'#FFFFFF',borderWidth:1},
+      label:{show:c039ShouldShowCellLabel(visible)}
+    };
+  });
+  var groups=Array.from({length:c039FocusState.rowGroupCount},function(){return [];});
+  nextHeat.forEach(function(cell){groups[cell.rowGroup-1].push(cell);});
+  var series=groups.map(function(data,i){return {id:'c039-heatmap-group-'+(i+1),data:data};});
+  // 禁用 custom series 自带 selectedMode：聚焦完全由 rowNode/colNode 状态控制。
+  // 局部更新避免两种点击顺序触发另一棵树无关重绘，且分支 ID 始终稳定。
+  if(!changedAxis || changedAxis==='row')
+    series.push({id:'c039-row-tree',data:c039FocusState.rowTreeData});
+  if(!changedAxis || changedAxis==='col')
+    series.push({id:'c039-col-tree',data:c039FocusState.colTreeData});
+  series.push({id:'c039-cross-outline',data:c039CrossData()});
+  var xLabel=c039FocusAxisLabels('col');
+  var yLabel=c039FocusAxisLabels('row');
+  var patch={
+    series:series,
+    graphic:[{id:'c039-focus-caption',style:{text:c039FocusCaption()}}]
+  };
+  // 轴标签也只更新被点击方向，避免另一方向的格式器和选中样式被覆盖。
+  if(!changedAxis||changedAxis==='col')patch.xAxis=[{axisLabel:{formatter:xLabel.formatter,rich:xLabel.rich}}];
+  if(!changedAxis||changedAxis==='row')patch.yAxis=[{axisLabel:{formatter:yLabel.formatter,rich:yLabel.rich}}];
+  chart.setOption(patch, {lazyUpdate:false});
+  return true;
+}
+function c039EnsureDblClick(chart){
+  // 高层 ECharts dblclick 事件用于兼容 custom 图形环境不透传 ondblclick 的情况。
+  if(!chart || typeof chart.on!=='function')return;
+  if(chart.__c039V5DblHandler)return;
+  var clearAll=function(){c039ResetFocus(null,null);};
+  chart.__c039V5DblHandler=clearAll;
+  chart.on('dblclick',{seriesId:'c039-row-tree'},clearAll);
+  chart.on('dblclick',{seriesId:'c039-col-tree'},clearAll);
+}
+function c039ToggleBranch(axis,meta,element,event){
+  var chart=c039FindChart(element,event)||c039FocusState.chart;
+  if(!chart){
+    if(typeof console!=='undefined' && console.warn)console.warn('C039: 无法定位 ECharts 实例；请检查宿主是否允许 graphic 交互。');
+    return;
+  }
+  c039FocusState.chart=chart;
+  c039EnsureDblClick(chart);
+  var keys=meta.leaves.map(function(idx){return axis==='row'?c039FocusState.rowLabels[idx]:c039FocusState.colLabels[idx];});
+  var current=c039FocusState[axis];
+  if(c039SameMembers(current,keys)){
+    c039FocusState[axis]=null;c039FocusState[axis+'Node']=null;
+  }else{
+    c039FocusState[axis]=keys;c039FocusState[axis+'Node']=meta.id;
+  }
+  c039RefreshFocus(chart,axis);
+}
+function c039ResetFocus(element,event){
+  var chart=c039FindChart(element,event)||c039FocusState.chart;
+  c039FocusState.row=null;c039FocusState.col=null;
+  c039FocusState.rowNode=null;c039FocusState.colNode=null;
+  if(chart){c039FocusState.chart=chart;c039RefreshFocus(chart,null);}
+}
+function c039BranchHitSegments(lines){
+  return lines.map(function(s){return {type:'line',name:'c039-branch-hit',shape:s,
+    style:{stroke:'rgba(0,0,0,0.002)',lineWidth:setting.branchHitWidth||12},
+    cursor:'pointer',silent:false};});
+}
+
+function c039CanUseChartEvents(){
+  return (typeof myChart!=='undefined' && myChart && typeof myChart.on==='function') ||
+    (typeof chart!=='undefined' && chart && typeof chart.on==='function') ||
+    (typeof echartsInstance!=='undefined' && echartsInstance && typeof echartsInstance.on==='function');
+}
+
+// ========== 5. 构建数据与三图层统一布局 ==========
+function c039ErrorOption(msg) {
+  return {
+    backgroundColor:'transparent',animation:false,
+    graphic:[
+      {type:'rect',left:43,top:20,shape:{width:20,height:4},style:{fill:setting.colors.negative}},
+      {type:'text',left:45,top:36,style:{text:setting.title,font:'600 20px sans-serif',fill:setting.colors.title}},
+      {type:'text',left:47,top:115,style:{text:'无法生成聚类热力矩阵',font:'600 15px sans-serif',fill:setting.colors.negative}},
+      {type:'text',left:47,top:150,style:{text:String(msg),width:760,overflow:'break',font:'12px sans-serif',fill:setting.colors.title}}
+    ]
+  };
+}
+function c039BuildOption(){
+  var d=c039Prepare(对象,指标,数值);
+  if(!['average','single','complete'].includes(setting.linkage))throw Error('linkage 仅支持 average、single、complete。');
+  if(setting.distance!=='euclidean')throw Error('当前版本只支持 euclidean 距离，请勿填写未实现的距离算法。');
+  var rowVectors=d.normal;
+  var colVectors=d.cols.map(function(_,j){return d.normal.map(function(row){return row[j];});});
+  // 仅对象树启用显示间距保护：指标树保持上一版的距离比例布局。
+  var rowTree=c039Cluster(rowVectors,setting.linkage,setting.rowTreeMinBranchGapPx,setting.layout.rowTreeWidth);
+  var colTree=c039Cluster(colVectors,setting.linkage);
+  var rowOrder=rowTree.order.map(function(i){return d.rows[i];});
+  var colOrder=colTree.order.map(function(i){return d.cols[i];});
+  // 用原始索引映射到名称，单击任何高度的聚类分支都能定位其全部叶节点。
+  c039FocusState={row:null,col:null,rowNode:null,colNode:null,heat:[],chart:null,rowLabels:d.rows,colLabels:d.cols};
+  var rowGroup=rowTree.getGroups(Math.max(1,Math.floor(setting.rowClusterCount)));
+  var colGroup=colTree.getGroups(Math.max(1,Math.floor(setting.columnClusterCount)));
+  var heat=[],boundaries=[];
+  for(var r=0;r<rowTree.order.length;r++)for(var c=0;c<colTree.order.length;c++){
+    var srcRow=rowTree.order[r],srcCol=colTree.order[c];
+    heat.push({
+      value:[c,r,d.normal[srcRow][srcCol]],
+      raw:d.matrix[srcRow][srcCol],rowName:d.rows[srcRow],colName:d.cols[srcCol],
+      rowGroup:rowGroup[srcRow]+1,colGroup:colGroup[srcCol]+1,
+      imputed:d.imputed[srcRow][srcCol],constant:d.constant[srcCol]
+    });
+  }
+  // V0.2.0：边界记录相邻单元格的右/下索引；渲染时取两个中心点的像素中点。
+  // 注意：不能直接传 rr-0.5/cc-0.5 给 category 坐标系，某些版本会把小数类目索引吸附到单元格中心。
+  if(setting.showClusterBoundary){
+    for(var rr=1;rr<rowTree.order.length;rr++)if(rowGroup[rowTree.order[rr]]!==rowGroup[rowTree.order[rr-1]])boundaries.push({value:[0,rr]});
+    for(var cc=1;cc<colTree.order.length;cc++)if(colGroup[colTree.order[cc]]!==colGroup[colTree.order[cc-1]])boundaries.push({value:[1,cc]});
+  }
+  c039FocusState.rowBranchMeta=rowTree.branchMeta;
+  c039FocusState.colBranchMeta=colTree.branchMeta;
+  // 分支数据具有稳定 ID；事件响应时使用 ID 查找，避免跨 setOption 的 dataIndex 偏移。
+  c039FocusState.rowBranchById={};
+  c039FocusState.colBranchById={};
+  rowTree.branchMeta.forEach(function(meta){c039FocusState.rowBranchById[String(meta.id)]=meta;});
+  colTree.branchMeta.forEach(function(meta){c039FocusState.colBranchById[String(meta.id)]=meta;});
+  c039FocusState.rowTreeData=rowTree.branches.map(function(v,i){
+    return {id:'c039-row-branch-'+rowTree.branchMeta[i].id,branchId:String(rowTree.branchMeta[i].id),value:v.slice()};
+  });
+  c039FocusState.colTreeData=colTree.branches.map(function(v,i){
+    return {id:'c039-col-branch-'+colTree.branchMeta[i].id,branchId:String(colTree.branchMeta[i].id),value:v.slice()};
+  });
+  c039FocusState.rowPosition={};
+  c039FocusState.colPosition={};
+  rowOrder.forEach(function(n,i){c039FocusState.rowPosition[n]=i;});
+  colOrder.forEach(function(n,i){c039FocusState.colPosition[n]=i;});
+  c039FocusState.heat=heat;
+  c039FocusState.rowGroupCount=Math.max(1,new Set(rowGroup).size);
+  // ECharts 原生 legend 不依赖实例暴露；树节点交叉聚焦依赖宿主支持 chart.on。
+  var rowCount=Math.max(1,Math.min(rowOrder.length,Math.floor(setting.rowClusterCount)||1));
+  var rowSeriesData=Array.from({length:rowCount},function(){return [];});
+  heat.forEach(function(cell){rowSeriesData[cell.rowGroup-1].push(cell);});
+  var heatmapSeries=rowSeriesData.map(function(cells,i){return {
+    id:'c039-heatmap-group-'+(i+1),name:'对象第'+(i+1)+'组',type:'heatmap',
+    xAxisIndex:0,yAxisIndex:0,data:cells,progressive:0,animation:false,
+    label:{show:c039CellLabelMode()==='all',color:setting.colors.title,fontSize:9,fontWeight:500,
+      textBorderColor:'rgba(255,255,255,0.90)',textBorderWidth:2,
+      formatter:c039CellLabelText},
+    itemStyle:{borderColor:'#FFFFFF',borderWidth:1},
+    emphasis:{disabled:false,itemStyle:{borderColor:setting.colors.title,borderWidth:2,shadowBlur:8,shadowColor:'rgba(38,50,56,.2)'}}
+  };});
+  var colorGroups=setting.colors.cluster;
+  var rich={};
+  for(var g=0;g<colorGroups.length;g++)rich['cg'+g]={color:colorGroups[g],fontSize:9,fontWeight:'bold'};
+  var rowGroupLookup={},colGroupLookup={};
+  rowTree.order.forEach(function(idx){rowGroupLookup[d.rows[idx]]=rowGroup[idx]%colorGroups.length;});
+  colTree.order.forEach(function(idx){colGroupLookup[d.cols[idx]]=colGroup[idx]%colorGroups.length;});
+  c039FocusState.rowGroupLookup=rowGroupLookup;
+  c039FocusState.colGroupLookup=colGroupLookup;
+  c039FocusState.labelRich=rich;
+  var lay=setting.layout;
+  function branchTop(params,api){
+    var p1=api.coord([api.value(0),api.value(1)]),p2=api.coord([api.value(2),api.value(3)]);
+    var h1=api.coord([api.value(0),api.value(4)]),h2=api.coord([api.value(2),api.value(4)]);
+    var meta=colTree.branchMeta[params.dataIndex];
+    var isActive=c039BranchSelected('col',meta),isRoot=c039FocusState.colNode===meta.id;
+    var st={stroke:isActive?setting.focusColor:setting.colors.tree,
+      lineWidth:isActive?2.6:1.15,opacity:isActive?1:(c039FocusState.col?0.52:0.9)};
+    var lines=[
+      {x1:p1[0],y1:p1[1],x2:h1[0],y2:h1[1]},
+      {x1:p2[0],y1:p2[1],x2:h2[0],y2:h2[1]},
+      {x1:h1[0],y1:h1[1],x2:h2[0],y2:h2[1]}
+    ];
+    var children=lines.map(function(shape){return {type:'line',shape:shape,style:st,silent:true};});
+    if(c039CanUseChartEvents())children=children.concat(c039BranchHitSegments(lines));
+    if(c039CanUseChartEvents())children.push({type:'circle',name:'c039-col-node',shape:{cx:(h1[0]+h2[0])/2,cy:h1[1],r:isRoot?5.6:4},
+      style:{fill:isRoot?setting.focusColor:(isActive?'#BFD5E6':'#FFFFFF'),stroke:isActive?setting.focusColor:setting.colors.tree,lineWidth:isRoot?2:1.25},cursor:'pointer',
+      });
+    return {type:'group',children:children};
+  }
+  function branchLeft(params,api){
+    var p1=api.coord([api.value(1),api.value(0)]),p2=api.coord([api.value(3),api.value(2)]);
+    var h1=api.coord([api.value(4),api.value(0)]),h2=api.coord([api.value(4),api.value(2)]);
+    var meta=rowTree.branchMeta[params.dataIndex];
+    var isActive=c039BranchSelected('row',meta),isRoot=c039FocusState.rowNode===meta.id;
+    var st={stroke:isActive?setting.focusColor:setting.colors.tree,
+      lineWidth:isActive?2.6:1.15,opacity:isActive?1:(c039FocusState.row?0.52:0.9)};
+    var lines=[
+      {x1:p1[0],y1:p1[1],x2:h1[0],y2:h1[1]},
+      {x1:p2[0],y1:p2[1],x2:h2[0],y2:h2[1]},
+      {x1:h1[0],y1:h1[1],x2:h2[0],y2:h2[1]}
+    ];
+    var children=lines.map(function(shape){return {type:'line',shape:shape,style:st,silent:true};});
+    if(c039CanUseChartEvents())children=children.concat(c039BranchHitSegments(lines));
+    if(c039CanUseChartEvents())children.push({type:'circle',name:'c039-row-node',shape:{cx:h1[0],cy:(h1[1]+h2[1])/2,r:isRoot?5.6:4},
+      style:{fill:isRoot?setting.focusColor:(isActive?'#BFD5E6':'#FFFFFF'),stroke:isActive?setting.focusColor:setting.colors.tree,lineWidth:isRoot?2:1.25},cursor:'pointer',
+      });
+    return {type:'group',children:children};
+  }
+  // 选中行与列时，在交叉区域绘制蓝色细边框；不捕获鼠标，避免遮挡热力 Tooltip。
+  function c039RenderCross(params,api){
+    var v=[api.value(0),api.value(1),api.value(2),api.value(3)];
+    var a=api.coord([v[0],v[1]]),b=api.coord([v[2],v[3]]);
+    var box=params.coordSys,w=box.width/colOrder.length,h=box.height/rowOrder.length;
+    var x=Math.min(a[0],b[0])-w/2,y=Math.min(a[1],b[1])-h/2;
+    return {type:'rect',silent:true,shape:{x:x,y:y,width:Math.abs(b[0]-a[0])+w,height:Math.abs(b[1]-a[1])+h},
+      style:{fill:'rgba(0,0,0,0)',stroke:setting.focusColor,lineWidth:2.6}};
+  }
+  function renderBoundary(params,api){
+    // V0.7.0：边界仅作为轻量视觉辅助，位置仍由相邻热力单元中心的像素中点确定。
+    // 使用相邻整数类目中心的像素中点，而不是小数类目索引。
+    // 从 params.coordSys 获取精确矩阵边框，确保线条不会延伸到标签/树状图中。
+    var type=api.value(0), afterIndex=Math.round(api.value(1));
+    var box=params.coordSys, start=box.x, top=box.y;
+    var endX=start+box.width, endY=top+box.height;
+    var first, second, middle;
+    if(type===0){
+      // 横向行聚类边界：在 afterIndex-1 与 afterIndex 两行之间。
+      if(afterIndex<=0 || afterIndex>=rowOrder.length)return;
+      first=api.coord([0,afterIndex-1])[1];
+      second=api.coord([0,afterIndex])[1];
+      middle=(first+second)/2;
+      return {type:'line',shape:{x1:start,y1:middle,x2:endX,y2:middle},
+        style:{stroke:setting.clusterBoundaryColor,opacity:setting.clusterBoundaryOpacity,lineWidth:setting.clusterBoundaryWidth}};
+    }
+    // 纵向列聚类边界：在 afterIndex-1 与 afterIndex 两列之间。
+    if(afterIndex<=0 || afterIndex>=colOrder.length)return;
+    first=api.coord([afterIndex-1,0])[0];
+    second=api.coord([afterIndex,0])[0];
+    middle=(first+second)/2;
+    return {type:'line',shape:{x1:middle,y1:top,x2:middle,y2:endY},
+      style:{stroke:setting.clusterBoundaryColor,opacity:setting.clusterBoundaryOpacity,lineWidth:setting.clusterBoundaryWidth}};
+  }
+  var footer='图表说明：按指标做 Z-score 标准化；双向平均连接层次聚类；暖色=高于该指标均值，冷色=低于均值（不代表好坏）。';
+  if(setting.linkage!=='average')footer='图表说明：按指标做 Z-score 标准化；'+setting.linkage+' 连接层次聚类；颜色表示相对指标均值的高低，并非业务好坏。';
+  if(d.missingCount)footer+=' 缺失值采用列均值插补 '+d.missingCount+' 项。';
+  var subtitle=setting.subTitlePrefix+'  |  '+rowOrder.length+' 个对象 × '+colOrder.length+' 项指标  |  行 '+new Set(rowGroup).size+' 组 / 列 '+new Set(colGroup).size+' 组';
+  return {
+    backgroundColor:'transparent',
+    color:setting.colors.cluster,
+    animationDuration:setting.animationDuration,
+    title:{left:46,top:29,text:setting.title,subtext:subtitle,
+      textStyle:{color:setting.colors.title,fontSize:20,fontWeight:700},
+      subtextStyle:{color:setting.colors.secondary,fontSize:12,lineHeight:20},itemGap:7},
+    legend:{top:86,left:'center',selectedMode:'multiple',
+      data:heatmapSeries.map(function(x){return {name:x.name,icon:'circle'};}),
+      textStyle:{fontSize:11,color:setting.colors.title},itemGap:18,itemWidth:10,itemHeight:10,
+      selector:['all'],selectorPosition:'end',selectorLabel:{fontSize:10,color:setting.colors.secondary},
+      inactiveColor:'#C4CCD3'},
+    graphic:[
+      {type:'rect',left:43,top:17,shape:{width:19,height:4},style:{fill:setting.colors.negative},silent:true},
+      {type:'text',left:lay.mainLeft,top:129,style:{text:'指标聚类树 · '+(setting.distance==='euclidean'?'欧氏距离':setting.distance)+' / '+(setting.linkage==='average'?'平均连接':setting.linkage)+' · 行 '+new Set(rowGroup).size+' 组 / 列 '+new Set(colGroup).size+' 组（组数可配置）',fill:setting.colors.secondary,font:'11px sans-serif'},silent:true},
+      {id:'c039-focus-caption',type:'text',right:lay.mainRight,top:109,
+        style:{text:c039FocusCaption(),font:'11px sans-serif',fill:setting.colors.secondary},silent:true},
+      // V6 修复：group 本身没有可命中的填充区域，必须将事件放到真实的 rect/text 图形上。
+      {id:'c039-reset-focus',type:'group',right:46,top:33,z:50,silent:false,
+        children:[
+          {type:'rect',shape:{x:0,y:0,width:94,height:27,r:5},silent:false,cursor:'pointer',
+            onclick:function(evt){c039ResetFocus(this,evt);},
+            style:{fill:'#F4F7F9',stroke:'#D9E2E8',lineWidth:1}},
+          {type:'text',silent:false,cursor:'pointer',
+            onclick:function(evt){c039ResetFocus(this,evt);},
+            style:{x:47,y:14,text:'清除聚焦',textAlign:'center',textVerticalAlign:'middle',font:'11px sans-serif',fill:setting.focusColor}}
+        ]},
+      {type:'text',left:lay.rowTreeLeft,top:243,style:{text:'对象聚类树',fill:setting.colors.secondary,font:'11px sans-serif'},silent:true},
+      {type:'text',left:46,bottom:38,style:{text:'数据来源：'+(使用PowerBI数据?setting.sourcePowerBI:setting.sourceDemo),fill:setting.colors.secondary,font:'10px sans-serif'},silent:true},
+      {type:'text',left:46,bottom:20,style:{text:footer,fill:setting.colors.secondary,font:'10px sans-serif'},silent:true}
+    ],
+    grid:[
+      {left:lay.mainLeft,right:lay.mainRight,top:lay.mainTop,bottom:lay.mainBottom,containLabel:false},
+      {left:lay.rowTreeLeft,width:lay.rowTreeWidth,top:lay.mainTop,bottom:lay.mainBottom,containLabel:false},
+      {left:lay.mainLeft,right:lay.mainRight,top:lay.columnTreeTop,height:lay.columnTreeHeight,containLabel:false}
+    ],
+    xAxis:[
+      {type:'category',gridIndex:0,data:colOrder,position:'top',boundaryGap:true,
+        axisLine:{show:false},axisTick:{show:false},splitLine:{show:false},
+        axisLabel:{interval:0,margin:10,fontSize:10,color:setting.colors.title,
+          overflow:'truncate',width:85,
+          formatter:c039FocusAxisLabels('col').formatter,rich:c039FocusAxisLabels('col').rich}},
+      {type:'value',gridIndex:1,inverse:true,min:0,max:rowTree.maxHeight*1.06,
+        axisLine:{show:false},axisTick:{show:false},axisLabel:{show:false},splitLine:{show:false}},
+      // 聚类树坐标须使用 value 轴，保证分支的 0.5 类小数中点不会被类目轴吸附。
+      // [-0.5, N-0.5] 使树叶索引 0..N-1 与主图类目中心逐一对齐。
+      {type:'value',gridIndex:2,min:-0.5,max:colOrder.length-0.5,interval:1,
+        axisLine:{show:false},axisTick:{show:false},axisLabel:{show:false},splitLine:{show:false}}
+    ],
+    yAxis:[
+      {type:'category',gridIndex:0,data:rowOrder,inverse:true,boundaryGap:true,
+        axisLine:{show:false},axisTick:{show:false},splitLine:{show:false},
+        axisLabel:{interval:0,margin:12,fontSize:10,color:setting.colors.title,
+          formatter:c039FocusAxisLabels('row').formatter,rich:c039FocusAxisLabels('row').rich}},
+      // 与主图反向 category 行轴保持相同中心位置；分支位置允许非整数。
+      {type:'value',gridIndex:1,min:-0.5,max:rowOrder.length-0.5,inverse:true,interval:1,
+        axisLine:{show:false},axisTick:{show:false},axisLabel:{show:false},splitLine:{show:false}},
+      {type:'value',gridIndex:2,min:0,max:colTree.maxHeight*1.05,
+        axisLine:{show:false},axisTick:{show:false},axisLabel:{show:false},splitLine:{show:false}}
+    ],
+    visualMap:{type:'continuous',seriesIndex:heatmapSeries.map(function(_,i){return i;}),dimension:2,min:-setting.colorZLimit,max:setting.colorZLimit,
+      left:'center',bottom:58,orient:'horizontal',itemWidth:11,itemHeight:160,calculable:false,
+      inRange:{color:setting.colors.heat},text:['高于均值','低于均值'],
+      textGap:12,textStyle:{color:setting.colors.secondary,fontSize:10},borderColor:'transparent'},
+    tooltip:{trigger:'item',confine:true,backgroundColor:'#FFFFFF',borderColor:setting.colors.grid,borderWidth:1,
+      extraCssText:'box-shadow:0 6px 24px rgba(38,50,56,.12);border-radius:6px;',
+      textStyle:{fontSize:12,color:setting.colors.title},
+      position:function(pos,params,el,rect,size){
+        var w=size.contentSize[0],h=size.contentSize[1],vw=size.viewSize[0],vh=size.viewSize[1];
+        return [Math.max(8,Math.min(pos[0]+16,vw-w-8)),Math.max(8,Math.min(pos[1]+15,vh-h-8))];
+      },
+      formatter:function(p){
+        if(p.seriesType!=='heatmap'||!p.data)return '';
+        var d0=p.data, z=d0.value[2];
+        var zText=z>=0?'+'+z.toFixed(2):z.toFixed(2);
+        return '<div style="min-width:215px;line-height:1.7;">'+
+          '<div style="font-weight:700;font-size:13px;">'+c039Escape(d0.rowName)+'</div>'+
+          '<div style="color:#8493A2;font-size:11px;">'+c039Escape(d0.colName)+'</div>'+
+          '<div style="margin:6px 0;border-top:1px solid #E5E9ED;"></div>'+
+          '<div>原始指标值：<b>'+c039Fmt(d0.raw,2)+'</b>'+(d0.imputed?' <span style="color:#D9544D">(估算)</span>':'')+'</div>'+
+          '<div>标准化分数：<b style="color:'+(z>=0?'#D9544D':'#477EAA')+'">'+zText+'</b> σ</div>'+
+          '<div>对象聚类组：第 '+d0.rowGroup+' 组</div>'+
+          '<div>指标聚类组：第 '+d0.colGroup+' 组</div>'+
+          (d0.constant?'<div style="color:#8493A2">本指标全体对象取值相同</div>':'')+
+          '<div style="color:#8493A2;font-size:11px;margin-top:6px;">颜色表示相对均值，不等于表现优劣</div></div>';
+      }
+    },
+    series:[
+      ...heatmapSeries,
+      {id:'c039-cross-outline',name:'交叉选区边框',type:'custom',coordinateSystem:'cartesian2d',
+        xAxisIndex:0,yAxisIndex:0,silent:true,tooltip:{show:false},renderItem:c039RenderCross,
+        data:[],animation:false,z:22},
+      {name:'聚类组边界',type:'custom',coordinateSystem:'cartesian2d',xAxisIndex:0,yAxisIndex:0,
+        silent:true,tooltip:{show:false},renderItem:renderBoundary,data:boundaries,animation:false,z:5},
+      {id:'c039-row-tree',name:'对象层次聚类树',type:'custom',coordinateSystem:'cartesian2d',xAxisIndex:1,yAxisIndex:1,
+        silent:!c039CanUseChartEvents(),selectedMode:false,tooltip:{show:false},renderItem:branchLeft,
+        data:c039FocusState.rowTreeData,animation:false,z:4},
+      {id:'c039-col-tree',name:'指标层次聚类树',type:'custom',coordinateSystem:'cartesian2d',xAxisIndex:2,yAxisIndex:2,
+        silent:!c039CanUseChartEvents(),selectedMode:false,tooltip:{show:false},renderItem:branchTop,
+        data:c039FocusState.colTreeData,animation:false,z:4}
+    ]
+  };
+}
+
+// ========== 6. 可选聚类树事件桥接：仅当宿主确实暴露 chart 实例时启用 ==========
+// 注意：ECharts 官方 custom series 文档要求通过 chart.on('click') 注册子节点事件。
+// Power BI 的仅 option 沙箱可能不暴露实例，此时应使用顶部原生图例筛选行组。
+function c039BindTreeEvents(chartInstance){
+  if(!chartInstance || typeof chartInstance.on!=='function')return false;
+  // 不再仅依赖 V4 的 __c039Bound 标志：宿主可能复用同一个 ECharts 实例。
+  // V5 后续重复运行时只移除自身注册的监听，不影响 Power BI 或其他组件的监听。
+  var previous=chartInstance.__c039V5Handlers;
+  if(previous && typeof chartInstance.off==='function'){
+    chartInstance.off('click',previous.row);
+    chartInstance.off('click',previous.col);
+  }
+  c039FocusState.chart=chartInstance;
+  function onRow(p){
+    var id=p && p.data && p.data.branchId;
+    var meta=id!==undefined?c039FocusState.rowBranchById[String(id)]:c039FocusState.rowBranchMeta[p.dataIndex];
+    if(meta)c039ToggleBranch('row',meta,null,null);
+  }
+  function onCol(p){
+    var id=p && p.data && p.data.branchId;
+    var meta=id!==undefined?c039FocusState.colBranchById[String(id)]:c039FocusState.colBranchMeta[p.dataIndex];
+    if(meta)c039ToggleBranch('col',meta,null,null);
+  }
+  chartInstance.on('click',{seriesId:'c039-row-tree'},onRow);
+  chartInstance.on('click',{seriesId:'c039-col-tree'},onCol);
+  chartInstance.__c039V5Handlers={row:onRow,col:onCol};
+  chartInstance.__c039Bound=true;
+  return true;
+}
+
+// ========== 7. 最终 option：ECharts 官方编辑器可直接粘贴运行 ==========
+try {
+  option = c039BuildOption();
+} catch(c039Error) {
+  option = c039ErrorOption(c039Error && c039Error.message ? c039Error.message : String(c039Error));
+}
+
+// 若编辑器/宿主公开了图表实例，则启用真正的树分支联动。
+// 不对未知 Power BI 沙箱作不真实的支持承诺。
+try {
+  var c039HostChart=(typeof myChart!=='undefined'&&myChart&&myChart.on)?myChart:
+    ((typeof chart!=='undefined'&&chart&&chart.on)?chart:
+    ((typeof echartsInstance!=='undefined'&&echartsInstance&&echartsInstance.on)?echartsInstance:null));
+  if(c039HostChart)c039BindTreeEvents(c039HostChart);
+}catch(c039BindingError){}

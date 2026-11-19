@@ -1,0 +1,678 @@
+﻿/*
+ * C037｜BCG 波士顿矩阵（Growth–Share Matrix）— 通用案例
+ * 用途：ECharts 官方编辑器 / ECharts for Power BI
+ * 输入：年份、业务名称、本企业业务规模、最大单一竞争对手规模、所属细分市场总规模
+ * 重要：示例数据纯属模拟，非真实企业业务数据。所有规模必须使用相同统计口径与单位。
+ * 横轴：相对市场份额 = 本企业业务规模 / 最大单一竞争对手业务规模（左小右大，按本案例阅读习惯设置）。
+ * 纵轴：细分市场增长率 = 当期市场总规模 / 上期市场总规模 - 1。
+ * 气泡面积：按本企业业务规模映射。灰色线段：相邻有效时期的业务变化轨迹。
+ * 首个输入年度只用于计算下一期增长率，不能独立用于 BCG 四象限定位。
+ * 前五列绑定 Power BI 时自动替换演示数组，字段顺序见下方。
+ */
+
+// ════════════════════════════════════════════════════════════════
+// 01. 演示数据：一列对应一个一维数组（模拟业务组合，不得作为真实数据引用）
+// 对应 Power BI 字段顺序：年份 / 业务名称 / 本企业业务规模 / 最大竞争对手规模 / 细分市场总规模
+// ════════════════════════════════════════════════════════════════
+var 年份 = [
+  '2023','2024','2025', '2023','2024','2025', '2023','2024','2025',
+  '2023','2024','2025', '2023','2024','2025', '2023','2024','2025',
+  '2023','2024','2025', '2023','2024','2025', '2023','2024','2025'
+];
+var 业务名称 = [
+  '云订阅','云订阅','云订阅',
+  '智能家居','智能家居','智能家居',
+  '便携储能','便携储能','便携储能',
+  '工业传感器','工业传感器','工业传感器',
+  '传统照明','传统照明','传统照明',
+  '数字营销工具','数字营销工具','数字营销工具',
+  '健康监测','健康监测','健康监测',
+  '基础配件','基础配件','基础配件',
+  '智能车载','智能车载','智能车载'
+];
+var 本企业规模 = [
+  80,100,136, 70,84,102, 43,57,64, 128,134,150, 110,106,102,
+  45,62,75, 40,46,57, 61,62,64, 75,88,95
+];
+var 最大竞争对手规模 = [
+  70,78,88, 105,115,132, 51,60,70, 99,103,108, 89,84,78,
+  80,85,94, 83,86,89, 125,126,124, 84,88,86
+];
+var 细分市场规模 = [
+  600,720,875, 580,655,749, 380,456,497, 770,840,910, 940,934,920,
+  420,488,566, 410,452,490, 980,1007,1020, 490,540,630
+];
+
+// ════════════════════════════════════════════════════════════════
+// 02. 所有用户可调整设置（保持通用，不依赖具体年份/业务名）
+// ════════════════════════════════════════════════════════════════
+var setting = {
+  title: '哪些业务值得继续投入？',
+  subtitle: 'BCG 波士顿矩阵 · 规模 / 增长 / 竞争地位与年度迁移轨迹',
+  unit: '亿元',
+  dataSourceNote: '', // 可选：正式发布时填写准确的数据来源；留空则自动区分演示数据/Power BI 字段
+  background: 'transparent',
+  layout: {
+    left: 96, right: 56, top: 172, bottom: 133
+  },
+  growthBoundary: {
+    // fixed：所有时期统一使用固定阈值（推荐历史比较）；median：逐期按当期增长率中位数自动划分
+    mode: 'fixed',
+    fixedValue: 0.10
+  },
+  relativeShareBoundary: 1,
+  bubble: {
+    minDiameter: 18,
+    maxDiameter: 48,
+    areaProportional: true,
+    showLabel: true,
+    labelFontSize: 11,
+    hoverScale: 1.1,
+    // 为保证通用模板在大量业务下仍可读，最多直接标注前 N 个较大业务；全部气泡保留 Tooltip。
+    maxVisibleLabels: 32
+  },
+  showTrajectory: true,
+  showPreviousPosition: true,
+  showTrajectoryArrow: true, // 轨迹线末端的小箭头指向当期业务位置
+  trajectoryOpacity: 0.77,
+  showQuadrantBackground: true,
+  showQuadrantName: true,
+  showTimeline: false, // 默认隐藏：只有在需要逐期播放、且有多帧可比较时才开启
+  animationDuration: 700,
+  colors: {
+    positive: '#239263',
+    negative: '#D9544D',
+    text: '#263238',
+    secondary: '#8493A2',
+    grid: '#E5E9ED',
+    history: '#AEB7C1',
+    stars: '#239263',
+    cows: '#397DAC',
+    questions: '#DBA047',
+    dogs: '#9DA8B2'
+  }
+};
+
+// 在 ECharts for Power BI 中，直接读取前 5 列；无数据环境使用上方演示数据。
+// 如果 dataArr 存在但字段不足，显示错误提示，不会悄悄回退到模拟数据。
+var sourceError = '';
+var usingPowerBI = typeof dataArr !== 'undefined' && dataArr && Array.isArray(dataArr.dataObjects);
+if (usingPowerBI) {
+  if (dataArr.dataObjects.length < 5) {
+    sourceError = '请依次绑定 5 列：年份、业务名称、本企业业务规模、最大竞争对手规模、细分市场总规模。';
+  } else {
+    var fields = dataArr.dataObjects;
+    年份 = Array.from(fields[0].values || []);
+    业务名称 = Array.from(fields[1].values || []);
+    本企业规模 = Array.from(fields[2].values || []);
+    最大竞争对手规模 = Array.from(fields[3].values || []);
+    细分市场规模 = Array.from(fields[4].values || []);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// 03. 数据校验、BCG 指标计算、行业通用四象限逻辑
+// ════════════════════════════════════════════════════════════════
+var color = setting.colors;
+var QUADRANTS = [
+  { key: 'stars', name: '明星业务', en: 'Stars', desc: '高增长 · 高相对份额', action: '重点投入', color: color.stars },
+  { key: 'questions', name: '问题业务', en: 'Question Marks', desc: '高增长 · 低相对份额', action: '选择性投入', color: color.questions },
+  { key: 'cows', name: '现金牛业务', en: 'Cash Cows', desc: '低增长 · 高相对份额', action: '巩固效率', color: color.cows },
+  { key: 'dogs', name: '瘦狗业务', en: 'Dogs', desc: '低增长 · 低相对份额', action: '评估转型', color: color.dogs }
+];
+function escapeHTML(x) {
+  return String(x == null ? '' : x).replace(/[&<>"']/g, function(c) {
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+function numeric(v) {
+  if (typeof v === 'number') return isFinite(v) ? v : NaN;
+  var t = String(v == null ? '' : v).replace(/[,，\s]/g,'').trim();
+  return t === '' ? NaN : Number(t);
+}
+function median(values) {
+  var a = values.filter(function(v) { return isFinite(v); }).slice().sort(function(a,b) { return a - b; });
+  if (!a.length) return 0;
+  var m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+function formatNum(v, digits) {
+  if (v == null || !isFinite(v)) return '—';
+  return Number(v).toLocaleString('zh-CN', { minimumFractionDigits: digits || 0, maximumFractionDigits: digits == null ? 1 : digits });
+}
+function fmtPercent(v) { return (v * 100).toFixed(1) + '%'; }
+function pctSigned(v) { return (v >= 0 ? '+' : '') + fmtPercent(v); }
+function rgba(hex, opacity) {
+  var c = hex.replace('#','');
+  return 'rgba(' + parseInt(c.slice(0,2),16) + ',' + parseInt(c.slice(2,4),16) + ',' + parseInt(c.slice(4,6),16) + ',' + opacity + ')';
+}
+function orderPeriods(a, b) {
+  var x = Number(a), y = Number(b);
+  if (isFinite(x) && isFinite(y)) return x - y;
+  return String(a).localeCompare(String(b), 'zh-CN', {numeric: true});
+}
+function groupFor(x, y, boundary) {
+  if (y >= boundary) return x >= setting.relativeShareBoundary ? 0 : 1;
+  return x >= setting.relativeShareBoundary ? 2 : 3;
+}
+function makeErrorOption(message) {
+  return {
+    backgroundColor: setting.background,
+    graphic: [
+      { type:'rect', left:39, top:17, shape:{width:20,height:4}, style:{fill:color.negative}, silent:true },
+      { type:'text', left:42, top:39, style:{text:'BCG 波士顿矩阵',font:'600 21px sans-serif',fill:color.text},silent:true },
+      { type:'text', left:44, top:105, style:{text:message,font:'14px sans-serif',fill:color.negative},silent:true }
+    ]
+  };
+}
+
+var inputLen = 年份.length;
+if (!sourceError && [业务名称, 本企业规模, 最大竞争对手规模, 细分市场规模].some(function(v) { return v.length !== inputLen; })) {
+  sourceError = '五个输入字段的记录条数不一致，请检查 Power BI 数据绑定顺序。';
+}
+var recordByBusiness = Object.create(null);
+var businessNames = [];
+var periods = [];
+var ignored = 0;
+if (!sourceError) {
+  for (var i = 0; i < inputLen; i++) {
+    var period = String(年份[i] == null ? '' : 年份[i]).trim();
+    var bname = String(业务名称[i] == null ? '' : 业务名称[i]).trim();
+    var own = numeric(本企业规模[i]);
+    var competitor = numeric(最大竞争对手规模[i]);
+    var market = numeric(细分市场规模[i]);
+    if (!period || !bname || !isFinite(own) || !isFinite(competitor) || !isFinite(market) ||
+        own < 0 || competitor <= 0 || market <= 0 || own > market || competitor > market) {
+      ignored++; continue;
+    }
+    if (!recordByBusiness[bname]) {
+      recordByBusiness[bname] = Object.create(null);
+      businessNames.push(bname);
+    }
+    // 每个业务-期间只允许 1 条汇总记录。若有重复，不进行错误求和。
+    if (recordByBusiness[bname][period]) { ignored++; continue; }
+    recordByBusiness[bname][period] = {year:period, name:bname, own:own, competitor:competitor, market:market};
+    if (periods.indexOf(period) < 0) periods.push(period);
+  }
+}
+periods.sort(orderPeriods);
+
+var frames = [];
+if (!sourceError && periods.length >= 2) {
+  for (var ti = 1; ti < periods.length; ti++) {
+    var prevPeriod = periods[ti - 1];
+    var currPeriod = periods[ti];
+    var current = [];
+    for (var bi = 0; bi < businessNames.length; bi++) {
+      var name = businessNames[bi];
+      var previousRow = recordByBusiness[name][prevPeriod];
+      var currentRow = recordByBusiness[name][currPeriod];
+      if (!currentRow || !previousRow || !(previousRow.market > 0)) continue;
+      var obj = {
+        name: name, year: currPeriod, prevYear: prevPeriod,
+        own: currentRow.own, competitor:currentRow.competitor, market:currentRow.market,
+        growth: currentRow.market / previousRow.market - 1,
+        relativeShare: currentRow.own / currentRow.competitor,
+        marketShare: currentRow.own / currentRow.market,
+        previous: null
+      };
+      var earlierPeriod = periods[ti - 2];
+      if (earlierPeriod != null && recordByBusiness[name][earlierPeriod]) {
+        var earlierRow = recordByBusiness[name][earlierPeriod];
+        obj.previous = {
+          year:prevPeriod, own:previousRow.own,
+          growth:previousRow.market/earlierRow.market-1,
+          relativeShare:previousRow.own/previousRow.competitor
+        };
+      }
+      current.push(obj);
+    }
+    if (current.length) {
+      var threshold = setting.growthBoundary.mode === 'fixed'
+        ? Number(setting.growthBoundary.fixedValue) : median(current.map(function(v) { return v.growth; }));
+      current.forEach(function(v) { v.quadrant = groupFor(v.relativeShare, v.growth, threshold); });
+      frames.push({year:currPeriod, prevYear:prevPeriod, current:current, threshold:threshold});
+    }
+  }
+}
+if (!frames.length && !sourceError) {
+  sourceError = '暂无可绘制数据。需要至少两个连续年度、同名业务的有效数据记录（首次年度作为增长率基期）。';
+}
+
+// ════════════════════════════════════════════════════════════════
+// 04. 生成 ECharts 配置：四象限、气泡、年度轨迹与 Tooltip
+// ════════════════════════════════════════════════════════════════
+if (sourceError) {
+  option = makeErrorOption(sourceError);
+} else {
+  var allCurrent = [];
+  frames.forEach(function(f) { f.current.forEach(function(v){allCurrent.push(v);}); });
+  // 全时期统一尺度：开启 Timeline 后，相同业务的迁移不会因坐标轴自动缩放而产生视觉假位移。
+  var allXs = [], allYs = [];
+  frames.forEach(function(f) {
+    allYs.push(f.threshold);
+    f.current.forEach(function(v) {
+      allXs.push(v.relativeShare); allYs.push(v.growth);
+      if (v.previous) { allXs.push(v.previous.relativeShare); allYs.push(v.previous.growth); }
+    });
+  });
+  // 动态扩展相对份额范围：超过 2.0 倍不裁切，右侧留至少 12% 额外空间给气泡。
+  var sharedXMax = Math.max(setting.relativeShareBoundary * 1.25, 2,
+    Math.ceil(Math.max.apply(null, allXs) * 1.12 / 0.25) * 0.25);
+  var sharedMinGrowth = Math.min.apply(null, allYs.concat([0]));
+  var sharedMaxGrowth = Math.max.apply(null, allYs.concat([0]));
+  var sharedYMin = Math.min(-0.10, Math.floor((sharedMinGrowth - 0.04) / 0.05) * 0.05);
+  var sharedYMax = Math.max(0.30, Math.ceil((sharedMaxGrowth + 0.04) / 0.05) * 0.05);
+  if (sharedYMax - sharedYMin < 0.2) sharedYMax = sharedYMin + 0.2;
+  var bubbleValues = allCurrent.map(function(v) {return v.own;});
+  var bubbleMin = Math.min.apply(null,bubbleValues);
+  var bubbleMax = Math.max.apply(null,bubbleValues);
+  function bubbleSize(value) {
+    if (!isFinite(value)) return setting.bubble.minDiameter;
+    var t = bubbleMax === bubbleMin ? 0.5 : (value - bubbleMin) / (bubbleMax - bubbleMin);
+    if (setting.bubble.areaProportional) {
+      var a = setting.bubble.minDiameter * setting.bubble.minDiameter;
+      var b = setting.bubble.maxDiameter * setting.bubble.maxDiameter;
+      return Math.sqrt(a + t * (b - a));
+    }
+    return setting.bubble.minDiameter + t * (setting.bubble.maxDiameter - setting.bubble.minDiameter);
+  }
+  // 标签的初始位置在四种方向中自适应选择；按规模优先布局，减少标签覆盖气泡与彼此冲突。
+  // 不依赖 HTML / myChart / 特定画布尺寸，ECharts labelLayout 在实际画布上再做最后一轮避让。
+  // 业务数量很大时限制直显文字数量，避免 O(N²) 布局和信息拥挤，全部气泡及 Tooltip 仍保留。
+  function planLabelPositions(values, xMax, yMin, yMax) {
+    var W = 900, H = 450, margin = 7;
+    var textHeight = Math.max(17, setting.bubble.labelFontSize + 7);
+    var pts = values.map(function(v) {
+      return {
+        name:v.name, own:v.own,
+        x:W * v.relativeShare / xMax,
+        y:H * (yMax-v.growth) / (yMax-yMin),
+        radius:bubbleSize(v.own)/2,
+        width:Array.from(String(v.name)).reduce(function(a,ch){return a+(ch.charCodeAt(0)>255 ? setting.bubble.labelFontSize : setting.bubble.labelFontSize*0.58);},0)+10
+      };
+    });
+    var maxLabels = Math.max(0, Math.floor(Number(setting.bubble.maxVisibleLabels) || 0));
+    var priorities = pts.slice().sort(function(a,b){return b.own-a.own;});
+    var assigned = Object.create(null), placed = [];
+    function clashes(a,b,extra) {
+      var e=extra||0;
+      return a.x < b.x+b.w+e && a.x+a.w+e > b.x &&
+        a.y < b.y+b.h+e && a.y+a.h+e > b.y;
+    }
+    priorities.forEach(function(pt,i) {
+      if (i >= maxLabels) {assigned[pt.name]=null;return;}
+      var r=pt.radius+8, tw=pt.width, th=textHeight;
+      var candidates = [
+        {position:'right',x:pt.x+r,y:pt.y-th/2,w:tw,h:th},
+        {position:'top',x:pt.x-tw/2,y:pt.y-r-th,w:tw,h:th},
+        {position:'bottom',x:pt.x-tw/2,y:pt.y+r,w:tw,h:th},
+        {position:'left',x:pt.x-r-tw,y:pt.y-th/2,w:tw,h:th}
+      ];
+      if (pt.x > W*0.78) candidates.push(candidates.shift());
+      for (var ci=0;ci<candidates.length;ci++) {
+        var c=candidates[ci];
+        if (c.x<margin || c.y<margin || c.x+c.w>W-margin || c.y+c.h>H-margin) continue;
+        if (placed.some(function(other){return clashes(c,other,4);})) continue;
+        if (pts.some(function(other){
+          if(other===pt)return false;
+          return clashes(c,{x:other.x-other.radius-2,y:other.y-other.radius-2,
+                            w:2*other.radius+4,h:2*other.radius+4},2);
+        })) continue;
+        assigned[pt.name]=c.position;
+        placed.push(c);break;
+      }
+      if (!Object.prototype.hasOwnProperty.call(assigned,pt.name)) assigned[pt.name]=null;
+    });
+    return assigned;
+  }
+  // 防贴边 Tooltip：优先右下；不足时放左或放上，且给底部来源说明留出空间。
+  function smartTooltipPosition(point, params, dom, rect, size) {
+    var view = size && size.viewSize || [1000,700];
+    var content = size && size.contentSize || [245,280];
+    var vw=Number(view[0])||1000, vh=Number(view[1])||700;
+    var cw=Math.min(Number(content[0])||245,Math.max(0,vw-16));
+    var ch=Math.min(Number(content[1])||280,Math.max(0,vh-16));
+    var px=Number(point && point[0])||0, py=Number(point && point[1])||0;
+    var gap=16, edge=9, footnoteTop=vh-75;
+    var x=px+gap;
+    if(x+cw>vw-edge) x=px-cw-gap;
+    x=Math.max(edge,Math.min(vw-cw-edge,x));
+    var y=py+gap;
+    if(y+ch>footnoteTop) y=py-ch-gap;
+    if(y<edge) y=Math.max(edge,Math.min(vh-ch-edge,py+gap));
+    return [x,Math.max(edge,Math.min(vh-ch-edge,y))];
+  }
+  function tooltipFormatter(p) {
+    var d = p && p.data;
+    if (!d || !d.meta) return '';
+    var v = d.meta;
+    var quad = QUADRANTS[v.quadrant];
+    return '<div style="min-width:220px;line-height:1.8;color:'+color.text+'">' +
+      '<div style="font-size:14px;font-weight:700;margin-bottom:4px">'+ escapeHTML(v.name) + '</div>'+
+      '<div style="color:'+color.secondary+';border-bottom:1px solid #E5E9ED;padding-bottom:5px;margin-bottom:6px">'+escapeHTML(v.year)+'年 · '+quad.en+'</div>'+
+      '<div><b style="color:'+quad.color+'">● '+escapeHTML(quad.name)+'</b></div>'+
+      '<div>相对市场份额：<b>'+formatNum(v.relativeShare,2)+' 倍</b></div>'+
+      '<div>细分市场增长率：<b style="color:'+(v.growth>=0?color.positive:color.negative)+'">'+pctSigned(v.growth)+'</b></div>'+
+      '<div>本企业业务规模：<b>'+formatNum(v.own,1)+' '+escapeHTML(setting.unit)+'</b></div>'+
+      '<div>最大竞争对手：'+formatNum(v.competitor,1)+' '+escapeHTML(setting.unit)+'</div>'+
+      '<div>细分市场总规模：'+formatNum(v.market,1)+' '+escapeHTML(setting.unit)+'</div>'+
+      '<div>本企业市场份额：'+fmtPercent(v.marketShare)+'</div>'+
+      (v.previous ? '<div style="color:'+color.secondary+';margin-top:5px;border-top:1px solid #E5E9ED;padding-top:4px">'+escapeHTML(v.previous.year)+'年位置：'+formatNum(v.previous.relativeShare,2)+' 倍 / '+pctSigned(v.previous.growth)+'</div>' : '')+
+      '</div>';
+  }
+  function makeZoneSeries(geometry) {
+    return {
+      id:'bcg-zones', name:'四象限背景', type:'custom', coordinateSystem:'cartesian2d',
+      silent:true, z:0, animation:false,
+      renderItem:function(params,api) {
+        var from = api.coord([api.value(0),api.value(3)]);
+        var to = api.coord([api.value(1),api.value(2)]);
+        var rect = echarts.graphic.clipRectByRect(
+          {x:Math.min(from[0],to[0]),y:Math.min(from[1],to[1]),width:Math.abs(to[0]-from[0]),height:Math.abs(to[1]-from[1])},
+          params.coordSys
+        );
+        return rect ? {type:'rect',shape:rect,style:{fill:rgba(QUADRANTS[api.value(4)].color,0.062)},silent:true} : null;
+      },
+      data:setting.showQuadrantBackground ? geometry : []
+    };
+  }
+  function makeQuadrantTitleSeries(labelData) {
+    return {
+      id:'bcg-quadrant-labels', name:'象限名称', type:'custom', coordinateSystem:'cartesian2d',
+      silent:true, z:2, animation:false,
+      renderItem:function(params,api) {
+        var q = QUADRANTS[api.value(2)];
+        var pt = api.coord([api.value(0),api.value(1)]);
+        return {type:'text',style:{x:pt[0],y:pt[1],text:q.name+'  ·  '+q.en,
+          font:'600 14px sans-serif',fill:rgba(q.color,0.70),align:'center',verticalAlign:'middle'},silent:true};
+      },
+      data:setting.showQuadrantName ? labelData : []
+    };
+  }
+  // 历史轨迹：按象限建立自定义系列，图例点选时与该象限散点一起隐藏。
+  // 不使用 line 的灰色图例图标；气泡 scatter 系列排在前面决定图例主色。
+  function makeTrajectorySeries(q, idx, records) {
+    return {
+      id:'bcg-trajectory-' + q.key,
+      name:q.name,
+      type:'custom', coordinateSystem:'cartesian2d',
+      z:4, silent:true, animation:false,
+      renderItem:function(params, api) {
+        var x0=api.value(0), y0=api.value(1), x1=api.value(2), y1=api.value(3);
+        var p0=api.coord([x0,y0]), p1=api.coord([x1,y1]);
+        if (!isFinite(p0[0]) || !isFinite(p0[1]) || !isFinite(p1[0]) || !isFinite(p1[1])) return null;
+        var dx=p1[0]-p0[0], dy=p1[1]-p0[1];
+        var length=Math.sqrt(dx*dx+dy*dy);
+        if (length < 1) return null;
+        var ux=dx/length, uy=dy/length;
+        var markerRadius=api.value(4)/2;
+        var endGap=Math.min(markerRadius+1, length*0.38);
+        var xEnd=p1[0]-ux*endGap, yEnd=p1[1]-uy*endGap;
+        var children=[{
+          type:'line', shape:{x1:p0[0],y1:p0[1],x2:xEnd,y2:yEnd},
+          style:{stroke:color.history,lineWidth:1.35,opacity:setting.trajectoryOpacity}
+        }];
+        if (setting.showPreviousPosition) {
+          children.push({type:'rect',shape:{x:p0[0]-3.3,y:p0[1]-3.3,width:6.6,height:6.6},
+            style:{fill:color.history,stroke:'#FFFFFF',lineWidth:0.7,opacity:0.92}});
+        }
+        if (setting.showTrajectoryArrow && length>15) {
+          var arrowLength=6, arrowHalfWidth=3.5;
+          children.push({
+            type:'polygon',
+            shape:{points:[
+              [xEnd,yEnd],
+              [xEnd-ux*arrowLength-uy*arrowHalfWidth,yEnd-uy*arrowLength+ux*arrowHalfWidth],
+              [xEnd-ux*arrowLength+uy*arrowHalfWidth,yEnd-uy*arrowLength-ux*arrowHalfWidth]
+            ]},
+            style:{fill:color.history,opacity:setting.trajectoryOpacity}
+          });
+        }
+        return {type:'group',children:children,silent:true};
+      },
+      data:records
+    };
+  }
+  // 辅助视觉编码：从实际帧读取年份，不在图例里硬编码年度。
+  // 只有实际绘制历史轨迹时，才提示灰色方块/箭头，避免只有两个输入年度时误导读者。
+  function historyLegendGraphic(frame, hasPrevious) {
+    var children = [];
+    var cursor = 0;
+    var ink = color.secondary;
+    function textWidth(txt) {
+      var w = 0;
+      Array.from(String(txt)).forEach(function(ch) {w += ch.charCodeAt(0) > 255 ? 11 : 6.2;});
+      return w;
+    }
+    function addText(txt) {
+      children.push({type:'text',silent:true,style:{x:cursor,y:8,text:txt,
+        font:'11px sans-serif',fill:ink,verticalAlign:'middle'}});
+      cursor += textWidth(txt)+30;
+    }
+    // 彩色气泡使用已确认的四个象限色，不与代表历史位置的灰色方块混淆。
+    QUADRANTS.forEach(function(q, i) {
+      children.push({type:'circle',silent:true,
+        shape:{cx:cursor+4+i*7,cy:8,r:3.3},
+        style:{fill:q.color,stroke:'#FFFFFF',lineWidth:0.5}});
+    });
+    cursor += 38;
+    addText(String(frame.year)+'年业务（颜色=象限、大小≈规模）');
+    if (hasPrevious && setting.showPreviousPosition) {
+      children.push({type:'rect',silent:true,
+        shape:{x:cursor+1,y:4,width:8,height:8},style:{fill:color.history}});
+      cursor += 18;
+      addText(String(frame.prevYear)+'年位置');
+    }
+    if (hasPrevious) {
+      children.push({type:'line',silent:true,
+        shape:{x1:cursor,y1:8,x2:cursor+25,y2:8},
+        style:{stroke:color.history,lineWidth:1.5}});
+      if (setting.showTrajectoryArrow) {
+        children.push({type:'polygon',silent:true,
+          shape:{points:[[cursor+26,8],[cursor+19,4.5],[cursor+19,11.5]]},
+          style:{fill:color.history}});
+      }
+      cursor += 34;
+      addText(String(frame.prevYear)+'—'+String(frame.year)+'年'+
+        (setting.showTrajectoryArrow ? '迁移方向' : '位置变化'));
+    }
+    return {id:'bcg-visual-legend',$action:'replace',type:'group',
+      left:'center',top:136,silent:true,children:children};
+  }
+  function frameGraphics(frame, hasPrevious) {
+    var autoSource = usingPowerBI
+      ? '数据来源：Power BI 绑定字段（正式发布请注明实际数据来源）'
+      : '数据来源：人工模拟演示数据（非真实企业业务资料）';
+    var textSource = String(setting.dataSourceNote || '').trim() || autoSource;
+    var note = '图表说明：横轴=相对市场份额（左小右大）；纵轴=细分市场同比增长率；虚线阈值：份额'+
+      formatNum(setting.relativeShareBoundary,1)+'倍、市场增长率'+fmtPercent(frame.threshold)+
+      (setting.growthBoundary.mode==='fixed' ? '（固定）' : '（当期中位数）')+'。';
+    return [
+      {id:'bcg-title-stripe',type:'rect',left:42,top:18,silent:true,
+        shape:{width:20,height:4},style:{fill:color.negative}},
+      historyLegendGraphic(frame,hasPrevious),
+      {id:'bcg-source',type:'text',left:42,bottom:41,silent:true,
+        style:{text:textSource,font:'10px sans-serif',fill:color.secondary}},
+      {id:'bcg-note',type:'text',left:42,bottom:22,silent:true,
+        style:{text:note,font:'10px sans-serif',fill:color.secondary}}
+    ];
+  }
+  function buildFrame(frame) {
+    var values = frame.current;
+    var yThreshold = frame.threshold;
+    var xMax = sharedXMax;
+    var yMin = sharedYMin;
+    var yMax = sharedYMax;
+    var groups = QUADRANTS.map(function(q){return [];});
+    var counts = QUADRANTS.map(function(){return 0;});
+    var labelPositions = planLabelPositions(values,xMax,yMin,yMax);
+    values.forEach(function(v) {
+      counts[v.quadrant]++;
+      var place = labelPositions[v.name];
+      groups[v.quadrant].push({
+        name:v.name, value:[v.relativeShare,v.growth,v.own], meta:v,
+        label:{show:setting.bubble.showLabel && place!==null,
+          position:place || (v.relativeShare > xMax*0.80 ? 'left':'right')}
+      });
+    });
+    var boundaryX = setting.relativeShareBoundary;
+    // 数据坐标右侧为高份额区；zoneRects 随 xAxis 正序自然投射成镜像位置。
+    var zoneRects = [
+      [boundaryX,xMax,yThreshold,yMax,0],
+      [0,boundaryX,yThreshold,yMax,1],
+      [boundaryX,xMax,yMin,yThreshold,2],
+      [0,boundaryX,yMin,yThreshold,3]
+    ];
+    var zoneText = [
+      [(boundaryX+xMax)/2, yMax-(yMax-yThreshold)*0.115,0],
+      [boundaryX/2, yMax-(yMax-yThreshold)*0.115,1],
+      // 低增长两象限名称放在底部，避免和业务气泡/10% 阈值线相互遮挡。
+      [(boundaryX+xMax)/2, yMin+(yThreshold-yMin)*0.13,2],
+      [boundaryX/2, yMin+(yThreshold-yMin)*0.13,3]
+    ];
+    var series = [makeZoneSeries(zoneRects)];
+    // 双参考线：以真实线段明确标记 1 倍份额与增长分界线，避免空数据 markLine 的兼容性差异。
+    series.push({
+      id:'bcg-share-cutoff',name:'相对份额分界线',type:'line',silent:true,z:3,
+      data:[[boundaryX,yMin],[boundaryX,yMax]],showSymbol:false,
+      lineStyle:{color:'#93A2AF',width:1.3,type:'dashed',opacity:0.95},
+      animation:false
+    });
+    series.push({
+      id:'bcg-growth-cutoff',name:'市场增长分界线',type:'line',silent:true,z:3,
+      data:[[0,yThreshold],[xMax,yThreshold]],showSymbol:false,
+      lineStyle:{color:'#93A2AF',width:1.3,type:'dashed',opacity:0.95},
+      animation:false
+    });
+    series.push(makeQuadrantTitleSeries(zoneText));
+    QUADRANTS.forEach(function(q,i) {
+      series.push({
+        id:'bcg-points-'+q.key,name:q.name,type:'scatter',coordinateSystem:'cartesian2d',
+        z:6,clip:true,
+        data:groups[i],
+        symbol:'circle',
+        symbolSize:function(d) {return bubbleSize(d[2]);},
+        itemStyle:{color:q.color,borderColor:'#FFFFFF',borderWidth:1.4,
+          shadowBlur:6,shadowColor:'rgba(28,46,56,0.15)'},
+        // 不使用 focus:'self'：悬浮显示 Tooltip 时，保留所有气泡及象限背景的上下文。
+        emphasis:{scale:setting.bubble.hoverScale,focus:'none',
+          itemStyle:{borderWidth:2.1,borderColor:color.text},
+          label:{show:true,color:color.text,fontWeight:600}},
+        blur:{itemStyle:{opacity:1},label:{opacity:1}},
+        label:{
+          show:setting.bubble.showLabel,position:'right',distance:7,
+          formatter:function(p){return p.name;},
+          color:color.text,fontSize:setting.bubble.labelFontSize,fontWeight:500,
+          backgroundColor:'rgba(255,255,255,0.77)',padding:[1,3],borderRadius:2
+        },
+        // 二级防护：小尺寸画布 / Power BI 缩放时按真实像素处理冲突。
+        labelLayout:{hideOverlap:true,moveOverlap:'shiftY'},
+        animationDuration:setting.animationDuration
+      });
+    });
+    if (setting.showTrajectory) {
+      QUADRANTS.forEach(function(q, qIndex) {
+        var pathRecords=[];
+        values.forEach(function(v) {
+          if (v.quadrant !== qIndex || !v.previous) return;
+          if (!isFinite(v.previous.relativeShare) || !isFinite(v.previous.growth)) return;
+          pathRecords.push([v.previous.relativeShare,v.previous.growth,
+            v.relativeShare,v.growth,bubbleSize(v.own)]);
+        });
+        // 所属业务当前象限决定轨迹的图例显隐；历史位置颜色统一为参考灰。
+        series.push(makeTrajectorySeries(q,qIndex,pathRecords));
+      });
+    }
+    var hasPrevious = setting.showTrajectory && values.some(function(v) {return !!v.previous;});
+    return {
+      graphic:frameGraphics(frame,hasPrevious),
+      title:{subtext:setting.subtitle+'  |  '+frame.year+'年  |  高增长分界线：'+fmtPercent(yThreshold)+
+        (setting.growthBoundary.mode === 'fixed' ? '（固定）' : '（当期中位数）')},
+      // 非经典的横轴方向：本模板刻意采用左小右大，
+      // 因而右上=明星、左上=问题、右下=现金牛、左下=瘦狗。
+      xAxis:{type:'value',min:0,max:xMax,inverse:false,splitNumber:5,
+        name:'相对市场份额（倍）',nameLocation:'middle',nameGap:37,
+        nameTextStyle:{color:color.text,fontSize:12},
+        axisLine:{show:true,lineStyle:{color:'#AEB7C1'}},axisTick:{show:false},
+        axisLabel:{color:color.secondary,fontSize:11,formatter:function(v){return Number(v).toFixed(1)+'×';}},
+        splitLine:{show:true,lineStyle:{color:color.grid,type:'solid',width:1}}
+      },
+      yAxis:{type:'value',min:yMin,max:yMax,splitNumber:5,
+        name:'细分市场增长率',nameLocation:'middle',nameGap:51,
+        nameTextStyle:{color:color.text,fontSize:12},
+        axisLine:{show:true,lineStyle:{color:'#AEB7C1'}},axisTick:{show:false},
+        axisLabel:{color:color.secondary,fontSize:11,formatter:function(v){return (v*100).toFixed(0)+'%';}},
+        splitLine:{show:true,lineStyle:{color:color.grid,type:'solid',width:1}}
+      },
+      // 图例保留分类显隐交互，但不再使用右侧分析卡片。
+      legend:{
+        orient:'horizontal',left:'center',top:105,itemGap:26,
+        itemWidth:11,itemHeight:11,icon:'circle',
+        data:QUADRANTS.map(function(q){return {name:q.name,icon:'circle',
+          itemStyle:{color:q.color,borderColor:q.color,borderWidth:0}};}),
+        selectedMode:true,
+        formatter:function(name) {
+          var index = QUADRANTS.findIndex(function(q){return q.name===name;});
+          return '{label|'+name+'}  {num|'+counts[index]+'}';
+        },
+        textStyle:{color:color.text,rich:{
+          label:{fontSize:12,fontWeight:600,color:color.text},
+          num:{fontSize:11,fontWeight:500,color:color.secondary}
+        }},
+        inactiveColor:'#C9D0D6',inactiveBorderColor:'#C9D0D6'
+      },
+      series:series
+    };
+  }
+
+  var baseOption = {
+    backgroundColor:setting.background,
+    animation:true,animationDuration:setting.animationDuration,
+    grid:{left:setting.layout.left,right:setting.layout.right,
+      top:setting.layout.top,
+      // 开启 Timeline 后独立为时间轴预留空间，避免压到 X 轴名称和底部说明。
+      bottom:(setting.showTimeline && frames.length>1)
+        ? Math.max(190,setting.layout.bottom) : setting.layout.bottom,
+      containLabel:false},
+    tooltip:{
+      trigger:'item',confine:true,formatter:tooltipFormatter,
+      position:smartTooltipPosition,
+      backgroundColor:'#FFFFFF',borderColor:'#DCE4E9',borderWidth:1,
+      padding:[11,14],extraCssText:'box-shadow:0 4px 20px rgba(30,50,62,0.10);border-radius:5px;'
+    },
+    title:{
+      text:setting.title,subtext:setting.subtitle,
+      top:28,left:42,
+      textStyle:{fontSize:20,fontWeight:700,color:color.text},
+      subtextStyle:{fontSize:11,color:color.secondary,lineHeight:21},itemGap:4
+    },
+    timeline:{
+      show:setting.showTimeline && frames.length>1,
+      axisType:'category',autoPlay:false,loop:false,playInterval:1800,
+      realtime:true,currentIndex:frames.length-1,
+      left:170,right:170,bottom:72,height:31,
+      data:frames.map(function(f) {return f.year;}),
+      lineStyle:{color:'#BFC6CE',width:1},
+      checkpointStyle:{symbolSize:11,color:color.text,borderColor:'#FFFFFF',borderWidth:2},
+      controlStyle:{showPlayBtn:false,showPrevBtn:true,showNextBtn:true,
+        color:color.secondary,borderColor:color.secondary},
+      itemStyle:{color:'#BBC5CD'},
+      label:{fontSize:11,color:color.secondary,interval:0},
+      emphasis:{label:{color:color.text}}
+    },
+  };
+  var outputFrames = frames.map(buildFrame);
+  if (frames.length === 1 || !setting.showTimeline) {
+    // 只有一帧时也必须展示完整坐标图，不依赖时间轴控件。
+    var lastFrameOption = outputFrames[outputFrames.length-1];
+    option = Object.assign({}, baseOption, lastFrameOption);
+    // Object.assign 为浅合并；必须单独合并 title，防止年度副标题覆盖原有主标题。
+    option.title = Object.assign({}, baseOption.title, lastFrameOption.title);
+    option.timeline = {show:false};
+    option.graphic = lastFrameOption.graphic;
+  } else {
+    // 官方时间轴结构：默认关闭；配置开启后，可逐期切换并沿用统一坐标比例。
+    option = {baseOption:baseOption,options:outputFrames};
+  }
+}

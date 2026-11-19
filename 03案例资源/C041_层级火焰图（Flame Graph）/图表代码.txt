@@ -1,0 +1,420 @@
+﻿/*
+ * C041 | 层级火焰图（Flame Graph）
+ * ECharts for Power BI / Apache ECharts 官方在线编辑器（无需 HTML、外部库）
+ * 基于 ECharts 官方 Flame Graph 的 custom series 绘制结构改造。
+ *
+ * 演示数据：Alphabet 2025 Form 10-K, Note 2, Revenues, 2023—2025。
+ * 财报单位：百万美元；仅纳入可加总的 Google Services / Google Cloud / Other Bets。
+ * 不纳入套期保值收益（损失）：2023 +236、2024 +211、2025 -127（百万美元）。
+ * 因此本案例总额不是 GAAP 合并收入，不能与财报合并收入直接混称。
+ *
+ * 本次层级调整仅以财报披露的六项末级收入为基础；
+ * "核心业务 / 探索业务"、"自营平台广告 / 合作平台广告" 属于分析用汇总分组，
+ * 并非 Alphabet 财报另外披露的收入项目，且不会产生新金额或重复计数。
+ * 数据输入：年份、层级路径、营收（百万美元），三个平行一维数组。
+ * 仅输入末级业务收入，不输入上级小计，所有父级合计由 JS 自动计算。
+ * Power BI 可按实际字段序号改为 dataArr.dataObjects[i].values；无需修改绘图算法。
+ */
+
+// ===== 1. 原始输入（真实财报末级数据，严格保持三列等长） =====
+// 使用 Power BI 时，将上面三列替换为对应字段，例如：
+// var 年份 = dataArr.dataObjects[0].values;
+// var 业务路径 = dataArr.dataObjects[1].values;
+// var 营收 = dataArr.dataObjects[2].values;
+// 字段顺序必须以实际视觉对象中的绑定位置为准。
+
+var 年份 = [
+  2023,
+  2023,
+  2023,
+  2023,
+  2023,
+  2023,
+  2024,
+  2024,
+  2024,
+  2024,
+  2024,
+  2024,
+  2025,
+  2025,
+  2025,
+  2025,
+  2025,
+  2025
+];
+var 业务路径 = [
+  '核心业务>Google 服务>广告业务>自营平台广告>搜索及其他',
+  '核心业务>Google 服务>广告业务>自营平台广告>YouTube 广告',
+  '核心业务>Google 服务>广告业务>合作平台广告>Google Network',
+  '核心业务>Google 服务>非广告收入>订阅、平台及设备',
+  '核心业务>Google Cloud',
+  '探索业务>Other Bets',
+  '核心业务>Google 服务>广告业务>自营平台广告>搜索及其他',
+  '核心业务>Google 服务>广告业务>自营平台广告>YouTube 广告',
+  '核心业务>Google 服务>广告业务>合作平台广告>Google Network',
+  '核心业务>Google 服务>非广告收入>订阅、平台及设备',
+  '核心业务>Google Cloud',
+  '探索业务>Other Bets',
+  '核心业务>Google 服务>广告业务>自营平台广告>搜索及其他',
+  '核心业务>Google 服务>广告业务>自营平台广告>YouTube 广告',
+  '核心业务>Google 服务>广告业务>合作平台广告>Google Network',
+  '核心业务>Google 服务>非广告收入>订阅、平台及设备',
+  '核心业务>Google Cloud',
+  '探索业务>Other Bets'
+];
+var 营收 = [
+  175033,
+  31510,
+  31312,
+  34688,
+  33088,
+  1527,
+  198084,
+  36147,
+  30359,
+  40340,
+  43229,
+  1648,
+  224532,
+  40367,
+  29792,
+  48030,
+  58705,
+  1537
+];
+
+// ===== 2. 用户可调整的设置 =====
+var setting = {
+  title: '谷歌 三年营收结构：搜索、YouTube 与云业务',
+  subtitle: '层级收入结构 · 火焰图（Flame Graph）',
+  sourceDemo: 'Alphabet Inc. 2025 Form 10-K，Note 2 Revenues（SEC）',
+  sourcePowerBI: 'Power BI 当前数据集（实际来源请修改设置）',
+  footnoteDemo: '图表说明：宽度=营收，不含套保调整；核心/探索、自营/合作为分析分组；点击色块聚焦、下方祖先返回。',
+  footnotePowerBI: '图表说明：矩形宽度代表可加总的非负指标；点击色块聚焦分支，点击下方祖先色块返回。',
+  pathSeparator: '>',
+  inputUnit: '百万美元',
+  displayUnit: '亿美元',
+  displayScale: 100,             // 1 亿美元 = 100 百万美元
+  titleLeft: 36,
+  grid: {left: 44, right: 44, top: 130, bottom: 91}, // 全部为像素
+  barGap: 5,
+  barRadius: 2,
+  minimumVisibleLevels: 4,       // 聚焦很深层时，避免单独一行占满画面
+  maxNodes: 600,
+  showValuesOnWideBars: true,
+  tooltipMaxWidth: 330,
+  animationDuration: 380,
+  colors: {
+    positive: '#239263',
+    negative: '#D9544D',
+    title: '#263238',
+    secondary: '#8493A2',
+    grid: '#E5E9ED',
+    // 自下而上由深红→朱红→橙色→琥珀→金黄，七层以上仍渐进变亮。
+    flameLevels: ['#BC2F24','#D44727','#E45927','#EB7526','#F19430','#F7B240','#FAD067','#FFE7A1'],
+    siblingLighten: 0.035 // 同层兄弟之间的微弱明度区分，不改变暖色系
+  }
+};
+
+// ===== 3. 通用数据处理：创建严格可加总的层级树 =====
+function c041EscapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, function (c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+function c041Number(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return NaN;
+  var v = typeof value === 'number' ? value : Number(String(value).replace(/,/g, '').trim());
+  return v;
+}
+function c041Format(value, decimals) {
+  var v = Number(value);
+  if (!isFinite(v)) return '—';
+  return v.toLocaleString('zh-CN', {minimumFractionDigits:decimals, maximumFractionDigits:decimals});
+}
+function c041Fit(str, availablePx, fontSize) {
+  if (availablePx < 28) return '';
+  var allowed = Math.max(1, availablePx-7), used=0, out='';
+  var chars = Array.from(String(str));
+  for (var i=0;i<chars.length;i++) {
+    var w=/[\u2e80-\uffff]/.test(chars[i]) ? fontSize : fontSize*0.58;
+    if (used+w > allowed) return out.length>1 ? out.slice(0,-1)+'…' : '…';
+    used+=w; out+=chars[i];
+  }
+  return out;
+}
+function c041MakeNode(id, name, year, pathKey, parent) {
+  return {id:id, name:name, year:year, pathKey:pathKey, parent:parent, value:0, children:[], childMap:Object.create(null)};
+}
+function c041BuildTree(xs, paths, amounts) {
+  if (!Array.isArray(xs) || !Array.isArray(paths) || !Array.isArray(amounts)) throw new Error('年份、业务路径、营收必须都是一维数组。');
+  if (xs.length !== paths.length || xs.length !== amounts.length || !xs.length) throw new Error('三列数据长度不一致，或输入为空。');
+  var normalized=[], yearsSeen=Object.create(null), unique=Object.create(null);
+  for (var i=0; i<xs.length; i++) {
+    var year=String(xs[i] == null ? '' : xs[i]).trim();
+    if (!year) throw new Error('第 '+(i+1)+' 行的年份为空。');
+    var path=String(paths[i]==null?'':paths[i]).trim();
+    var parts=path.split(setting.pathSeparator).map(function(x){return x.trim();});
+    if (!path || parts.some(function(x){return !x;})) throw new Error('第 '+(i+1)+' 行的业务路径为空或层级格式不正确。');
+    var val=c041Number(amounts[i]);
+    if (!isFinite(val) || val < 0) throw new Error('第 '+(i+1)+' 行的营收必须为非负数。');
+    var k=JSON.stringify([year,parts]);
+    if (unique[k]) throw new Error('发现重复的 年份×末级业务路径：'+year+' / '+path+'；请在 Power BI 先汇总到此粒度。');
+    unique[k]=true; yearsSeen[year]=true;
+    normalized.push({year:year,parts:parts,val:val});
+  }
+  var yearList=Object.keys(yearsSeen).sort(function(a,b){
+    var na=Number(a),nb=Number(b);
+    return isFinite(na)&&isFinite(nb)?na-nb:a.localeCompare(b,'zh-CN');
+  });
+  var root=c041MakeNode('root','全部年度业务营收',null,'',null), index=Object.create(null), byYearPath=Object.create(null), topFamilies=[];
+  index[root.id]=root;
+  yearList.forEach(function(y) {
+    var n=c041MakeNode('year:'+encodeURIComponent(y), y+' 年',y,'',root);
+    root.children.push(n); root.childMap[y]=n;index[n.id]=n;
+  });
+  normalized.forEach(function(entry){
+    var node=root.childMap[entry.year];
+    for (var j=0;j<entry.parts.length;j++) {
+      if (node.isLeaf) throw new Error('某个路径既是末级业务，又是其他业务的父节点：'+entry.parts.slice(0,j).join(setting.pathSeparator));
+      var name=entry.parts[j];
+      if (!Object.prototype.hasOwnProperty.call(node.childMap,name)) {
+        var fullKey=entry.parts.slice(0,j+1).join(setting.pathSeparator);
+        var child=c041MakeNode(node.id+'|'+encodeURIComponent(name),name,entry.year,fullKey,node);
+        node.childMap[name]=child;node.children.push(child);index[child.id]=child;
+        if (j===0 && topFamilies.indexOf(name)===-1)topFamilies.push(name);
+      }
+      node=node.childMap[name];
+    }
+    if (node.children.length || node.isLeaf) throw new Error('路径层级冲突：'+entry.parts.join(setting.pathSeparator));
+    node.isLeaf=true;node.value=entry.val;
+  });
+  function sum(node) {
+    if (node.children.length) node.value=node.children.reduce(function(s,x){return s+sum(x);},0);
+    if (node.year!=null)byYearPath[JSON.stringify([node.year,node.pathKey])]=node;
+    return node.value;
+  }
+  sum(root);
+  if (Object.keys(index).length>setting.maxNodes) throw new Error('层级节点数量过多，超过 setting.maxNodes；请减少输入层级或类别数。');
+  if (!(root.value>0))throw new Error('营收合计必须大于零。');
+  return {root:root,index:index,years:yearList,byYearPath:byYearPath,families:topFamilies};
+}
+
+// ===== 4. 火焰图层级展平：保留官方示例的 [level,start,end] 结构 =====
+var c041State = {tree:null,focusId:'root',drawData:[],isDemo:true,chart:null};
+// 火焰色系：根部红色，向上依次过渡至橙色、金黄色。
+// 同层兄弟节点只进行非常小幅度的明度微调，避免多类别彩虹配色。
+function c041Color(node, depth) {
+  var palette=setting.colors.flameLevels;
+  var base=palette[Math.min(depth,palette.length-1)];
+  var siblingIndex=node.parent?node.parent.children.indexOf(node):0;
+  var offset=(!node.parent || node.parent.children.length===1)?0:((siblingIndex%5)-2)*setting.colors.siblingLighten;
+  var rgb=[parseInt(base.slice(1,3),16),parseInt(base.slice(3,5),16),parseInt(base.slice(5,7),16)];
+  var adjusted=rgb.map(function(c) {
+    return Math.max(0,Math.min(255,Math.round(offset>=0?c+(255-c)*offset:c*(1+offset))));
+  });
+  return '#'+adjusted.map(function(c){return c.toString(16).padStart(2,'0');}).join('');
+}
+function c041Ancestors(node) {
+  var chain=[];
+  for(var p=node;p;p=p.parent)chain.push(p);
+  return chain.reverse();
+}
+// 与官方 flame-graph 一致：下钻后保留【原始根节点→当前聚焦分支】的完整祖先链。
+// 祖先矩形的显示宽度裁剪为当前焦点的数值，而不改变真实数据或 tooltip 的原始值。
+// 因此可以点击下方任一祖先色块，直接返回该层并恢复其子级结构。
+function c041FlattenFocused(focus) {
+  var out=[],chain=c041Ancestors(focus),nextOnPath=Object.create(null);
+  for(var i=0;i<chain.length-1;i++)nextOnPath[chain[i].id]=chain[i+1];
+  function rec(node,start,depth) {
+    var ancestor=Object.prototype.hasOwnProperty.call(nextOnPath,node.id);
+    var width=ancestor?focus.value:node.value;
+    out.push({name:node.name,nodeId:node.id,year:node.year,pathKey:node.pathKey,
+      parentId:node.parent?node.parent.id:null,isAncestor:ancestor,
+      value:[depth,start,start+width,node.value],
+      itemStyle:{color:c041Color(node,depth)}});
+    var pos=start, children=ancestor?[nextOnPath[node.id]]:node.children;
+    children.forEach(function(child){rec(child,pos,depth+1);pos+=child.value;});
+  }
+  rec(c041State.tree.root,0,0);
+  return out;
+}
+function c041MaxDepth(node) {
+  return node.children.length?1+Math.max.apply(null,node.children.map(c041MaxDepth)):0;
+}
+function c041GetChart() {
+  if (c041State.chart && typeof c041State.chart.setOption==='function')return c041State.chart;
+  if (typeof myChart!=='undefined' && myChart && typeof myChart.setOption==='function')return myChart;
+  return null;
+}
+function c041Navigate(id) {
+  if (!c041State.tree || !c041State.tree.index[id])return;
+  if (c041State.focusId===id)return;
+  c041State.focusId=id;
+  option=c041BuildOption();
+  var instance=c041GetChart();
+  if (instance)instance.setOption(option,true);
+}
+function c041Graphic() {
+  var source={id:'c041-source',type:'text',silent:true,bottom:53,left:36,
+    style:{text:'数据来源：'+(c041State.isDemo?setting.sourceDemo:setting.sourcePowerBI),font:'11px sans-serif',fill:setting.colors.secondary}};
+  var note={id:'c041-footnote',type:'text',silent:true,bottom:31,left:36,
+    style:{text:(c041State.isDemo?setting.footnoteDemo:setting.footnotePowerBI),font:'11px sans-serif',fill:setting.colors.secondary}};
+  return [
+    {id:'c041-redline',type:'rect',silent:true,shape:{x:36,y:18,width:20,height:4},style:{fill:setting.colors.negative}},
+    source,note
+  ];
+}
+function c041Render(params,api) {
+  var depth=api.value(0), a=api.coord([api.value(1),depth]), b=api.coord([api.value(2),depth]);
+  var width=b[0]-a[0], size=api.size([0,1]), height=Math.abs(size[1])-setting.barGap;
+  if(width<0.5 || height<=0)return;
+  var d=c041State.drawData[params.dataIndex];
+  if(!d)return;
+  var x=a[0], y=a[1]-height/2, color=d.itemStyle.color;
+  var fontSize=Math.min(12,Math.max(9,Math.floor(height*0.26)));
+  var content=d.name;
+  if(setting.showValuesOnWideBars && width>165 && !d.isAncestor) content+='  '+c041Format(d.value[3]/setting.displayScale,1);
+  content=c041Fit(content,width-12,fontSize);
+  var children=[{type:'rect',name:'c041-bar',shape:{x:x,y:y,width:width,height:height,r:setting.barRadius},
+    style:{fill:color,stroke:'#FFFFFF',lineWidth:1},emphasis:{style:{stroke:'#263238',lineWidth:1.5}}}];
+  if(content && width>36){
+    children.push({type:'text',silent:true,style:{x:x+7,y:y+height/2,text:content,
+      font:fontSize+'px sans-serif',fill:depth<=2?'#FFFFFF':'#4C2819',
+      verticalAlign:'middle',width:Math.max(1,width-12),overflow:'truncate'}});
+  }
+  return {type:'group',children:children};
+}
+function c041PreviousYearValue(node) {
+  if(node.year==null || !c041State.tree)return null;
+  var years=c041State.tree.years, idx=years.indexOf(node.year);
+  if(idx<=0)return null;
+  var prev=c041State.tree.byYearPath[JSON.stringify([years[idx-1],node.pathKey])];
+  return prev?{year:years[idx-1],value:prev.value}:null;
+}
+function c041Tooltip(p) {
+  if (!p.data || !p.data.nodeId || !c041State.tree) return '';
+  var node = c041State.tree.index[p.data.nodeId];
+  if (!node) return '';
+  var parent = node.parent;
+  var yearNode = node;
+  while (yearNode && yearNode.year != null && yearNode.parent && yearNode.parent.parent) {
+    yearNode = yearNode.parent;
+  }
+  var annualTotal = yearNode && yearNode.year != null ? yearNode.value : c041State.tree.root.value;
+  var grandTotal = c041State.tree.root.value;
+  var prev = c041PreviousYearValue(node);
+  var delta = prev && prev.value > 0 ? (node.value / prev.value - 1) * 100 : null;
+  var yoy = delta == null ? '—' : (delta >= 0 ? '▲ ' : '▼ ') + c041Format(Math.abs(delta), 1) + '%';
+  var yoyColor = delta == null ? setting.colors.secondary : (delta >= 0 ? setting.colors.positive : setting.colors.negative);
+  var path = [], cur = node;
+  while (cur && cur.parent) { path.push(cur.name); cur = cur.parent; }
+  path.reverse();
+  // 自定义 custom series 的数据色与 Tooltip 标记色保持完全一致。
+  var markerColor = p.data.itemStyle && p.data.itemStyle.color
+    ? p.data.itemStyle.color : c041Color(node, c041Ancestors(node).length - 1);
+  var amount = c041Format(node.value / setting.displayScale, 2);
+  var pctGrand = c041Format(node.value / grandTotal * 100, 2);
+  var html = '<div style="min-width:260px;max-width:' + setting.tooltipMaxWidth + 'px;color:#263238;font-family:Arial,Microsoft YaHei,sans-serif;font-size:12px;line-height:1.55">';
+  html += '<div style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700">'
+    + '<span style="flex:none;display:inline-block;width:10px;height:10px;border-radius:2px;background:' + markerColor + '"></span>'
+    + '<span style="overflow-wrap:anywhere">' + c041EscapeHtml(node.name) + '</span></div>';
+  html += '<div style="color:#8493A2;font-size:11px;margin:3px 0 9px;line-height:16px;overflow-wrap:anywhere">'
+    + c041EscapeHtml(path.join(' / ') || '全部年度') + '</div>';
+  // 与官方示例同一信息架构：同色标记 + 金额 + 份额，其中份额基准明确标注。
+  html += '<div style="background:#F7F9FA;border-left:3px solid ' + markerColor
+    + ';padding:8px 10px;margin:6px 0 10px">'
+    + '<span style="font-size:16px;font-weight:700;white-space:nowrap">' + amount + '</span>'
+    + ' <span style="color:#8493A2">' + c041EscapeHtml(setting.displayUnit) + '</span>'
+    + '<div style="margin-top:2px;color:#5D6D7B">占全部年度业务营收 <b style="color:#263238">' + pctGrand + '%</b></div></div>';
+  function row(left, right, style) {
+    return '<div style="display:flex;justify-content:space-between;gap:16px;margin:4px 0">'
+      + '<span style="color:#8493A2">' + left + '</span>'
+      + '<b style="text-align:right;' + (style || '') + '">' + right + '</b></div>';
+  }
+  if (parent && parent.value > 0) {
+    html += row('占直接父级', c041Format(node.value / parent.value * 100, 2) + '%');
+  }
+  if (node.year != null && node.pathKey && annualTotal > 0) {
+    html += row('占 ' + c041EscapeHtml(node.year) + ' 年营收', c041Format(node.value / annualTotal * 100, 2) + '%');
+  }
+  if (prev) {
+    html += row('同比 ' + c041EscapeHtml(prev.year) + ' 年', yoy,
+      'color:' + yoyColor + ';');
+  }
+  // 祖先节点的矩形会在聚焦时裁剪宽度；提示中始终采用未裁剪的真实业务营收。
+  var focused = c041State.tree.index[c041State.focusId] || c041State.tree.root;
+  if (p.data.isAncestor && focused !== node) {
+    html += '<div style="margin-top:8px;padding-top:7px;border-top:1px solid #E5E9ED;color:#8493A2;font-size:11px">'
+      + '当前矩形仅显示聚焦范围 ' + c041Format(focused.value / setting.displayScale, 2)
+      + ' ' + c041EscapeHtml(setting.displayUnit) + '；上方为该节点完整收入。</div>';
+  }
+  html += '<div style="border-top:1px solid #E5E9ED;padding-top:7px;margin-top:9px;color:#8493A2;font-size:11px">'
+    + (p.data.isAncestor ? '点击此块返回该层' : '点击聚焦此分支；点击下方祖先色块返回')
+    + '</div></div>';
+  return html;
+}
+function c041BuildOption() {
+  var focus=c041State.tree.index[c041State.focusId]||c041State.tree.root;
+  var data=c041FlattenFocused(focus);c041State.drawData=data;
+  var depths=c041Ancestors(focus).length-1+c041MaxDepth(focus);
+  var visible=Math.max(depths+1,setting.minimumVisibleLevels);
+  var times=c041State.tree.years;
+  var sub=setting.subtitle+' · '+times[0]+'—'+times[times.length-1]+' · '+(c041State.focusId==='root'?'业务合计 ':'当前聚焦 '+focus.name+' ')+c041Format(focus.value/setting.displayScale,2)+' '+setting.displayUnit+' · '+(c041MaxDepth(c041State.tree.root)+1)+' 层';
+  return {
+    backgroundColor:'transparent',
+    animationDurationUpdate:setting.animationDuration,
+    title:{text:setting.title,subtext:sub,left:setting.titleLeft,top:30,
+      textStyle:{fontSize:20,fontWeight:700,color:setting.colors.title},
+      subtextStyle:{fontSize:12,color:setting.colors.secondary,lineHeight:20},itemGap:10},
+    tooltip:{trigger:'item',confine:true,backgroundColor:'#FFFFFF',borderColor:'#E5E9ED',borderWidth:1,padding:12,
+      textStyle:{color:'#263238'},extraCssText:'box-shadow:0 3px 16px rgba(38,50,56,.12);',formatter:c041Tooltip},
+    graphic:c041Graphic(),
+    grid:{left:setting.grid.left,right:setting.grid.right,top:setting.grid.top,bottom:setting.grid.bottom,containLabel:false},
+    xAxis:{type:'value',min:0,max:Math.max(focus.value,1),show:false},
+    yAxis:{type:'value',min:-0.5,max:visible-0.5,interval:1,show:false},
+    series:[{id:'c041-flame',name:'业务营收结构',type:'custom',renderItem:c041Render,
+      encode:{x:[1,2],y:0,tooltip:[3]},
+      data:data,clip:true,itemStyle:{opacity:1},z:3}]
+  };
+}
+function c041ErrorOption(message) {
+  return {backgroundColor:'transparent',graphic:[
+    {type:'rect',shape:{x:36,y:18,width:20,height:4},style:{fill:'#D9544D'}},
+    {type:'text',left:36,top:36,style:{text:'C041 数据校验未通过',font:'bold 19px sans-serif',fill:'#263238'}},
+    {type:'text',left:36,top:90,style:{text:String(message),font:'13px sans-serif',fill:'#D9544D',width:700,overflow:'break'}}]};
+}
+
+// ===== 5. 生成配置及原生 ECharts 点击聚焦 =====
+try {
+  c041State.isDemo=true;
+  if (typeof dataArr!=='undefined' && dataArr && Array.isArray(dataArr.dataObjects)) {
+    var inputs=[年份,业务路径,营收];
+    c041State.isDemo=!inputs.some(function(a){
+      return dataArr.dataObjects.some(function(obj){return obj && obj.values===a;});
+    });
+  }
+  c041State.tree=c041BuildTree(年份,业务路径,营收);
+  option=c041BuildOption();
+} catch (e) {
+  if(typeof console!=='undefined'&&console.error)console.error('[C041] '+e.message);
+  option=c041ErrorOption(e.message);
+}
+
+// 与 ECharts 官方示例相同：点击任一矩形聚焦，点击底部保留的祖先矩形返回。
+// ECharts for Power BI 如暴露 myChart 实例，本代码可直接使用；未暴露时仍可显示图表与 Tooltip。
+if (c041State.tree) {
+  var c041Chart=c041GetChart();
+  if(c041Chart && typeof c041Chart.on==='function') {
+    c041State.chart=c041Chart;
+    if(c041Chart.__c041Handler && typeof c041Chart.off==='function')c041Chart.off('click',c041Chart.__c041Handler);
+    c041Chart.__c041Handler=function(p) {
+      if(p && p.seriesId==='c041-flame' && p.data && p.data.nodeId) {
+        var target=c041State.tree.index[p.data.nodeId];
+        if(target)c041Navigate(target.id);
+      }
+    };
+    c041Chart.on('click',c041Chart.__c041Handler);
+  }
+}

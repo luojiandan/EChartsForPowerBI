@@ -1,0 +1,385 @@
+﻿/*
+ * C042｜横向份额条与累计瀑布组合图 
+ * Apple 风格配色；复刻参考图的左右双区域对齐结构；支持随图表容器缩放自动调整柱宽。
+ * 数据来源：猫眼专业版《2025年票房排行榜》（2025年榜单）
+ * https://piaofang.maoyan.com/rankings/year?year=2025
+ * 榜单单位“万元”，本示例除以10000转换为“亿元”。
+ * 示例只包含排名前18的影片；全部份额与累计占比均以这18部影片的合计票房为分母。
+ * Power BI：分别将 类别、数值 替换为相同索引对齐的两个字段数组。
+ * 不依赖 HTML、DOM 或外部数据请求；直接粘贴至 ECharts 官方编辑器。
+ */
+
+// 1 原始输入：两个字段、两条平行一维数组。
+// 单位：亿元；按猫眼榜单原始“万元”÷10000保留四位小数。
+var 类别 = [
+  '哪吒之魔童闹海', '疯狂动物城2', '唐探1900', '南京照相馆', '731',
+  '浪浪山小妖怪', '捕风追影', '封神第二部：战火西岐', '熊出没·重启未来',
+  '阿凡达3', '长安的荔枝', '射雕英雄传：侠之大者',
+  '鬼灭之刃：无限城篇 第一章 猗窝座再袭', '志愿军：浴血和平',
+  '误杀3', '侏罗纪世界：重生', '罗小黑战记2', '碟中谍8：最终清算'
+];
+var 数值 = [
+  154.4614, 40.2128, 36.1244, 30.1739, 19.4297,
+  17.1922, 12.6579, 12.3886, 8.2166,
+  7.7447, 6.9121, 6.8969,
+  6.7803, 6.4199, 6.3472,
+  5.6725, 5.3389, 4.6443
+];
+
+// 2 所有用户可修改设置均在最前面
+var setting = {
+  title: '2025年电影票房：哪些影片贡献了八成？',
+  subtitle: '中国年度票房 TOP18  ·  票房份额与累计贡献',
+  categoryCaption: '电影名称',
+  leftCaption: '单片票房  /  TOP18 份额',
+  rightCaption: '累计票房  /  累计占比',
+  unit: '亿元',
+  shareScope: 'TOP18',
+  sortDescending: true,
+  amountDigits: 2,
+  percentDigits: 1,
+  valueDigits: 2,
+  titleTop: 37,
+  subtitleTop: 75,
+  sectionTop: 134,
+  plotTop: 177,
+  rowHeight: 29,
+  minRowHeight: 20,
+  plotBottomReserved: 108,
+  // 响应式左右柱图区的相对宽度；两区随容器宽度同步缩放。
+  leftPlotShare: 0.45,
+  horizontalSideMarginRatio: 0.035,
+  columnNameRatio: 0.13,
+  columnAmountRatio: 0.065,
+  columnCumulativeRatio: 0.065,
+  leftShareLabelWidth: 43,
+  rightShareLabelWidth: 51,
+  barHeight: 20,
+  leftAxisMaxMultiplier: 1.16,
+  rightAxisMaxMultiplier: 1.115,
+  categoryMaxCharacters: 10,
+  showRowGuides: true,
+  showEndDots: true,
+  showAmountColumn: true,
+  showLeftShare: true,
+  showRightCumulative: true,
+  showXAxis: true,
+  colors: {
+    primary: '#007AFF',         // Apple system blue
+    lightBlue: '#5AC8FA',       // Apple sky blue
+    softBlue: '#B9D8F0',
+    gradientStart: '#E9F4FF',
+    title: '#1D1D1F',
+    text: '#30343A',
+    secondary: '#86868B',
+    border: '#E5E5EA',
+    guide: '#EEF0F3',
+    background: '#FFFFFF',
+    redMark: '#D9544D',
+    hoverBorder: '#007AFF'
+  },
+  sourceText: '数据来源：猫眼专业版《2025年票房排行榜》；原始票房单位为万元，换算为亿元。',
+  noteText: '图表说明：份额及累计占比均以榜单TOP18影片合计为分母，不代表全国电影票房占比；票房保留2位小数。'
+};
+
+// 3 通用处理逻辑：不依赖特定电影名称/行业语义
+if (!Array.isArray(类别) || !Array.isArray(数值) || 类别.length !== 数值.length || !类别.length) {
+  throw new Error('C042：类别与数值必须是长度相同的非空一维数组。');
+}
+
+var c042Rows = 类别.map(function (label, index) {
+  var amount = Number(数值[index]);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error('C042：第 ' + (index + 1) + ' 条数值必须为非负有限数。');
+  }
+  return { name: String(label), amount: amount, inputOrder: index };
+});
+if (setting.sortDescending) {
+  c042Rows.sort(function (a, b) { return b.amount - a.amount || a.inputOrder - b.inputOrder; });
+}
+var c042Total = c042Rows.reduce(function (s, d) { return s + d.amount; }, 0);
+if (!(c042Total > 0)) { throw new Error('C042：全部数值之和必须大于0。'); }
+var c042Run = 0;
+c042Rows.forEach(function (d, i) {
+  d.rank = i + 1;
+  d.prev = c042Run;
+  c042Run += d.amount;
+  d.cumulative = c042Run;
+  d.share = d.amount / c042Total * 100;
+  d.cumulativeShare = d.cumulative / c042Total * 100;
+});
+var c042Top = Math.max.apply(null, c042Rows.map(function (d) { return d.amount; }));
+var c042Fmt = function (value, digits) {
+  return Number(value).toLocaleString('en-US', {minimumFractionDigits: digits, maximumFractionDigits: digits});
+};
+var c042Html = function (value) {
+  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+};
+var c042Mix = function (a, b, ratio) {
+  var t = Math.max(0, Math.min(1, ratio));
+  var aa = a.replace('#', ''), bb = b.replace('#', '');
+  var r = [0, 2, 4].map(function (idx) {
+    var n1 = parseInt(aa.slice(idx, idx + 2), 16), n2 = parseInt(bb.slice(idx, idx + 2), 16);
+    return Math.round(n1 + (n2 - n1) * t).toString(16).padStart(2, '0');
+  });
+  return '#' + r.join('').toUpperCase();
+};
+var c042Color = function (idx) {
+  var rank = idx / Math.max(1, c042Rows.length - 1);
+  return c042Mix(setting.colors.primary, setting.colors.softBlue, Math.pow(rank, 0.73) * 0.83);
+};
+var c042Truncate = function (s, maxCount) {
+  var arr = Array.from(s);
+  return arr.length <= maxCount ? s : arr.slice(0, maxCount - 1).join('') + '…';
+};
+
+// 4 动态尺寸策略
+// custom renderItem 中，按 params.coordSys 与 api.getWidth() 每次重绘时重新计算。
+// 这不依赖 myChart、DOM 监听或外部函数；官方编辑器和 Power BI 均可使用。
+var c042LeftXMax = c042Top * setting.leftAxisMaxMultiplier;
+var c042RightXMax = c042Total * setting.rightAxisMaxMultiplier;
+var c042TextDigits = function (width, normalDigits) {
+  return width < 400 ? 0 : width < 640 ? Math.min(1, normalDigits) : normalDigits;
+};
+var c042Layout = function (width, coordSys) {
+  var compact = width < 720;
+  var tight = width < 520;
+  var outside = Math.max(10, Math.min(42, width * setting.horizontalSideMarginRatio));
+  var categoryWidth = Math.max(52, Math.min(156, width * setting.columnNameRatio));
+  var amountWidth = setting.showAmountColumn ? Math.max(30, Math.min(74, width * setting.columnAmountRatio)) : 0;
+  var cumulativeWidth = setting.showRightCumulative ? Math.max(31, Math.min(74, width * setting.columnCumulativeRatio)) : 0;
+  var leftShareWidth = setting.showLeftShare ? Math.min(setting.leftShareLabelWidth, tight ? 31 : compact ? 37 : 43) : 0;
+  var rightShareWidth = Math.min(setting.rightShareLabelWidth, tight ? 31 : compact ? 40 : 51);
+  var gap = Math.max(3, Math.min(11, width * 0.009));
+  var middle = Math.max(5, Math.min(16, width * 0.012));
+  var available = Math.max(50, width - 2 * outside - categoryWidth - amountWidth -
+    cumulativeWidth - leftShareWidth - rightShareWidth - 3 * gap - middle);
+  var leftWidth = available * setting.leftPlotShare;
+  var rightWidth = available - leftWidth;
+  var leftX = outside + categoryWidth + amountWidth + gap;
+  var rightX = leftX + leftWidth + leftShareWidth + middle + cumulativeWidth + gap;
+  var rowBand = coordSys.height / c042Rows.length;
+  return {
+    w:width, compact:compact, tight:tight, margin:outside,
+    catRight:outside + categoryWidth - 5,
+    amountRight:leftX - gap,
+    leftX:leftX, leftWidth:leftWidth,
+    cumulativeRight:rightX - gap,
+    rightX:rightX, rightWidth:rightWidth,
+    separatorX:leftX + leftWidth + leftShareWidth + middle * 0.50,
+    rowBand:rowBand,
+    barHeight:Math.min(setting.barHeight, Math.max(3, rowBand * 0.73)),
+    numFont: tight ? 8.5 : compact ? 9.2 : 10.5,
+    labelFont: tight ? 9 : compact ? 10 : 11,
+    digits:c042TextDigits(width,setting.amountDigits),
+    percentageDigits:width < 490 ? 0 : setting.percentDigits,
+    categoryChars:Math.max(3,Math.min(setting.categoryMaxCharacters,
+      Math.floor((categoryWidth - 5) / (tight ? 9 : 11)))),
+    plotY:coordSys.y, plotBottom:coordSys.y + coordSys.height
+  };
+};
+var c042GetWidth = function (api, params) {
+  return typeof api.getWidth === 'function' ? api.getWidth()
+    : params.coordSys.width + params.coordSys.x + 12;
+};
+
+// 5 数据集：派生指标由JS自动计算，不需要Power BI另传列
+var c042SeriesData = c042Rows.map(function (d, i) {
+  return { name: d.name, value: [i, d.amount, d.prev, d.cumulative, d.share, d.cumulativeShare] };
+});
+
+// 6 用一个伸缩的 grid 绘制左右两个横向区，避免窄屏出现固定宽度溢出。
+var c042TextShape = function (x, y, text, fontSize, fill, align, weight) {
+  return {
+    type: 'text', silent: true,
+    style: {
+      x: x, y: y, text: text,
+      textAlign: align || 'left', textVerticalAlign: 'middle',
+      align: align || 'left', verticalAlign: 'middle',
+      fontSize: fontSize || 11, fontFamily: 'Arial, Microsoft YaHei, sans-serif',
+      fontWeight: weight || 'normal', fill: fill || setting.colors.text
+    }
+  };
+};
+var c042Line = function(x1,y1,x2,y2,color,width,dash) {
+  return {type:'line', silent:true, shape:{x1:x1,y1:y1,x2:x2,y2:y2},
+    style:{stroke:color,lineWidth:width||1,lineDash:dash||null}};
+};
+var c042AxisGraphics = function(lay, maxVal, x, barWidth, bottom, axisName) {
+  if (!setting.showXAxis) return [];
+  var elements = [c042Line(x, bottom, x+barWidth, bottom, '#C9CDD3', 1)];
+  var tickCount = lay.w < 550 ? 2 : 4;
+  for (var j = 0; j <= tickCount; j++) {
+    var xx = x + j * barWidth / tickCount;
+    elements.push(c042Line(xx,bottom,xx,bottom+4,'#C9CDD3',1));
+    elements.push(c042TextShape(xx,bottom+14,c042Fmt(maxVal * j / tickCount,0),
+      lay.tight?8:9.5,setting.colors.secondary,'center'));
+  }
+  elements.push(c042TextShape(x+barWidth/2,bottom+37,axisName,
+    lay.tight?9:10,setting.colors.secondary,'center'));
+  return elements;
+};
+// 动态标题栏、行分隔线、坐标轴和脚注：与数据块共享同一套当前宽度。
+var c042Decorations = function(lay, cs) {
+  var children = [];
+  var captionY = setting.sectionTop + 7;
+  var textColor = setting.colors.secondary;
+  children.push(c042Line(lay.margin,setting.sectionTop+28,lay.w-lay.margin,setting.sectionTop+28,
+    setting.colors.border,1));
+  children.push(c042TextShape(lay.margin,captionY,
+    lay.tight?'影片':setting.categoryCaption,10.5,textColor));
+  children.push(c042TextShape(lay.leftX,captionY,
+    lay.compact?'单片票房 / 份额':setting.leftCaption,lay.tight?9.5:11,setting.colors.text,'left',600));
+  children.push(c042TextShape(lay.rightX,captionY,
+    lay.compact?'累计 / 占比':setting.rightCaption,lay.tight?9.5:11,setting.colors.text,'left',600));
+  children.push(c042Line(lay.separatorX,cs.y-6,lay.separatorX,cs.y+cs.height+8,
+    setting.colors.border,1));
+  if (setting.showRowGuides) {
+    for (var gi=1;gi<c042Rows.length;gi++) {
+      var yy=cs.y+cs.height*gi/c042Rows.length;
+      children.push(c042Line(lay.margin,yy,lay.w-lay.margin,yy,
+        setting.colors.guide,1,[2,3]));
+    }
+  }
+  children.push.apply(children,c042AxisGraphics(lay,c042LeftXMax,lay.leftX,lay.leftWidth,
+    lay.plotBottom,'单片票房（'+setting.unit+'）'));
+  children.push.apply(children,c042AxisGraphics(lay,c042RightXMax,lay.rightX,lay.rightWidth,
+    lay.plotBottom,'累计票房（'+setting.unit+'）'));
+  // footer 与容器底部关联。窄屏下只显示摘要，完整口径仍可在源码及 Tooltip 查阅。
+  var footY=lay.plotBottom+73;
+  var source=lay.w<680?'数据来源：猫眼专业版《2025年票房排行榜》':setting.sourceText;
+  var note=lay.w<680?'图表说明：份额以 TOP18 合计为分母，非全国份额。':setting.noteText;
+  children.push(c042TextShape(lay.margin,footY,source,lay.tight?9:10,setting.colors.secondary));
+  children.push(c042TextShape(lay.margin,footY+17,note,lay.tight?9:10,setting.colors.secondary));
+  return children;
+};
+var c042LeftRender = function (params, api) {
+  var i = Math.round(api.value(0));
+  var d = c042Rows[i];
+  if (!d) return null;
+  var lay = c042Layout(c042GetWidth(api,params),params.coordSys);
+  var cy = api.coord([0, i])[1];
+  var endX = lay.leftX + lay.leftWidth * d.amount / c042LeftXMax;
+  var bw = Math.max(0, endX - lay.leftX);
+  var col = c042Color(i);
+  var children = [];
+  if (i === 0) children.push.apply(children,c042Decorations(lay,params.coordSys));
+  children.push(c042TextShape(lay.catRight,cy,
+    c042Truncate(d.name,lay.categoryChars),lay.labelFont,setting.colors.text,'right',i<3?600:400));
+  if (setting.showAmountColumn) {
+    children.push(c042TextShape(lay.amountRight,cy,c042Fmt(d.amount,lay.digits),
+      lay.numFont,setting.colors.text,'right',i<3?600:400));
+  }
+  children.push({
+    type:'rect',
+    shape:{x:lay.leftX,y:cy-lay.barHeight/2,width:Math.max(1,bw),height:lay.barHeight,r:lay.barHeight/2},
+    style:{fill:new echarts.graphic.LinearGradient(0,0,1,0,[
+      {offset:0,color:c042Mix(setting.colors.gradientStart,col,0.30)},
+      {offset:1,color:col}
+    ])},
+    emphasis:{style:{opacity:0.92,stroke:setting.colors.hoverBorder,lineWidth:1}}
+  });
+  if(setting.showEndDots && bw>=16) {
+    children.push({type:'circle',silent:true,shape:{cx:endX-7,cy:cy,r:2.3},
+      style:{fill:'#FFFFFF',opacity:0.92}});
+  }
+  if(setting.showLeftShare) {
+    children.push(c042TextShape(endX+5,cy,c042Fmt(d.share,lay.percentageDigits)+'%',
+      lay.compact?8.7:10,setting.colors.secondary,'left'));
+  }
+  return {type:'group',children:children};
+};
+var c042RightRender = function (params, api) {
+  var i = Math.round(api.value(0));
+  var d = c042Rows[i];
+  if (!d) return null;
+  var lay = c042Layout(c042GetWidth(api,params),params.coordSys);
+  var cy = api.coord([0, i])[1];
+  var start = lay.rightX + lay.rightWidth * d.prev / c042RightXMax;
+  var end = lay.rightX + lay.rightWidth * d.cumulative / c042RightXMax;
+  var barWidth = Math.max(1,end-start);
+  var children=[];
+  if(setting.showRightCumulative) {
+    children.push(c042TextShape(lay.cumulativeRight,cy,c042Fmt(d.cumulative,lay.digits),
+      lay.numFont,setting.colors.text,'right',i<3?600:400));
+  }
+  children.push({
+    type:'rect',
+    shape:{x:start,y:cy-lay.barHeight/2,width:barWidth,height:lay.barHeight,r:barWidth>9?2:0},
+    style:{fill:c042Color(i)},
+    emphasis:{style:{stroke:setting.colors.hoverBorder,lineWidth:1,opacity:0.9}}
+  });
+  children.push(c042TextShape(end+5,cy,c042Fmt(d.cumulativeShare,lay.percentageDigits)+'%',
+    lay.compact?8.7:10,setting.colors.secondary,'left',i===c042Rows.length-1?600:400));
+  return {type:'group',children:children};
+};
+
+var c042Graphic = [
+  {type:'rect',left:42,top:22,shape:{width:20,height:4},style:{fill:setting.colors.redMark},silent:true}
+];
+
+// 7 富文本 Tooltip：原始金额、当期份额、累计额及累计占比
+var c042Tooltip = function (params) {
+  if (!params || !params.data || !params.data.value) return '';
+  var i = Math.round(params.data.value[0]);
+  var d = c042Rows[i];
+  if (!d) return '';
+  var dot = c042Color(i);
+  var row = function (label, value, strong) {
+    return '<div style="display:flex;justify-content:space-between;gap:30px;margin:6px 0;color:#86868B;">' +
+      '<span>' + c042Html(label) + '</span><span style="color:#1D1D1F;font-weight:' + (strong?650:500) + '">' + value + '</span></div>';
+  };
+  return '<div style="min-width:245px;font-family:Arial,Microsoft YaHei,sans-serif;font-size:12px;line-height:1.35;">' +
+    '<div style="display:flex;align-items:center;gap:8px;font-weight:650;font-size:13px;color:#1D1D1F;margin-bottom:10px;">' +
+    '<span style="width:9px;height:9px;border-radius:2px;background:' + dot + ';display:inline-block;"></span>' +
+    c042Html(d.name) + '</div>' +
+    row('年度排名', '第 ' + d.rank + ' 名', false) +
+    row('单片票房', c042Fmt(d.amount, setting.amountDigits) + ' ' + c042Html(setting.unit), true) +
+    row('占' + c042Html(setting.shareScope), c042Fmt(d.share, setting.percentDigits) + '%', false) +
+    '<div style="border-top:1px solid #E5E5EA;margin:8px 0;"></div>' +
+    row('累计票房（前' + d.rank + '名）', c042Fmt(d.cumulative, setting.amountDigits) + ' ' + c042Html(setting.unit), true) +
+    row('累计占比', c042Fmt(d.cumulativeShare, setting.percentDigits) + '%', true) +
+    '<div style="font-size:10px;color:#8E8E93;margin-top:9px;">分母：' + c042Html(setting.shareScope) + ' 合计 ' + c042Fmt(c042Total, setting.amountDigits) + ' ' + c042Html(setting.unit) + '</div>' +
+    '</div>';
+};
+
+// 8 ECharts option。两个 grid 独立，但垂直区域完全对齐。
+option = {
+  backgroundColor: 'transparent',
+  animationDuration: 600,
+  animationDurationUpdate: 350,
+  textStyle: {fontFamily: 'Arial, Microsoft YaHei, sans-serif', color:setting.colors.text},
+  title: {
+    left:42, top:setting.titleTop, padding:0,
+    text:setting.title,
+    subtext:setting.subtitle + '  ·  TOP18合计 ' + c042Fmt(c042Total, setting.amountDigits) + setting.unit,
+    itemGap:14,
+    textStyle:{color:setting.colors.title,fontSize:21,fontWeight:650},
+    subtextStyle:{color:setting.colors.secondary,fontSize:11.5,fontWeight:400}
+  },
+  tooltip: {
+    trigger:'item', confine:true, appendToBody:false,
+    backgroundColor:'#FFFFFF',
+    borderColor:setting.colors.border,
+    borderWidth:1,
+    padding:[12,14],
+    extraCssText:'box-shadow:0 8px 30px rgba(0,0,0,.09);border-radius:9px;',
+    formatter:c042Tooltip
+  },
+  // 一个全宽且自动伸缩的网格：左右柱状分区都由 renderItem 实时按宽度绘制。
+  // 所有 grid 边距仍为像素，不使用百分比或运行时外部 resize 监听。
+  grid:{left:12,right:12,top:setting.plotTop,bottom:setting.plotBottomReserved},
+  xAxis:{gridIndex:0,type:'value',min:0,max:1,show:false},
+  yAxis:{gridIndex:0,type:'category',data:c042Rows.map(function(d){return d.name;}),
+    inverse:true,axisLine:{show:false},axisTick:{show:false},axisLabel:{show:false},splitLine:{show:false}},
+  graphic:c042Graphic,
+  series:[
+    {name:'单片票房与占比',type:'custom',coordinateSystem:'cartesian2d',xAxisIndex:0,yAxisIndex:0,
+      encode:{y:0},renderItem:c042LeftRender,data:c042SeriesData,z:3,
+      emphasis:{focus:'self'}},
+    {name:'累计票房与累计占比',type:'custom',coordinateSystem:'cartesian2d',xAxisIndex:0,yAxisIndex:0,
+      encode:{y:0},renderItem:c042RightRender,data:c042SeriesData,z:3,
+      emphasis:{focus:'self'}}
+  ]
+};

@@ -1,0 +1,508 @@
+﻿/*
+ * C043｜分组季度柱状与累计阶梯复合图 · v0.4.0
+ * 主题：Apple 2025 财年 Mac、iPad、可穿戴及家居配件业务季度营收
+ * 单位：亿美元（原始 Apple 披露单位为百万美元，÷100 换算为亿美元）
+ * 数据：Apple FY2025 Q1-Q3 Form 10-Q，全年 Form 10-K（Q4 可由全年减九个月累计核对）
+ * https://www.sec.gov/Archives/edgar/data/320193/000032019325000008/aapl-20241228.htm
+ * https://www.sec.gov/Archives/edgar/data/320193/000032019325000057/aapl-20250329.htm
+ * https://www.sec.gov/Archives/edgar/data/320193/000032019325000073/aapl-20250628.htm
+ * https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/aapl-20250927.htm
+ *
+ * 使用方式：粘贴完整 JS 至 ECharts 官方编辑器，或在 ECharts for Power BI
+ * 中将最前面的三个一维数组替换成对应字段的 values 数组。
+ * 输入只包含【类别、季度、营收】，类别数和期数自适应；累计与环比全部自动计算。
+ * 不使用 HTML、DOM、外部网络或图表实例的自定义事件监听。
+ */
+
+// ===== 1 Power BI 原始字段：三个平行的一维数组 =====
+// 三个数组每个索引对应同一条记录；数据单位为亿美元。
+var 类别 = [
+  'Mac', 'Mac', 'Mac', 'Mac',
+  'iPad', 'iPad', 'iPad', 'iPad',
+  '可穿戴及家居配件', '可穿戴及家居配件', '可穿戴及家居配件', '可穿戴及家居配件'
+];
+var 季度 = [
+  'Q1', 'Q2', 'Q3', 'Q4',
+  'Q1', 'Q2', 'Q3', 'Q4',
+  'Q1', 'Q2', 'Q3', 'Q4'
+];
+var 营收 = [
+  89.87, 79.49, 80.46, 87.26,
+  80.88, 64.02, 65.81, 69.52,
+  117.47, 75.22, 74.04, 90.13
+];
+
+// ===== 2 用户设置（全部可修改参数集中在此） =====
+var setting = {
+  // 留空则由类别数量生成通用标题；也可自定义标题（不硬编码类别数量）
+  title: '',
+  // 留空则动态生成副标题
+  subtitle: '',
+  // 留空则从输入的周期字段识别并按数字自然排序；特殊周期可显式指定顺序
+  periods: [],
+  // 统计期间标签、指标名称与单位均可自定义；留空时不在图面套用演示数据的年份。
+  // 例如：fiscalYear: '2025财年' 或 '2026年1—4月'。
+  fiscalYear: '',
+  categoryLabel: '类别',
+  metricName: '营收',
+  periodLabel: '季度',
+  unit: '亿美元',
+  valueDigits: 1,
+  cumulativeDigits: 1,
+  growthDigits: 1,
+  // 按类别首次出现的顺序分配颜色，超过基础色数量自动衍生不同明度
+  seriesColors: [
+    '#3979AA', // 柔和蓝
+    '#279694', // 青绿
+    '#C58F48'  // 暖金棕
+  ],
+  positiveColor: '#239263',
+  negativeColor: '#D9544D',
+  textColor: '#263238',
+  mutedColor: '#8493A2',
+  gridLineColor: '#E5E9ED',
+  redMarkColor: '#D9544D',
+  titleTop: 35,
+  subtitleTop: 72,
+  hintTop: 114,
+  gridTop: 188,
+  gridLeft: 68,
+  gridRight: 38,
+  gridBottom: 112,
+  maxYExtraRatio: 0.12,
+  barWidthRatio: 0.64,
+  // 阶梯保留真实统一金额纵轴，水平连接弱化、垂直增量略突出，避免抢过柱体
+  stepHorizontalWidth: 1.6,
+  stepVerticalWidth: 2.3,
+  stepHorizontalOpacity: 0.55,
+  stepVerticalOpacity: 0.82,
+  dotRadius: 2.3,
+  lastDotRadius: 3.7,
+  // 略提高季度柱饱和度，使季度值成为主要视觉对象
+  barTopWhiteMix: 0.43,
+  barBottomWhiteMix: 0.17,
+  showInsight: true,
+  showBarValues: true,
+  // 默认显示 Q2 起所有正、负环比，非只显示每组最大降幅
+  showQoQLabels: true,
+  showCumulativeLabels: true,
+  cumulativeLabelStartIndex: 1, // 从第2期（Q2）开始标累计值；Q1与柱体重复
+  minBandToShowAllValues: 38,
+  minBandToShowQoQ: 37,
+  minBandToShowCumulative: 35,
+  minBarHeightToShowQoQ: 43,
+  groupTitleMaxChars: 12,
+  // 窄屏下自动收紧标签；若密度过高，具体数值始终可通过 Tooltip 查看
+  // 来源无法由类别、周期、数值这三列自动推断；替换实际数据时，应同步设置本字段。
+  // 这里明确标识为【示例】来源，避免换数据后把新数据误说成 Apple 财报。
+  sourceText: '示例数据来源：Apple Inc. 2025财年 Q1–Q3 Form 10-Q、全年 Form 10-K；替换数据请更新来源。',
+  // 为空时按 metricName 自动生成通用说明。
+  noteText: ''
+};
+
+// ===== 3 通用数据校验与派生计算 =====
+if (!Array.isArray(类别) || !Array.isArray(季度) || !Array.isArray(营收) ||
+    !类别.length || 类别.length !== 季度.length || 类别.length !== 营收.length) {
+  throw new Error('C043：类别、季度、营收必须是长度相同且非空的一维数组。');
+}
+if (!Array.isArray(setting.periods)) {
+  throw new Error('C043：setting.periods 必须为数组；留空时自动识别周期。');
+}
+
+var c043Format = function (value, digits) {
+  return Number(value).toLocaleString('en-US', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
+  });
+};
+var c043Escape = function (text) {
+  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+};
+var c043Rgb = function (hex) {
+  var v = hex.replace('#', '');
+  return [parseInt(v.slice(0, 2), 16), parseInt(v.slice(2, 4), 16), parseInt(v.slice(4, 6), 16)];
+};
+var c043Mix = function (a, b, ratio) {
+  var t = Math.max(0, Math.min(1, ratio));
+  var aa = c043Rgb(a), bb = c043Rgb(b);
+  return '#' + aa.map(function (n, i) {
+    return Math.round(n * (1 - t) + bb[i] * t).toString(16).padStart(2, '0');
+  }).join('').toUpperCase();
+};
+var c043Short = function (s, count) {
+  var chars = Array.from(String(s));
+  return chars.length <= count ? chars.join('') : chars.slice(0, Math.max(1, count - 1)).join('') + '…';
+};
+
+var c043Categories = [];
+var c043Groups = Object.create(null);
+var c043InputPeriods = setting.periods.length
+  ? setting.periods.map(function (x) { return String(x).trim(); })
+  : Array.from(new Set(季度.map(function (x) { return String(x).trim(); })))
+      .sort(function (a,b) {return a.localeCompare(b,'zh-CN',{numeric:true});});
+if (!c043InputPeriods.length || c043InputPeriods.some(function (x) {return !x;})) {
+  throw new Error('C043：没有有效的周期数据。');
+}
+if (new Set(c043InputPeriods).size !== c043InputPeriods.length) {
+  throw new Error('C043：periods 周期列表不能重复。');
+}
+for (var c043i = 0; c043i < 类别.length; c043i++) {
+  var c043Cat = String(类别[c043i]).trim();
+  var c043Period = String(季度[c043i]).trim();
+  var c043Val = Number(营收[c043i]);
+  if (!c043Cat || !c043Period || !Number.isFinite(c043Val) || c043Val < 0) {
+    throw new Error('C043：第 ' + (c043i + 1) + ' 行类别、季度或营收无效，营收须为非负有限数。');
+  }
+  if (c043InputPeriods.indexOf(c043Period) < 0) {
+    throw new Error('C043：周期「' + c043Period + '」不在 setting.periods 中，请完善周期顺序。');
+  }
+  if (!Object.prototype.hasOwnProperty.call(c043Groups, c043Cat)) {
+    c043Groups[c043Cat] = {name: c043Cat, byPeriod: Object.create(null), rows: [], total: 0};
+    c043Categories.push(c043Cat);
+  }
+  if (Object.prototype.hasOwnProperty.call(c043Groups[c043Cat].byPeriod, c043Period)) {
+    throw new Error('C043：类别「' + c043Cat + '」的周期「' + c043Period + '」重复，请确保每组每期仅一条。');
+  }
+  c043Groups[c043Cat].byPeriod[c043Period] = c043Val;
+}
+
+// 统一周期排序；每组必须包含同样的全部周期，避免误判环比和累计。
+var c043PeriodCount = c043InputPeriods.length;
+var c043SlotNames = [];
+var c043Rows = [];
+var c043MaxCumulative = 0;
+var c043GroupTotals = [];
+for (var c043g = 0; c043g < c043Categories.length; c043g++) {
+  var c043Name = c043Categories[c043g];
+  var c043Group = c043Groups[c043Name];
+  var c043Amounts = c043InputPeriods.map(function (p) {
+    if (!Object.prototype.hasOwnProperty.call(c043Group.byPeriod, p)) {
+      throw new Error('C043：类别「' + c043Name + '」缺少周期「' + p + '」。');
+    }
+    return c043Group.byPeriod[p];
+  });
+  var c043AnnualTotal = c043Amounts.reduce(function (sum, v) { return sum + v; }, 0);
+  if (!(c043AnnualTotal > 0)) { throw new Error('C043：类别「' + c043Name + '」所选周期的' + setting.metricName + '合计必须大于0。'); }
+  c043Group.total = c043AnnualTotal;
+  c043GroupTotals.push(c043AnnualTotal);
+  c043MaxCumulative = Math.max(c043MaxCumulative, c043AnnualTotal);
+  var c043Cum = 0;
+  var c043ChangeList = c043Amounts.map(function (amount, k) {
+    return k > 0 && c043Amounts[k - 1] !== 0
+      ? (amount - c043Amounts[k - 1]) / c043Amounts[k - 1] * 100 : null;
+  });
+  
+  for (var c043q = 0; c043q < c043PeriodCount; c043q++) {
+    c043SlotNames.push(c043InputPeriods[c043q]);
+    c043Cum += c043Amounts[c043q];
+    var c043Row = {
+      category: c043Name,
+      groupIndex: c043g,
+      quarter: c043InputPeriods[c043q],
+      periodIndex: c043q,
+      slotIndex: c043SlotNames.length - 1,
+      revenue: c043Amounts[c043q],
+      cumulative: c043Cum,
+      total: c043AnnualTotal,
+      qoq: c043ChangeList[c043q]
+    };
+    c043Rows.push(c043Row);
+    c043Group.rows.push(c043Row);
+  }
+  if (c043g < c043Categories.length - 1) c043SlotNames.push('');
+}
+// 纵轴最大值按数据数量级自动计算，不再固定按 20 为步长取整。
+var c043TargetMax = c043MaxCumulative * (1 + setting.maxYExtraRatio);
+var c043Magnitude = Math.pow(10, Math.floor(Math.log10(c043TargetMax)));
+var c043UnitY = c043TargetMax / c043Magnitude;
+var c043NiceY = [1,1.2,1.5,2,2.5,3,4,5,6,8,10].filter(function(x){return x>=c043UnitY;})[0] || 10;
+var c043YMax = c043NiceY * c043Magnitude;
+var c043ColorFor = function (index) {
+  var base = setting.seriesColors;
+  if (!Array.isArray(base) || base.length < 1) throw new Error('C043：请至少配置一个系列颜色。');
+  if (index < base.length) return base[index];
+  var cycle = Math.floor(index / base.length);
+  var color = base[index % base.length];
+  // 以既有基础色衍生明度，不新增未经确认的颜色体系；不再简单循环相同颜色。
+  return cycle % 2 ? c043Mix(color, '#263238', Math.min(0.15+0.06*Math.floor(cycle/2),0.34))
+    : c043Mix(color,'#FFFFFF',Math.min(0.15+0.06*Math.floor(cycle/2),0.34));
+};
+var c043Title = setting.title || (setting.periodLabel + setting.metricName + '与累计：' + c043Categories.length + ' 个' + setting.categoryLabel + '表现如何？');
+var c043Subtitle = setting.subtitle || (
+  (setting.fiscalYear ? setting.fiscalYear + ' · ' : '') +
+  c043PeriodCount + '期 · 柱体=单期' + setting.metricName +
+  ' · 阶梯=所选期累计 · 单位：' + setting.unit
+);
+var c043FooterNote = setting.noteText || (
+  '图表说明：柱体=单期' + setting.metricName + '，阶梯=所选期累计' + setting.metricName +
+  '；▲▼表示较上期增加／减少；首期无环比。'
+);
+
+// 按真实数据自动提炼最值得强调的一项结论；替换 Power BI 数据后不会沿用 Apple 文案。
+// 优先选择所有类别均环比下滑的周期（若有多个，选整体降幅更大的一期）。
+var c043Insight = {ordinary:'', emphasized:''};
+var c043WorstCommonPeriod = -1;
+var c043WorstCommonAverage = Infinity;
+for (var c043p = 1; c043p < c043PeriodCount; c043p++) {
+  var c043ThisRows = c043Categories.map(function (cat) {return c043Groups[cat].rows[c043p];});
+  if (c043ThisRows.every(function (row) {return row.qoq !== null && row.qoq < 0;})) {
+    var c043Avg = c043ThisRows.reduce(function (sum,row) {return sum + row.qoq;},0) / c043ThisRows.length;
+    if (c043Avg < c043WorstCommonAverage) {
+      c043WorstCommonAverage = c043Avg;
+      c043WorstCommonPeriod = c043p;
+    }
+  }
+}
+if (c043WorstCommonPeriod >= 0) {
+  var c043WorstDrop = c043Categories.map(function (cat) {
+    return c043Groups[cat].rows[c043WorstCommonPeriod];
+  }).reduce(function (a,b) {return a.qoq <= b.qoq ? a : b;});
+  c043Insight.ordinary = c043InputPeriods[c043WorstCommonPeriod] + '：' +
+    c043Categories.length + ' 个' + setting.categoryLabel + '的' + setting.metricName + '均较上期下降；最大降幅 ';
+  c043Insight.emphasized = '▼' + c043Format(Math.abs(c043WorstDrop.qoq),setting.growthDigits) +
+    '%（' + c043WorstDrop.category + '）';
+  c043Insight.briefOrdinary = c043InputPeriods[c043WorstCommonPeriod] + ' 全线环比下滑；最大 ';
+  c043Insight.briefEmphasized = '▼' + c043Format(Math.abs(c043WorstDrop.qoq),setting.growthDigits) + '%';
+} else {
+  var c043BiggestChange = c043Rows.filter(function (row) {return row.qoq !== null;})
+    .sort(function (a,b) {return Math.abs(b.qoq)-Math.abs(a.qoq);})[0];
+  if (c043BiggestChange) {
+    c043Insight.ordinary = '关键变化：' + c043BiggestChange.quarter + ' ' + c043BiggestChange.category + ' 较上期变化 ';
+    c043Insight.emphasized = (c043BiggestChange.qoq >= 0 ? '▲' : '▼') +
+      c043Format(Math.abs(c043BiggestChange.qoq),setting.growthDigits) + '%';
+    c043Insight.briefOrdinary = c043BiggestChange.quarter + ' 最大环比变动 ';
+    c043Insight.briefEmphasized = c043Insight.emphasized;
+  }
+}
+
+
+// ===== 4 图元：用 custom series 画柱、阶梯、节点、重要标注 =====
+// 坐标使用 ECharts 类目轴和数值轴，每次 chart.resize() 会自动重算像素位置。
+var c043Line = function (x1, y1, x2, y2, color, thickness, dashed, opacity) {
+  return {type:'line',silent:true,shape:{x1:x1,y1:y1,x2:x2,y2:y2},
+    style:{stroke:color,lineWidth:thickness||1,lineDash:dashed||null,
+      opacity: opacity == null ? 1 : opacity}};
+};
+var c043Text = function (x, y, label, color, size, align, weight, opt) {
+  var style = {
+    x:x,y:y,text:label,fill:color,fontSize:size,
+    fontFamily:'Arial, Microsoft YaHei, sans-serif',
+    fontWeight:weight||400,
+    textAlign:align||'center',align:align||'center',
+    textVerticalAlign:'middle',verticalAlign:'middle'
+  };
+  if (opt && opt.width) {
+    style.width = opt.width;
+    style.overflow = 'truncate';
+    style.ellipsis = '…';
+  }
+  return {type:'text',silent:true,style:style};
+};
+var c043SeriesData = c043Rows.map(function (row, i) {
+  return {name:row.category + ' · ' + row.quarter,
+    value:[row.slotIndex,row.revenue,row.cumulative,row.qoq === null ? 0 : row.qoq],
+    rawIndex:i};
+});
+
+var c043RenderItem = function (params, api) {
+  var row = c043Rows[params.dataIndex];
+  if (!row) return null;
+  var area = params.coordSys;
+  var band = area.width / c043SlotNames.length;
+  var compact = band < setting.minBandToShowAllValues;
+  var narrow = band < 26;
+  var center = api.coord([row.slotIndex, 0])[0];
+  var baseY = api.coord([row.slotIndex, 0])[1];
+  var barY = api.coord([row.slotIndex, row.revenue])[1];
+  var cumY = api.coord([row.slotIndex, row.cumulative])[1];
+  var barWidth = Math.min(64, band * setting.barWidthRatio);
+  var color = c043ColorFor(row.groupIndex);
+  var pale = c043Mix(color,'#FFFFFF',setting.barTopWhiteMix);
+  var group = {type:'group',children:[]};
+  var cs = group.children;
+  // 首行负责绘制顶部数据结论，不引入额外 DOM、graphic 或宽度初始化值。
+  if (params.dataIndex === 0 && setting.showInsight && c043Insight.ordinary) {
+    var useBrief = area.width < 510;
+    var prefix = useBrief ? c043Insight.briefOrdinary : c043Insight.ordinary;
+    var emphasis = useBrief ? c043Insight.briefEmphasized : c043Insight.emphasized;
+    // 避免字段名称中的大括号、竖线干扰 ECharts 富文本标记解析。
+    emphasis = String(emphasis).replace(/[{}|]/g,'');
+    prefix = String(prefix).replace(/[{}|]/g,'');
+    cs.push({type:'text',silent:true,style:{
+      x:32,y:area.y - (setting.gridTop - setting.hintTop),
+      text:'{description|' + prefix + '}{change|' + emphasis + '}',
+      width:Math.max(100,area.width + area.x - 40),overflow:'truncate',ellipsis:'…',
+      fontFamily:'Arial, Microsoft YaHei, sans-serif',
+      rich:{
+        description:{fill:setting.mutedColor,fontSize:11,fontWeight:400},
+        change:{fill:emphasis.charAt(0) === '▼' ? setting.negativeColor : setting.positiveColor,
+          fontSize:11,fontWeight:600}
+      }
+    }});
+  }
+  var barHeight = Math.max(0, baseY - barY);
+  var column = {
+    type:'rect',
+    shape:{x:center - barWidth / 2,y:barY,width:barWidth,height:barHeight,r:[3,3,0,0]},
+    style:{fill:{type:'linear',x:0,y:0,x2:0,y2:1,
+      colorStops:[{offset:0,color:pale},{offset:1,color:c043Mix(color,'#FFFFFF',setting.barBottomWhiteMix)}]},
+      stroke:c043Mix(color,'#FFFFFF',0.48),lineWidth:0.6},
+    emphasis:{style:{stroke:color,lineWidth:1.7}}
+  };
+  cs.push(column);
+
+  // 保留阶梯的真实累计高度；水平段降低线宽和不透明度，纵向跃升稍强。
+  // Q1 累计等于 Q1 季度营收，首节点与柱顶重合是数学上的必然关系。
+  if (row.periodIndex > 0) {
+    var prev = c043GroupForRow(row).rows[row.periodIndex - 1];
+    var prevX = api.coord([prev.slotIndex, 0])[0];
+    var prevY = api.coord([prev.slotIndex, prev.cumulative])[1];
+    cs.push(c043Line(prevX,prevY,center,prevY,color,
+      setting.stepHorizontalWidth,null,setting.stepHorizontalOpacity));
+    cs.push(c043Line(center,prevY,center,cumY,color,
+      setting.stepVerticalWidth,null,setting.stepVerticalOpacity));
+  }
+  cs.push({type:'circle',silent:true,
+    shape:{cx:center,cy:cumY,
+      r:row.periodIndex === c043PeriodCount - 1 ? setting.lastDotRadius : setting.dotRadius},
+    style:{fill:color,stroke:'#FFFFFF',lineWidth:1.15}});
+
+  // 重点阅读逻辑：上方标签以累计最终值为主；柱体只保留必要数值。
+  if (setting.showBarValues && (!compact || row.periodIndex === c043PeriodCount - 1)) {
+    var valueText = c043Format(row.revenue, narrow ? 0 : setting.valueDigits);
+    // Q1 柱顶与阶梯首节点重合；Q2 通常离上一期累计水平线很近：文字放入柱顶部避让。
+    var insideBar = row.periodIndex < 2;
+    cs.push(c043Text(center,insideBar ? barY + 13 : barY - 11,
+      valueText,insideBar ? setting.textColor : setting.textColor,
+      narrow ? 8 : compact ? 9 : 10, 'center', 500));
+  }
+  // 逐期环比：从第二期起，增加显示绿色▲，减少显示红色▼，零变化显示中性 0.0%。
+  // 在密集类别/柱体很短时退回 Tooltip，以防压盖；三、五类常见布局全部可展示。
+  if (setting.showQoQLabels && row.periodIndex > 0 && row.qoq !== null &&
+      band >= setting.minBandToShowQoQ && barHeight >= setting.minBarHeightToShowQoQ) {
+    var sign = row.qoq > 0 ? '▲' : row.qoq < 0 ? '▼' : '';
+    var percent = c043Format(Math.abs(row.qoq),band < 43 ? 0 : setting.growthDigits) + '%';
+    var qText = sign ? sign + (band < 48 ? '' : ' ') + percent : '0.0%';
+    var qColor = row.qoq > 0 ? setting.positiveColor : row.qoq < 0 ? setting.negativeColor : setting.mutedColor;
+    // 数值位于柱顶上方或内部第一行，环比位于柱体第二行，避免与累计节点重叠。
+    cs.push(c043Text(center,barY + (row.periodIndex===1 ? 34 : 20),qText,qColor,
+      band < 46 ? 8.4 : 10,'center',600));
+  }
+
+  // 三组标题：绘制在对应分组的中心，宽度随绘图区域自动伸缩。
+  if (row.periodIndex === 0) {
+    var groupRows = c043GroupForRow(row).rows;
+    var lastX = api.coord([groupRows[groupRows.length - 1].slotIndex,0])[0];
+    var titleX = (center + lastX) / 2;
+    var titleMax = Math.max(4,Math.min(setting.groupTitleMaxChars,Math.floor((lastX - center + band) / 13.3)));
+    cs.push(c043Text(titleX,area.y - 27,c043Short(row.category,titleMax),color,
+      band < 25 ? 10 : 12,'center',700,{width:Math.max(32,lastX - center + band * 0.8)}));
+  }
+
+  // 默认从 Q2 起，给每个累计节点标值；Q1与柱顶同值，不重复。
+  // 仅在空间很窄时收起中间节点数值，保留末期结果。
+  var showThisCumulative = setting.showCumulativeLabels &&
+    row.periodIndex >= Math.max(1,setting.cumulativeLabelStartIndex) &&
+    (band >= setting.minBandToShowCumulative ||
+      (row.periodIndex === c043PeriodCount - 1 && band >= 23));
+  if (showThisCumulative) {
+    cs.push(c043Text(center,cumY - 14,c043Format(row.cumulative,
+      band < 39 ? 0 : setting.cumulativeDigits),color,
+      band < 48 ? 9 : 10.5,'center',row.periodIndex===c043PeriodCount-1 ? 700 : 600));
+  }
+
+  // 不改变柱和阶梯的真实比例，仅用极浅分界线强化组别归属。
+  if (row.periodIndex === c043PeriodCount - 1 && row.groupIndex < c043Categories.length - 1) {
+    var separator = center + band * 0.92;
+    cs.push(c043Line(separator,area.y - 12,separator,baseY + 14,setting.gridLineColor,1));
+  }
+  return group;
+};
+var c043GroupForRow = function (row) { return c043Groups[row.category]; };
+
+// ===== 5 富文本 Tooltip（四项核心值，其余只在悬停时出现） =====
+var c043Tooltip = function (params) {
+  if (!params || params.dataIndex == null) return '';
+  var row = c043Rows[params.dataIndex];
+  if (!row) return '';
+  var base = setting.textColor, sec = setting.mutedColor;
+  var color = c043ColorFor(row.groupIndex);
+  var qoq = row.qoq === null ? '<span style="color:'+sec+'">无上期基数</span>' :
+    '<span style="font-weight:700;color:'+(row.qoq >= 0 ? setting.positiveColor : setting.negativeColor)+'">'+
+    (row.qoq >= 0 ? '▲ ' : '▼ ') + c043Format(Math.abs(row.qoq),setting.growthDigits) + '%</span>';
+  var line = function (label,value) {
+    return '<div style="display:flex;justify-content:space-between;gap:28px;padding:4px 0;">'+
+      '<span style="color:'+sec+'">'+label+'</span><span style="color:'+base+';font-weight:600">'+value+'</span></div>';
+  };
+  return '<div style="min-width:216px;max-width:292px;font-family:Arial,Microsoft YaHei,sans-serif;font-size:12px;line-height:1.5;color:'+base+'">'+
+    '<div style="font-size:13px;font-weight:700;margin-bottom:3px">'+
+    '<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:'+color+';margin-right:8px"></span>'+c043Escape(row.category)+'</div>'+
+    '<div style="color:'+sec+';margin-bottom:6px">'+
+    (setting.fiscalYear ? c043Escape(setting.fiscalYear)+' · ' : '')+c043Escape(row.quarter)+'</div>'+
+    line('本'+c043Escape(setting.periodLabel)+c043Escape(setting.metricName),c043Format(row.revenue,2)+' '+c043Escape(setting.unit))+
+    '<div style="display:flex;justify-content:space-between;gap:28px;padding:4px 0;">'+
+      '<span style="color:'+sec+'">较上'+c043Escape(setting.periodLabel)+'变化</span>'+qoq+'</div>'+
+    '<div style="border-top:1px solid '+setting.gridLineColor+';margin:8px 0 4px"></div>'+
+    line('截至本期累计'+c043Escape(setting.metricName),c043Format(row.cumulative,2)+' '+c043Escape(setting.unit))+
+    line('本期占本类别合计',c043Format(row.revenue / row.total * 100,1)+'%')+
+    line('累计占本类别合计',c043Format(row.cumulative / row.total * 100,1)+'%')+
+    '<div style="color:'+sec+';font-size:10px;margin-top:7px">以所选周期的类别合计为分母；变化率与上一期比较。</div>'+
+    '</div>';
+};
+
+// ===== 6 option：Grid 四边均使用像素值；数据随容器变化自动定位 =====
+option = {
+  backgroundColor:'transparent',
+  animation:true,
+  animationDuration:650,
+  title:[
+    {left:32,top:setting.titleTop,text:c043Title,
+      textStyle:{color:setting.textColor,fontSize:20,fontWeight:700},
+      subtext:'',itemGap:0},
+    {left:32,top:setting.subtitleTop,text:c043Subtitle,
+      textStyle:{color:setting.mutedColor,fontSize:11.5,fontWeight:400}}
+  ],
+  graphic:[
+    {type:'rect',left:32,top:17,shape:{width:20,height:4},
+      style:{fill:setting.redMarkColor},silent:true},
+    // 观察结论由 custom series 绘制：容器 resize() 时按实时绘图区宽度换行策略进行缩写。
+    {type:'text',left:32,bottom:37,
+      style:{text:setting.sourceText,fill:setting.mutedColor,fontSize:10,
+        fontFamily:'Arial, Microsoft YaHei, sans-serif'},silent:true},
+    {type:'text',left:32,bottom:21,
+      style:{text:c043FooterNote,fill:setting.mutedColor,fontSize:10,
+        fontFamily:'Arial, Microsoft YaHei, sans-serif'},silent:true}
+  ],
+  tooltip:{
+    show:true,trigger:'item',confine:true,enterable:false,
+    backgroundColor:'#FFFFFF',borderColor:'#E0E5EA',borderWidth:1,
+    padding:[12,14],extraCssText:'border-radius:8px;box-shadow:0 7px 20px rgba(38,50,56,.12);',
+    formatter:c043Tooltip
+  },
+  grid:{left:setting.gridLeft,right:setting.gridRight,top:setting.gridTop,
+    bottom:setting.gridBottom,containLabel:false},
+  xAxis:{
+    type:'category',data:c043SlotNames,boundaryGap:true,
+    axisTick:{show:false},axisLine:{show:true,lineStyle:{color:'#AEB7C1',width:1}},
+    axisLabel:{interval:0,fontSize:11,color:setting.mutedColor,margin:10,
+      formatter:function (v) {return v;}}
+  },
+  yAxis:{
+    type:'value',min:0,max:c043YMax,splitNumber:4,
+    name:setting.metricName+'（'+setting.unit+'）',
+    nameTextStyle:{fontSize:11,color:setting.mutedColor,padding:[0,0,12,-20]},
+    nameLocation:'end',nameGap:20,
+    axisLine:{show:false},axisTick:{show:false},
+    axisLabel:{color:setting.mutedColor,fontSize:10,
+      formatter:function (v) {return c043Format(v,0);}},
+    splitLine:{show:true,lineStyle:{color:setting.gridLineColor,width:1}}
+  },
+  series:[{
+    id:'c043-bars-and-steps',name:'单期'+setting.metricName+'与累计阶梯',type:'custom',
+    coordinateSystem:'cartesian2d',renderItem:c043RenderItem,
+    encode:{x:0,y:[1,2]},
+    data:c043SeriesData,
+    z:3
+  }]
+};

@@ -1,0 +1,415 @@
+﻿/*
+ * C038 | GE-McKinsey 九宫格矩阵 (GE–McKinsey Nine-Box Matrix) 
+ * 编辑环境：ECharts 官方编辑器 / ECharts for Power BI （纯 JS，不依赖 HTML、CSS、插件）
+ * 每个业务每个年度一条记录；五列分别：年份、业务名称、行业吸引力得分、竞争实力得分、业务规模。
+ * 两个得分都使用 0～100、分越高表示越好；可在 Power BI 外部用加权指标计算。
+ * 本案例仅进行九宫格定位、策略区映射和可视化，不擅自计算行业评分权重。
+ * 全部内置数据为人工模拟，不能作为真实企业经营资料引用。
+ * 横轴从左向右递增、纵轴从下向上递增，与 C037 本项目版式统一。
+ */
+
+// ───────────────────────────
+// 01. 数据：每一列均为平行一维数组，便于 Power BI 替换
+// ───────────────────────────
+var 年份 = ["2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025","2024","2025"];
+var 业务名称 = ["企业云服务","企业云服务","工业智能装备","工业智能装备","数据分析SaaS","数据分析SaaS","智能医疗设备","智能医疗设备","智能物流系统","智能物流系统","数字营销平台","数字营销平台","传统零售设备","传统零售设备","精密工业部件","精密工业部件","商用显示设备","商用显示设备","传统照明","传统照明","家用储能","家用储能","环保建筑材料","环保建筑材料"];
+var 行业吸引力得分 = [82,88,76,78,76,83,78,84,48,53,43,51,56,51,23,18,27,20,23,15,54,64,45,37];
+var 竞争实力得分 = [80,87,68,77,48,53,16,23,73,84,49,55,25,19,80,86,57,52,23,17,69,76,33,29];
+var 业务规模 = [190,230,150,185,88,118,70,92,125,156,104,110,80,76,172,183,110,98,148,135,75,105,68,66];
+
+var sourceError = '';
+var usingPowerBI = typeof dataArr !== 'undefined' && dataArr && Array.isArray(dataArr.dataObjects);
+if (usingPowerBI) {
+  if (dataArr.dataObjects.length < 5) {
+    sourceError = '请依次绑定 5 列：年份、业务名称、行业吸引力得分、竞争实力得分、业务规模。';
+  } else {
+    var fields = dataArr.dataObjects;
+    年份 = Array.from(fields[0].values || []);
+    业务名称 = Array.from(fields[1].values || []);
+    行业吸引力得分 = Array.from(fields[2].values || []);
+    竞争实力得分 = Array.from(fields[3].values || []);
+    业务规模 = Array.from(fields[4].values || []);
+  }
+}
+
+// ───────────────────────────
+// 02. 用户可修改的通用配置
+// ───────────────────────────
+var setting = {
+  title: '哪些业务值得优先投资？',
+  subtitle: 'GE–McKinsey 九宫格矩阵 · 行业吸引力 × 竞争实力 × 业务规模',
+  unit: '亿元',
+  background: 'transparent',
+  dataSourceNote: '', // Power BI 正式数据可填写确切来源；留空时显示通用来源说明
+  layout: {left: 92, right: 58, top: 174, bottom: 116}, // 均为像素值
+  score: {
+    min: 0, max: 100,
+    lowBoundary: 100 / 3, highBoundary: 200 / 3 // 固定阈值，跨年可比；允许用户调整
+  },
+  bubble: {
+    minDiameter: 16,
+    maxDiameter: 52,
+    showLabels: true,
+    labelFontSize: 11,
+    maxLabels: 30,
+    labelAvoidance: true, // 优先避让策略注记；无法避免时由 ECharts 隐藏重叠气泡标签
+    hoverScale: 1.10
+  },
+  history: {
+    show: true,
+    squareSize: 7,
+    lineOpacity: 0.78,
+    showArrow: true
+  },
+  zones: {
+    showFill: true,
+    fillOpacity: 0.075,
+    showCellLabel: true,
+    borderWidth: 1.0
+  },
+  tooltip: {show: true},
+  colors: {
+    text: '#263238',
+    secondary: '#8493A2',
+    grid: '#E5E9ED',
+    history: '#AEB7C1',
+    grow: '#239263',      // 投资增长：沿用案例统一正向色
+    selective: '#DBA047', // 选择性管理：沿用 C037 问题业务色
+    harvest: '#9DA8B2',  // 收缩回收：中性灰，不机械等同负增长
+    negative: '#D9544D'
+  }
+};
+
+// ───────────────────────────
+// 03. 基础工具与数据计算
+// ───────────────────────────
+var COLORS = setting.colors;
+var B = [setting.score.lowBoundary, setting.score.highBoundary];
+var GROUPS = [
+  {key:'grow', name:'投资增长', en:'Invest / Grow', color:COLORS.grow},
+  {key:'selective', name:'选择性管理', en:'Selectivity', color:COLORS.selective},
+  {key:'harvest', name:'收缩回收', en:'Harvest / Divest', color:COLORS.harvest}
+];
+function validNumber(v) {
+  if (typeof v === 'number') return isFinite(v) ? v : NaN;
+  var x = String(v == null ? '' : v).replace(/[,，\s]/g,'').trim();
+  return x === '' ? NaN : Number(x);
+}
+function htmlEscape(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g,function(x){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x];
+  });
+}
+function rgba(hex,a) {
+  var h=hex.replace('#','');
+  return 'rgba('+parseInt(h.slice(0,2),16)+','+parseInt(h.slice(2,4),16)+','+parseInt(h.slice(4,6),16)+','+a+')';
+}
+function niceNum(v,d) { return Number(v).toLocaleString('zh-CN',{maximumFractionDigits:d == null ? 1 : d}); }
+function comparePeriod(a,b) {
+  var x=Number(a), y=Number(b);
+  if (isFinite(x) && isFinite(y)) return x-y;
+  return String(a).localeCompare(String(b),'zh-CN',{numeric:true});
+}
+function band(v) {
+  return v >= B[1] ? 2 : v >= B[0] ? 1 : 0;
+}
+function bandLabel(b) { return ['低','中','高'][b]; }
+function strategyIndex(strength, attractiveness) {
+  var sum=band(strength)+band(attractiveness);
+  return sum >= 3 ? 0 : sum === 2 ? 1 : 2;
+}
+function cellName(strength, attractiveness) {
+  return '行业吸引力'+bandLabel(band(attractiveness))+' / 竞争实力'+bandLabel(band(strength));
+}
+function tooltipPosition(point, params, dom, rect, size) {
+  var vw = size.viewSize[0], vh = size.viewSize[1];
+  var cw = size.contentSize[0], ch = size.contentSize[1];
+  var x = point[0] + 18, y = point[1] + 15;
+  if (x + cw > vw - 10) x = point[0] - cw - 18;
+  if (y + ch > vh - 20) y = point[1] - ch - 18;
+  return [Math.max(10, Math.min(x, Math.max(10, vw - cw - 10))),
+          Math.max(10, Math.min(y, Math.max(10, vh - ch - 10)))];
+}
+function errorOption(msg) {
+  return {backgroundColor:setting.background,graphic:[
+    {type:'rect',left:40,top:20,shape:{width:20,height:4},style:{fill:COLORS.negative},silent:true},
+    {type:'text',left:43,top:35,style:{text:'GE–McKinsey 九宫格矩阵',font:'600 20px sans-serif',fill:COLORS.text},silent:true},
+    {type:'text',left:43,top:92,style:{text:msg,font:'13px sans-serif',fill:COLORS.negative},silent:true}
+  ]};
+}
+
+if (!(B[0] > setting.score.min && B[1] > B[0] && B[1] < setting.score.max)) {
+  sourceError='分区阈值配置错误：需要满足 最小值 < 低/中分界 < 中/高分界 < 最大值。';
+}
+if (!sourceError && [业务名称,行业吸引力得分,竞争实力得分,业务规模].some(function(a){return a.length !== 年份.length;})) {
+  sourceError='五个数据字段长度不一致，请检查绑定顺序。';
+}
+var businessMap=Object.create(null), periodList=[], skipped=0;
+if (!sourceError) {
+  for (var i=0;i<年份.length;i++) {
+    var period=String(年份[i]==null?'':年份[i]).trim();
+    var name=String(业务名称[i]==null?'':业务名称[i]).trim();
+    var attractiveness=validNumber(行业吸引力得分[i]);
+    var strength=validNumber(竞争实力得分[i]);
+    var size=validNumber(业务规模[i]);
+    if (!period || !name || !isFinite(attractiveness) || !isFinite(strength) || !isFinite(size) ||
+        attractiveness<setting.score.min || attractiveness>setting.score.max ||
+        strength<setting.score.min || strength>setting.score.max || size<0) {
+      skipped++;continue;
+    }
+    if (!businessMap[name]) businessMap[name]=Object.create(null);
+    if (businessMap[name][period]) {skipped++;continue;} // 重复业务-年度记录不擅自求和
+    businessMap[name][period]={year:period,name:name,a:attractiveness,s:strength,size:size};
+    if (periodList.indexOf(period)<0) periodList.push(period);
+  }
+}
+periodList.sort(comparePeriod);
+var currentPeriod=periodList.length ? periodList[periodList.length-1] : '';
+var previousPeriod=periodList.length>=2 ? periodList[periodList.length-2] : '';
+var points=[];
+if (!sourceError) {
+  Object.keys(businessMap).forEach(function(name){
+    var row=businessMap[name][currentPeriod];
+    if (!row) return;
+    row.group=strategyIndex(row.s,row.a);
+    row.prev=previousPeriod ? (businessMap[name][previousPeriod] || null) : null;
+    points.push(row);
+  });
+  if (!points.length) sourceError='没有符合要求的业务记录。得分必须在 0～100，业务规模不得为负。';
+}
+var sizeMin=points.length?Math.min.apply(null,points.map(function(v){return v.size;})):0;
+var sizeMax=points.length?Math.max.apply(null,points.map(function(v){return v.size;})):1;
+function bubbleDiameter(v) {
+  var range = sizeMax - sizeMin;
+  var frac = range > 0 ? Math.max(0,Math.min(1,(v-sizeMin)/range)) : 0.5;
+  var low=setting.bubble.minDiameter, high=setting.bubble.maxDiameter;
+  return Math.sqrt(low*low+frac*(high*high-low*low)); // 面积线性映射
+}
+
+// ───────────────────────────
+// 04. 九宫格背景、自动避让的九格策略注记
+// ───────────────────────────
+var captionByCell=[
+  ['退出评估','控制投入','选择性维护'], // 低行业吸引力：低/中/高竞争实力
+  ['收缩调整','精选机会','稳步投入'], // 中行业吸引力
+  ['谨慎布局','积极培育','重点投资']  // 高行业吸引力
+];
+var edges=[setting.score.min,B[0],B[1],setting.score.max];
+var sortedForLabel=points.slice().sort(function(a,b){return b.size-a.size;});
+var visibleNames=Object.create(null);
+sortedForLabel.slice(0,setting.bubble.maxLabels).forEach(function(v){visibleNames[v.name]=true;});
+
+// markArea 的文字与 scatter 标签是两套布局，单靠 labelLayout 不会相互避让。
+// 对九个子区逐一比较「顶/底 × 左/中/右」六种注记位置，选择离散点及其标签较远的位置。
+// 使用评分坐标做近似碰撞检测，保持与容器/画布无关，不依赖 myChart、DOM 或事件钩子。
+function chooseCellLabelPosition(xi, yi, caption) {
+  if (!setting.bubble.labelAvoidance || !points.length) return 'insideTop';
+  var x0=edges[xi], x1=edges[xi+1], y0=edges[yi], y1=edges[yi+1];
+  // 参考横纵坐标同为 0～100 的典型绘图区比例，将像素尺寸近似换算到评分空间。
+  // ECharts 的 labelLayout.hideOverlap 还会依据实际像素再做一次气泡文字避让。
+  var pxX=920/(setting.score.max-setting.score.min);
+  var pxY=510/(setting.score.max-setting.score.min);
+  var w=Math.max(15,Array.from(caption).length*11.5), h=15;
+  var pad=7;
+  var candidates=[
+    {name:'insideTop',anchor:'center',x:(x0+x1)/2,y:y1-(pad+h/2)/pxY},
+    {name:'insideTopLeft',anchor:'left',x:x0+pad/pxX,y:y1-(pad+h/2)/pxY},
+    {name:'insideTopRight',anchor:'right',x:x1-pad/pxX,y:y1-(pad+h/2)/pxY},
+    {name:'insideBottom',anchor:'center',x:(x0+x1)/2,y:y0+(pad+h/2)/pxY},
+    {name:'insideBottomLeft',anchor:'left',x:x0+pad/pxX,y:y0+(pad+h/2)/pxY},
+    {name:'insideBottomRight',anchor:'right',x:x1-pad/pxX,y:y0+(pad+h/2)/pxY}
+  ];
+  function intersects(a,b){
+    var ow=Math.min(a[2],b[2])-Math.max(a[0],b[0]);
+    var oh=Math.min(a[3],b[3])-Math.max(a[1],b[1]);
+    return Math.max(0,ow)*Math.max(0,oh);
+  }
+  var best=candidates[0], bestPenalty=Infinity;
+  candidates.forEach(function(c,index){
+    var left=c.x-(c.anchor==='center'?w/2/pxX:(c.anchor==='right'?w/pxX:0));
+    var r=[left,c.y-h/2/pxY,left+w/pxX,c.y+h/2/pxY];
+    var penalty=index*0.03; // 无冲突时仍优先顶部居中，保持原版整齐的九格标注
+    points.forEach(function(v){
+      var radius=bubbleDiameter(v.size)/2;
+      var dot=[v.s-radius/pxX,v.a-radius/pxY,v.s+radius/pxX,v.a+radius/pxY];
+      penalty+=intersects(r,dot)*32;
+      if(setting.bubble.showLabels && visibleNames[v.name]){
+        var textW=Array.from(v.name).length*11+6;
+        var nameLeft=v.s+(radius+7)/pxX;
+        var nameBox=[nameLeft,v.a-9/pxY,nameLeft+textW/pxX,v.a+9/pxY];
+        penalty+=intersects(r,nameBox)*42;
+      }
+    });
+    if(penalty<bestPenalty){bestPenalty=penalty;best=c;}
+  });
+  return best.name;
+}
+var zoneData=[];
+for (var yi=0;yi<3;yi++) {
+  for (var xi=0;xi<3;xi++) {
+    var groupId=strategyIndex((edges[xi]+edges[xi+1])/2,(edges[yi]+edges[yi+1])/2);
+    var zone=GROUPS[groupId];
+    zoneData.push([
+      {name:captionByCell[yi][xi],xAxis:edges[xi],yAxis:edges[yi],
+       itemStyle:{color:setting.zones.showFill ? rgba(zone.color,setting.zones.fillOpacity):'transparent',
+                  borderColor:COLORS.grid,borderWidth:setting.zones.borderWidth},
+       label:{show:setting.zones.showCellLabel,color:rgba(zone.color,0.88),fontWeight:600,fontSize:11,position:chooseCellLabelPosition(xi,yi,captionByCell[yi][xi]),distance:7}},
+      {xAxis:edges[xi+1],yAxis:edges[yi+1]}
+    ]);
+  }
+}
+var markLines = [
+  {xAxis:B[0]}, {xAxis:B[1]}, {yAxis:B[0]}, {yAxis:B[1]}
+];
+var baseline={
+  name:'九宫格参考',type:'line',data:[],silent:true,symbol:'none',
+  lineStyle:{opacity:0},z:0,tooltip:{show:false},
+  markArea:{silent:true,animation:false,label:{show:false},data:zoneData},
+  markLine:{silent:true,symbol:'none',label:{show:false},lineStyle:{color:'#CDD6DE',width:1.1,type:'solid'},data:markLines}
+};
+
+// ───────────────────────────
+// 05. 客户/业务散点及历史迁移；图例同名控制气泡与轨迹
+// ───────────────────────────
+var series=[baseline], countByGroup=[0,0,0];
+points.forEach(function(v){countByGroup[v.group]++;});
+GROUPS.forEach(function(g,gi){
+  var groupPoints=points.filter(function(v){return v.group===gi;});
+  series.push({
+    id:'ge-current-'+g.key,name:g.name,type:'scatter',z:6,
+    data:groupPoints.map(function(v){
+      return {name:v.name,value:[v.s,v.a,v.size],meta:v,
+              symbolSize:bubbleDiameter(v.size)};
+    }),
+    symbol:'circle',
+    symbolSize:function(value,params){return params.data.symbolSize;},
+    itemStyle:{color:g.color,opacity:0.9,borderColor:'#FFFFFF',borderWidth:1.5,shadowBlur:6,shadowColor:'rgba(38,50,56,0.12)'},
+    emphasis:{focus:'none',scale:setting.bubble.hoverScale,
+              itemStyle:{opacity:1,borderColor:COLORS.text,borderWidth:1.4}},
+    label:{show:setting.bubble.showLabels,position:'right',distance:7,fontSize:setting.bubble.labelFontSize,
+           color:COLORS.text,formatter:function(p){return visibleNames[p.name]?p.name:'';}},
+    labelLayout:{hideOverlap:true,moveOverlap:'shiftY'},
+    tooltip:{show:true}
+  });
+});
+
+// 历史图层排在 scatter 后面，但 z 值更低，保留图例优先采用彩色气泡的标记。
+if (setting.history.show && previousPeriod) {
+  GROUPS.forEach(function(g,gi){
+    var moves=points.filter(function(v){return v.group===gi&&!!v.prev;});
+    if (!moves.length) return;
+    series.push({
+      id:'ge-history-line-'+g.key,name:g.name,type:'lines',coordinateSystem:'cartesian2d',z:3,silent:true,
+      data:moves.map(function(v){return {coords:[[v.prev.s,v.prev.a],[v.s,v.a]]};}),
+      lineStyle:{color:COLORS.history,opacity:setting.history.lineOpacity,width:1.25},
+      symbol:setting.history.showArrow?['none','arrow']:['none','none'],symbolSize:7,
+      tooltip:{show:false},animation:false
+    });
+    // 历史位置的灰方块，随当前策略图例同步显隐。
+    series.push({
+      id:'ge-history-point-'+g.key,name:g.name,type:'scatter',z:4,silent:true,symbol:'rect',symbolSize:setting.history.squareSize,
+      data:moves.map(function(v){return {name:v.name,value:[v.prev.s,v.prev.a]};}),
+      itemStyle:{color:COLORS.history,opacity:0.9},label:{show:false},tooltip:{show:false}
+    });
+  });
+}
+
+function tooltipHtml(p){
+  if (!p.data || !p.data.meta) return '';
+  var v=p.data.meta, g=GROUPS[v.group];
+  var hist=v.prev ? ('<div style="border-top:1px solid #E5E9ED;margin-top:8px;padding-top:8px;color:#8493A2">'+
+     htmlEscape(v.prev.year)+'年位置：竞争实力 '+niceNum(v.prev.s,1)+' / 吸引力 '+niceNum(v.prev.a,1)+'</div>') : '';
+  return '<div style="min-width:245px;color:#263238;font-size:12px;line-height:1.85">'+
+    '<div style="font-weight:700;font-size:14px">'+htmlEscape(v.name)+'</div>'+
+    '<div style="color:#8493A2">'+htmlEscape(v.year)+'年 · GE–McKinsey 九宫格</div>'+
+    '<div style="border-top:1px solid #E5E9ED;margin:7px 0"></div>'+
+    '<div><span style="color:'+g.color+';font-weight:700">● '+g.name+'</span> · '+htmlEscape(g.en)+'</div>'+
+    '<div style="color:#8493A2">'+htmlEscape(cellName(v.s,v.a))+'</div>'+
+    '<div>行业吸引力：<b>'+niceNum(v.a,1)+'</b> / 100</div>'+
+    '<div>业务竞争实力：<b>'+niceNum(v.s,1)+'</b> / 100</div>'+
+    '<div>业务规模：<b>'+niceNum(v.size,1)+'</b> '+htmlEscape(setting.unit)+'</div>'+hist+
+    '<div style="color:#8493A2;font-size:10px;padding-top:4px">策略分区为模型示意，须结合财务与行业判断</div></div>';
+}
+
+// 辅助视觉编码：使用真实的 ECharts graphic 图形，而非字体符号「▪」，
+// 图形与绘图区的历史方块/箭头同形同色；年份始终来自数据数组。
+function visualLegendGraphic(){
+  var children=[], x=0, cy=8;
+  var ink=COLORS.secondary;
+  function textWidth(s){
+    return Array.from(String(s)).reduce(function(sum,ch){return sum+(ch.charCodeAt(0)>255?10.5:6.1);},0);
+  }
+  function addLabel(s,space){
+    children.push({type:'text',silent:true,style:{x:x,y:cy,text:s,font:'10px sans-serif',fill:ink,verticalAlign:'middle'}});
+    x+=textWidth(s)+(space==null?24:space);
+  }
+  GROUPS.forEach(function(g,i){
+    children.push({type:'circle',silent:true,shape:{cx:x+4+i*7,cy:cy,r:3.3},style:{fill:g.color}});
+  });
+  x+=29;
+  addLabel(currentPeriod+'年业务（颜色=策略、大小≈规模）',28);
+  var hasMoves=setting.history.show && !!previousPeriod && points.some(function(v){return !!v.prev;});
+  if(hasMoves){
+    children.push({type:'rect',silent:true,shape:{x:x,y:cy-4,width:8,height:8},style:{fill:COLORS.history}});
+    x+=17;
+    addLabel(previousPeriod+'年位置',26);
+    children.push({type:'line',silent:true,shape:{x1:x,y1:cy,x2:x+24,y2:cy},style:{stroke:COLORS.history,lineWidth:1.5}});
+    if(setting.history.showArrow){
+      children.push({type:'polygon',silent:true,shape:{points:[[x+26,cy],[x+19,cy-4],[x+19,cy+4]]},style:{fill:COLORS.history}});
+    }
+    x+=36;
+    addLabel(previousPeriod+'—'+currentPeriod+'年迁移方向',0);
+  }
+  return {id:'c038-visual-legend',type:'group',left:'center',top:139,silent:true,children:children};
+}
+
+// ───────────────────────────
+// 06. 输出 option（ECharts 官方 JS 编辑器格式）
+// ───────────────────────────
+if (sourceError) {
+  option = errorOption(sourceError);
+} else {
+  var sourceText=setting.dataSourceNote || (usingPowerBI
+    ? '数据来源：Power BI 当前字段数据（请在正式发布时注明真实来源）'
+    : '数据来源：人工合成模拟数据（非真实企业资料）');
+  if (!/^数据来源[：:]/.test(sourceText)) sourceText='数据来源：'+sourceText;
+  var footnote='图表说明：横轴=竞争实力，纵轴=行业吸引力（均为0–100分）；高/中/低分界为 '+
+    niceNum(B[0],1)+'、'+niceNum(B[1],1)+' 分；颜色=策略，气泡面积≈业务规模；投资建议仅供分析参考。';
+  if (skipped) footnote+=' 忽略无效/重复记录 '+skipped+' 条。';
+  option = {
+    backgroundColor:setting.background,
+    animationDuration:680,
+    color:GROUPS.map(function(g){return g.color;}),
+    grid:{left:setting.layout.left,right:setting.layout.right,top:setting.layout.top,bottom:setting.layout.bottom,containLabel:false},
+    xAxis:{type:'value',name:'业务竞争实力（分）',nameLocation:'middle',nameGap:36,
+      min:setting.score.min,max:setting.score.max,splitNumber:5,
+      axisLine:{lineStyle:{color:'#B8C2CD'}},axisTick:{show:false},
+      axisLabel:{color:COLORS.secondary,fontSize:11,formatter:function(v){return String(Math.round(v));}},
+      splitLine:{show:false},nameTextStyle:{color:COLORS.text,fontSize:12}},
+    yAxis:{type:'value',name:'行业吸引力（分）',nameLocation:'middle',nameGap:45,
+      min:setting.score.min,max:setting.score.max,splitNumber:5,
+      axisLine:{lineStyle:{color:'#B8C2CD'}},axisTick:{show:false},
+      axisLabel:{color:COLORS.secondary,fontSize:11,formatter:function(v){return String(Math.round(v));}},
+      splitLine:{show:false},nameTextStyle:{color:COLORS.text,fontSize:12}},
+    legend:{top:108,left:'center',selectedMode:true,itemWidth:9,itemHeight:9,icon:'circle',itemGap:28,
+      data:GROUPS.map(function(g){return {name:g.name,icon:'circle',itemStyle:{color:g.color,borderColor:g.color,borderWidth:0}};}),
+      inactiveColor:'#C9D0D6',inactiveBorderColor:'#C9D0D6',
+      textStyle:{color:COLORS.text,fontSize:11},
+      formatter:function(name){var i=GROUPS.findIndex(function(g){return g.name===name;});
+        return name+'  '+(i<0?0:countByGroup[i]);}},
+    tooltip:{trigger:'item',confine:true,enterable:false,
+      backgroundColor:'#FFFFFF',borderWidth:1,borderColor:'#E5E9ED',padding:[10,13],
+      textStyle:{color:COLORS.text,fontSize:12},extraCssText:'box-shadow:0 4px 18px rgba(38,50,56,.12);border-radius:5px;',
+      position:tooltipPosition,formatter:tooltipHtml},
+    graphic:[
+      {type:'rect',left:42,top:19,shape:{width:20,height:4},style:{fill:COLORS.negative},silent:true},
+      {type:'text',left:45,top:37,style:{text:setting.title,fill:COLORS.text,font:'700 20px sans-serif'},silent:true},
+      {type:'text',left:45,top:70,style:{text:setting.subtitle+'  |  '+currentPeriod+'年  |  共 '+points.length+' 项业务',
+        fill:COLORS.secondary,font:'12px sans-serif'},silent:true},
+      visualLegendGraphic(),
+      {type:'text',left:43,bottom:44,style:{text:sourceText,fill:COLORS.secondary,font:'10px sans-serif'},silent:true},
+      {type:'text',left:43,bottom:26,style:{text:footnote,fill:COLORS.secondary,font:'10px sans-serif'},silent:true}
+    ],
+    series:series
+  };
+}
