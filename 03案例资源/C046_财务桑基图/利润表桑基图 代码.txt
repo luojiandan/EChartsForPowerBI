@@ -1,0 +1,283 @@
+﻿// ECharts for Power BI | 财务利润表桑基图（通用模板）
+// 示例：Apple FY2026 Q3，2026-06-27 截止的单个季度
+// 来源：Apple Inc. Form 10-Q / SEC
+// https://www.sec.gov/Archives/edgar/data/320193/000032019326000020/aapl-20260627.htm
+// 直接复制全部代码到 https://echarts.apache.org/examples/zh/editor.html 运行
+
+// ================= 1. 用户设置（集中修改） =================
+var setting = {
+  title: '苹果一个季度营收 1,094 亿美元，最后赚了多少？',
+  subtitle: 'Apple Inc. · FY2026 Q3（截至 2026-06-27）· 利润表桑基图 · 单位：亿美元',
+  source: '数据来源：Apple Inc. FY2026 Q3 Form 10-Q（美国 SEC）',
+  description: '图表说明：当季数据；流量宽度代表金额。灰色为收入，红色为成本/费用，绿色为利润。其他净收益计入税前利润；该图展示公司整体利润形成过程，不代表各产品线利润归因。',
+  inputUnit: '百万美元',
+  displayUnit: '亿美元',
+  divisor: 100,              // 百万美元 → 亿美元
+  decimals: 1,
+  showKpi: true,
+  showNodeLabels: true,
+  nodeWidth: 13,
+  nodeGap: 19,
+  layoutIterations: 32,
+  layout: { left: 155, right: 148, top: 167, bottom: 92 }, // 全部像素
+  names: {
+    revenue: '营业收入',
+    gross: '毛利润',
+    operating: '营业利润',
+    pretax: '税前利润',
+    net: '净利润',
+    otherGain: '其他净收益',
+    otherLoss: '其他净支出'
+  },
+  colors: {
+    positive: '#239263',
+    negative: '#D9544D',
+    normal: '#BFC6CE',
+    secondary: '#D9DEE3',
+    reference: '#AEB7C1',
+    dark: '#263238',
+    muted: '#8493A2',
+    line: '#E5E9ED',
+    background: 'transparent'
+  }
+};
+
+// ================= 2. 原始输入数据：一列一个一维数组 =================
+// 三个数组同索引对应同一条报表科目；金额均为“百万美元”。
+// 类型：收入 / 成本 / 费用 / 其他损益 / 所得税。
+// 其他损益使用有符号金额：净收益为正、净支出为负。
+var accountNames = [
+  'iPhone', 'Mac', 'iPad', '可穿戴、家居与配件', '服务',
+  '产品销售成本', '服务销售成本',
+  '研发费用', '销售及管理费用',
+  '其他净收益', '所得税费用'
+];
+var accountTypes = [
+  '收入', '收入', '收入', '收入', '收入',
+  '成本', '成本',
+  '费用', '费用',
+  '其他损益', '所得税'
+];
+var accountValues = [
+  54252, 10352, 6191, 7883, 30739,
+  47153, 7494,
+  11729, 7346,
+  572, 6478
+];
+
+// ================= 3. 财务勾稽与通用绘图逻辑 =================
+var C = setting.colors;
+var group = { '收入': [], '成本': [], '费用': [], '其他损益': [], '所得税': [] };
+if (accountNames.length !== accountTypes.length || accountTypes.length !== accountValues.length) {
+  throw new Error('原始数据的三个数组长度必须一致');
+}
+for (var i = 0; i < accountNames.length; i++) {
+  var t = accountTypes[i];
+  var v = Number(accountValues[i]);
+  if (!group[t] || !Number.isFinite(v)) throw new Error('数据类型或数值错误：第 ' + (i + 1) + ' 行');
+  if (t !== '其他损益' && v < 0) throw new Error('成本、费用、收入及所得税需填非负数');
+  group[t].push({ label: String(accountNames[i]), value: v, index: i });
+}
+function sum(arr) { return arr.reduce(function (s, e) { return s + e.value; }, 0); }
+function fmt(n) {
+  return (n / setting.divisor).toLocaleString('en-US', {
+    minimumFractionDigits: setting.decimals,
+    maximumFractionDigits: setting.decimals
+  });
+}
+function pct(n, d) { return d ? (n / d * 100).toFixed(1) + '%' : '—'; }
+function safe(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+var revenue = sum(group['收入']);
+var cost = sum(group['成本']);
+var expense = sum(group['费用']);
+var other = sum(group['其他损益']);
+var tax = sum(group['所得税']);
+var gross = revenue - cost;
+var operating = gross - expense;
+var pretax = operating + other;
+var net = pretax - tax;
+if (revenue <= 0 || gross < 0 || operating < 0 || pretax < 0 || net < 0) {
+  throw new Error('当前模板适用于各层级利润非负的报表；存在亏损时应使用负值专用结构');
+}
+
+var nodes = [];
+var links = [];
+var nodeById = {};
+function node(id, label, value, color, position, depth) {
+  var d = {
+    name: id,
+    displayName: label,
+    value: value,
+    depth: depth,
+    itemStyle: { color: color, borderWidth: 0 },
+    label: {
+      show: setting.showNodeLabels,
+      position: position || 'right',
+      distance: 7,
+      align: position === 'left' ? 'right' : 'left',
+      formatter: function (p) {
+        return '{nm|' + p.data.displayName + '}\n{val|' + fmt(p.data.value) + '}';
+      }
+    }
+  };
+  nodes.push(d);
+  nodeById[id] = d;
+}
+function edge(source, target, value) {
+  if (value > 0) links.push({ source: source, target: target, value: value });
+}
+var ID = { revenue: '@rev', gross: '@gross', op: '@op', pretax: '@pretax', net: '@net' };
+
+// 左侧：各业务收入进入营业收入。
+group['收入'].forEach(function (d) {
+  var id = 'income#' + d.index;
+  node(id, d.label, d.value, C.normal, 'left', 0);
+  edge(id, ID.revenue, d.value);
+});
+node(ID.revenue, setting.names.revenue, revenue, C.dark, 'right', 1);
+
+// 由营业收入分流：毛利润与各类销售成本。
+node(ID.gross, setting.names.gross, gross, C.positive, 'right', 2);
+edge(ID.revenue, ID.gross, gross);
+group['成本'].forEach(function (d) {
+  var id = 'cost#' + d.index;
+  node(id, d.label, d.value, C.negative, 'right', 2);
+  edge(ID.revenue, id, d.value);
+});
+
+// 从毛利润中扣除营业费用，剩余营业利润。
+node(ID.op, setting.names.operating, operating, C.positive, 'right', 3);
+edge(ID.gross, ID.op, operating);
+group['费用'].forEach(function (d) {
+  var id = 'expense#' + d.index;
+  node(id, d.label, d.value, C.negative, 'right', 3);
+  edge(ID.gross, id, d.value);
+});
+
+// 其他损益：正值作为补充收益汇入税前利润；负值由营业利润分流扣除。
+node(ID.pretax, setting.names.pretax, pretax, C.positive, 'right', 4);
+group['其他损益'].forEach(function (d) {
+  if (d.value > 0) {
+    var id = 'gain#' + d.index;
+    node(id, d.label, d.value, C.positive, 'left', 3);
+    edge(id, ID.pretax, d.value);
+  } else if (d.value < 0) {
+    var lossId = 'loss#' + d.index;
+    node(lossId, d.label, -d.value, C.negative, 'right', 4);
+    edge(ID.op, lossId, -d.value);
+  }
+});
+var otherLossTotal = group['其他损益'].reduce(function (s, d) { return s + Math.min(0, d.value); }, 0);
+edge(ID.op, ID.pretax, operating + otherLossTotal);
+
+// 税前利润流向最终净利润与所得税。
+node(ID.net, setting.names.net, net, C.positive, 'right', 5);
+edge(ID.pretax, ID.net, net);
+group['所得税'].forEach(function (d) {
+  var id = 'tax#' + d.index;
+  node(id, d.label, d.value, C.negative, 'right', 5);
+  edge(ID.pretax, id, d.value);
+});
+
+// 简单金额核验：每个中间节点的流入值应等于流出值。
+[ID.revenue, ID.gross, ID.op, ID.pretax].forEach(function (id) {
+  var a = links.filter(function (e) { return e.target === id; }).reduce(function (s, e) { return s + e.value; }, 0);
+  var b = links.filter(function (e) { return e.source === id; }).reduce(function (s, e) { return s + e.value; }, 0);
+  if (Math.abs(a - b) > 0.00001) throw new Error('节点收支不平：' + nodeById[id].displayName);
+});
+
+// ================= 4. ECharts 配置 =================
+var graphics = [
+  { type: 'rect', left: 28, top: 26, silent: true,
+    shape: { width: 20, height: 4 }, style: { fill: C.negative } },
+  { type: 'text', left: 28, top: 43, silent: true,
+    style: { text: setting.title, font: '600 21px sans-serif', fill: C.dark } },
+  { type: 'text', left: 28, top: 78, silent: true,
+    style: { text: setting.subtitle, font: '12px sans-serif', fill: C.muted } },
+  { type: 'rect', left: 28, top: 106, silent: true,
+    shape: { width: 1165, height: 1 }, style: { fill: C.line } },
+  { type: 'text', left: 28, bottom: 38, silent: true,
+    style: { text: setting.source, font: '10px sans-serif', fill: C.muted } },
+  { type: 'text', left: 28, bottom: 20, silent: true,
+    style: { text: setting.description, font: '10px sans-serif', fill: C.muted } }
+];
+if (setting.showKpi) {
+  [
+    { x: 28, name: setting.names.revenue, value: revenue, color: C.dark },
+    { x: 270, name: '毛利率', value: pct(gross, revenue), color: C.positive, isPct: true },
+    { x: 510, name: setting.names.net, value: net, color: C.positive },
+    { x: 750, name: '净利率', value: pct(net, revenue), color: C.positive, isPct: true }
+  ].forEach(function (d) {
+    graphics.push({ type: 'text', left: d.x, top: 117, silent: true,
+      style: { text: d.name, font: '11px sans-serif', fill: C.muted } });
+    graphics.push({ type: 'text', left: d.x, top: 135, silent: true,
+      style: { text: d.isPct ? d.value : fmt(d.value) + ' ' + setting.displayUnit,
+        font: '600 16px sans-serif', fill: d.color } });
+  });
+}
+
+option = {
+  backgroundColor: C.background,
+  animationDuration: 700,
+  animationEasing: 'cubicOut',
+  graphic: graphics,
+  tooltip: {
+    trigger: 'item',
+    confine: true,
+    backgroundColor: '#FFFFFF',
+    borderColor: C.line,
+    borderWidth: 1,
+    padding: [11, 14],
+    textStyle: { color: C.dark, fontSize: 12 },
+    extraCssText: 'border-radius:5px;box-shadow:0 3px 14px rgba(38,50,56,.09);',
+    formatter: function (p) {
+      var isEdge = p.dataType === 'edge';
+      var title = isEdge
+        ? nodeById[p.data.source].displayName + ' → ' + nodeById[p.data.target].displayName
+        : p.data.displayName;
+      var value = p.data.value;
+      return '<div style="font-weight:600;color:' + C.dark + ';margin-bottom:8px;">' + safe(title) + '</div>' +
+        '<div style="font-size:19px;font-weight:700;color:' + C.dark + ';">' + fmt(value) +
+        ' <span style="font-size:11px;font-weight:400;color:' + C.muted + ';">' + safe(setting.displayUnit) + '</span></div>' +
+        '<div style="color:' + C.muted + ';font-size:11px;margin-top:6px;">相当于营业收入的 ' + pct(value, revenue) + '</div>';
+    }
+  },
+  series: [{
+    type: 'sankey',
+    left: setting.layout.left,
+    right: setting.layout.right,
+    top: setting.layout.top,
+    bottom: setting.layout.bottom,
+    nodeAlign: 'left',
+    orient: 'horizontal',
+    nodeWidth: setting.nodeWidth,
+    nodeGap: setting.nodeGap,
+    layoutIterations: setting.layoutIterations,
+    draggable: false,
+    data: nodes,
+    links: links,
+    itemStyle: { borderWidth: 0 },
+    lineStyle: { color: 'gradient', opacity: 0.40, curveness: 0.50 },
+    label: {
+      color: C.dark,
+      fontFamily: 'sans-serif',
+      rich: {
+        nm: { color: C.dark, fontSize: 11, fontWeight: 600, lineHeight: 16 },
+        val: { color: C.muted, fontSize: 10, lineHeight: 15 }
+      }
+    },
+    emphasis: {
+      focus: 'adjacency',
+      itemStyle: { opacity: 1 },
+      lineStyle: { opacity: 0.82 }
+    },
+    blur: {
+      itemStyle: { opacity: 0.28 },
+      lineStyle: { opacity: 0.14 },
+      label: { opacity: 0.42 }
+    }
+  }]
+};

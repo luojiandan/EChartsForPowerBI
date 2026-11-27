@@ -1,0 +1,496 @@
+﻿// ECharts for Power BI | 资产负债表桑基图（自适应画布版 V2）
+// 示例：Apple Inc. FY2026 Q3，资产负债表日 2026-06-27
+// 数据来源：Apple Inc. Form 10-Q，Condensed Consolidated Balance Sheets（第 3 页）
+// https://www.sec.gov/Archives/edgar/data/320193/000032019326000020/aapl-20260627.htm
+// 使用方式：全部复制到 ECharts 官方编辑器的 JS 面板，直接运行。
+// 响应式：使用 ECharts 原生 media，resize 时自动适配，无须引入 DOM / HTML / 事件监听。
+// 说明：这是期末资产负债“存量结构及会计勾稽”示意，不代表资金实际流动。
+
+// ======================= 1. 用户配置 =======================
+var setting = {
+  title: '苹果总资产 3,833 亿美元，负债和股东权益各占多少？',
+  subtitle: 'Apple Inc. · FY2026 Q3（截至 2026-06-27）· 资产负债表桑基图 · 单位：亿美元',
+  source: '数据来源：Apple Inc. FY2026 Q3 Form 10-Q（美国 SEC，第 3 页）',
+  description: '图表说明：期末存量结构，非资金实际流动；灰色为资产、红色为负债、绿色为股东权益（并非风险评级）。负的其他综合损失在权益明细中按净额展示。',
+  inputUnit: '百万美元',
+  displayUnit: '亿美元',
+  divisor: 100,                    // 百万美元 → 亿美元
+  decimals: 1,
+  showKpi: true,
+  showNodeLabels: true,
+  nodeWidth: 13,
+  nodeGap: 23,
+  responsive: {
+    left: '18.5%',         // 在 1200 px 画布下等于原版 222 px
+    right: '18.25%',       // 在 1200 px 画布下等于原版 219 px
+    top: 180,             // 常规高度：保留顶部标题和 KPI
+    bottom: 106,          // 常规高度：保留底部来源和说明
+    referenceHeight: 514, // 800px 高画布下原始 Sankey 绘图区 514 px
+    referenceGap: 23,     // 基准物理 nodeGap
+    compactTop: 150,      // 中低高度画布
+    compactBottom: 66,
+    shortTop: 146,        // 低高度画布
+    shortBottom: 46
+  },
+  // 使用手动 localY 控制垂直分组；节点顺序与连线顺序一致。
+  // 曲线仍由 Sankey 原生 Bezier 路径绘制，不依赖布局迭代产生弯曲。
+  layoutIterations: 0,
+  layout: { left: 222, right: 219, top: 180, height: 514 }, // 像素；示例画布高度 800px
+  names: {
+    currentAsset: '流动资产',
+    nonCurrentAsset: '非流动资产',
+    totalAsset: '资产总额',
+    currentLiability: '流动负债',
+    nonCurrentLiability: '非流动负债',
+    totalEquity: '股东权益',
+    equityNet: '其他权益净额'
+  },
+  colors: {
+    positive: '#239263',          // 权益：绿色
+    negative: '#D9544D',          // 负债：红色；并非负债下降、风险评级
+    normal: '#BFC6CE',            // 资产明细：中性灰
+    secondary: '#D9DEE3',         // 辅助灰
+    reference: '#AEB7C1',         // 次要资产节点
+    dark: '#263238',              // 资产总额
+    muted: '#8493A2',
+    line: '#E5E9ED',
+    background: 'transparent'
+  }
+};
+
+// ======================= 2. 原始数据（每字段一维数组） =======================
+// 三个数组同一索引对应同一项，均采用报表披露的“百万美元”原值。
+// 类型限定：流动资产 / 非流动资产 / 流动负债 / 非流动负债 / 股东权益。
+// 股东权益中允许负数；例如苹果累计其他综合损失为 -4,508 百万美元。
+// 替换为 Power BI 数据时，只需替换以下三个数组，及上方 setting。
+var accountNames = [
+  '现金及现金等价物', '流动有价证券', '应收账款（净额）',
+  '供应商非贸易应收款', '存货', '其他流动资产',
+  '非流动有价证券', '不动产、厂房及设备净额', '无形资产（净额）', '其他非流动资产',
+  '应付账款', '其他流动负债', '递延收入', '商业票据', '一年内到期长期债务',
+  '非流动长期债务', '其他非流动负债',
+  '股本及资本公积', '留存收益', '累计其他综合损失'
+];
+var accountTypes = [
+  '流动资产', '流动资产', '流动资产', '流动资产', '流动资产', '流动资产',
+  '非流动资产', '非流动资产', '非流动资产', '非流动资产',
+  '流动负债', '流动负债', '流动负债', '流动负债', '流动负债',
+  '非流动负债', '非流动负债',
+  '股东权益', '股东权益', '股东权益'
+];
+var accountValues = [
+  39544, 22855, 31398, 27509, 11092, 17420,
+  84118, 51431, 20342, 77557,
+  64525, 62259, 9538, 1997, 11007,
+  71340, 55080,
+  100702, 11326, -4508
+];
+
+// ======================= 3. 计算与校验 =======================
+var C = setting.colors;
+var TYPES = ['流动资产', '非流动资产', '流动负债', '非流动负债', '股东权益'];
+var group = {};
+TYPES.forEach(function (t) { group[t] = []; });
+if (accountNames.length !== accountTypes.length || accountTypes.length !== accountValues.length) {
+  throw new Error('accountNames、accountTypes、accountValues 数组长度不一致');
+}
+accountNames.forEach(function (label, i) {
+  var t = accountTypes[i];
+  var v = Number(accountValues[i]);
+  if (!group[t] || !Number.isFinite(v)) throw new Error('分类或金额不合法：第 ' + (i + 1) + ' 行');
+  if (t !== '股东权益' && v < 0) throw new Error('资产/负债明细应非负；股东权益明细可为负数');
+  if (String(label).trim() === '') throw new Error('科目名称不能为空：第 ' + (i + 1) + ' 行');
+  group[t].push({ name: String(label), value: v, index: i });
+});
+function sum(data) { return data.reduce(function (s, v) { return s + v.value; }, 0); }
+function fmt(n) {
+  // 使用十进制四舍五入，避免 645.25 等金额因浮点格式化显示为 645.2。
+  var factor = Math.pow(10, setting.decimals);
+  var scaled = Number(n) / setting.divisor * factor;
+  var rounded = Math.sign(scaled) * Math.round(Math.abs(scaled) + 1e-10) / factor;
+  return rounded.toLocaleString('en-US', {
+    minimumFractionDigits: setting.decimals,
+    maximumFractionDigits: setting.decimals
+  });
+}
+function pct(a, b) { return b ? (a / b * 100).toFixed(1) + '%' : '—'; }
+function htmlSafe(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+var ca = sum(group['流动资产']);
+var na = sum(group['非流动资产']);
+var cl = sum(group['流动负债']);
+var nl = sum(group['非流动负债']);
+var eq = sum(group['股东权益']);
+var totalAsset = ca + na;
+var totalLiability = cl + nl;
+if (totalAsset <= 0 || ca < 0 || na < 0 || cl < 0 || nl < 0 || eq < 0) {
+  throw new Error('模板要求资产、负债及净权益非负；净权益为负的企业需改用专门的负权益结构');
+}
+if (Math.abs(totalAsset - totalLiability - eq) > 0.00001) {
+  throw new Error('资产负债表不平衡：总资产(' + totalAsset + ') ≠ 总负债(' + totalLiability + ') + 股东权益(' + eq + ')');
+}
+
+// ======================= 4. 桑基图：左资产 → 总资产 → 右负债与权益 =======================
+var nodes = [];
+var links = [];
+var nodeIndex = {};
+function addNode(id, label, value, color, position, depth, extra) {
+  var n = {
+    name: id,
+    displayName: label,
+    value: value,
+    depth: depth,
+    itemStyle: { color: color, borderWidth: 0 },
+    label: {
+      show: setting.showNodeLabels,
+      position: position || 'right',
+      distance: 7,
+      align: position === 'left' ? 'right' : 'left',
+      formatter: function (p) {
+        return '{nm|' + p.data.displayName + '}\n{val|' + fmt(p.data.value) + '}';
+      }
+    }
+  };
+  if (extra) Object.keys(extra).forEach(function (key) { n[key] = extra[key]; });
+  nodes.push(n);
+  nodeIndex[id] = n;
+}
+function addLink(source, target, value) {
+  if (value > 0) links.push({ source: source, target: target, value: value });
+}
+var ID = { ca: '@current-assets', na: '@non-current-assets',
+  assets: '@total-assets', cl: '@current-liabilities',
+  nl: '@non-current-liabilities', equity: '@equity' };
+
+// 左侧科目：资产明细 → 流动/非流动资产 → 资产总额。
+[
+  { type: '流动资产', total: ID.ca, label: setting.names.currentAsset, color: C.normal },
+  { type: '非流动资产', total: ID.na, label: setting.names.nonCurrentAsset, color: C.reference }
+].forEach(function (g) {
+  group[g.type].forEach(function (d) {
+    var id = 'asset#' + d.index;
+    addNode(id, d.name, d.value, g.color, 'left', 0);
+    addLink(id, g.total, d.value);
+  });
+  addNode(g.total, g.label, sum(group[g.type]), g.color, 'right', 1);
+  addLink(g.total, ID.assets, sum(group[g.type]));
+});
+addNode(ID.assets, setting.names.totalAsset, totalAsset, C.dark, 'right', 2);
+
+// 右侧分类：资产总额 = 流动负债 + 非流动负债 + 股东权益。
+[
+  { type: '流动负债', id: ID.cl, label: setting.names.currentLiability },
+  { type: '非流动负债', id: ID.nl, label: setting.names.nonCurrentLiability }
+].forEach(function (g) {
+  var subtotal = sum(group[g.type]);
+  addNode(g.id, g.label, subtotal, C.negative, 'right', 3);
+  addLink(ID.assets, g.id, subtotal);
+  group[g.type].forEach(function (d) {
+    var id = 'liability#' + d.index;
+    addNode(id, d.name, d.value, C.negative, 'right', 4);
+    addLink(g.id, id, d.value);
+  });
+});
+addNode(ID.equity, setting.names.totalEquity, eq, C.positive, 'right', 3);
+addLink(ID.assets, ID.equity, eq);
+
+// 股东权益中有负科目（例如累计其他综合损失），不可将其画成负宽度流线。
+// 正确做法：保留全部原始有符号科目，对可抵消部分显示净额，并在 Tooltip 中展开。
+// 无负科目时，各权益科目原样拆分；有负科目时优先单独展示最大正项，其余按净额展示。
+var equityRows = group['股东权益'];
+var negativeEquityRows = equityRows.filter(function (r) { return r.value < 0; });
+if (negativeEquityRows.length === 0) {
+  equityRows.forEach(function (r) {
+    var id = 'equity#' + r.index;
+    addNode(id, r.name, r.value, C.positive, 'right', 4);
+    addLink(ID.equity, id, r.value);
+  });
+} else {
+  var positiveEquityRows = equityRows.filter(function (r) { return r.value > 0; });
+  positiveEquityRows.sort(function (a, b) { return b.value - a.value; });
+  var main = positiveEquityRows[0];
+  var remainder = main ? eq - main.value : eq;
+  if (main && remainder >= 0) {
+    var mainId = 'equity#' + main.index;
+    addNode(mainId, main.name, main.value, C.positive, 'right', 4);
+    addLink(ID.equity, mainId, main.value);
+    var details = equityRows.filter(function (r) { return r.index !== main.index; });
+    if (remainder > 0) {
+      addNode('@equity-net', setting.names.equityNet, remainder, C.positive, 'right', 4,
+        { detailRows: details, note: '有符号权益科目的净额，已扣除累计其他综合损失' });
+      addLink(ID.equity, '@equity-net', remainder);
+    }
+  } else {
+    // 少数特殊情形：权益存在负项且单个最大正项超过权益净额时，整体显示净权益。
+    addNode('@equity-net', setting.names.equityNet, eq, C.positive, 'right', 4,
+      { detailRows: equityRows, note: '股东权益全部科目合计净额' });
+    addLink(ID.equity, '@equity-net', eq);
+  }
+}
+
+// ======================= 4.1 手动垂直排布（保持语义分组与自然曲线） =======================
+// ECharts 默认会根据连线关系自动调整同层节点顺序，可能把业务分组打散。
+// 这里按 data 数组顺序计算各层节点的 localY：
+// 左侧：流动资产在上、非流动资产在下；右侧：流动负债、非流动负债、股东权益。
+// 通过 layoutIterations: 0 固定内部边缘顺序，再用 localY 居中摆放节点。
+// 连线仍由 lineStyle.curveness 的原生 Bezier 曲线绘制，避免关闭迭代后布局挤在顶部。
+function assignManualNodePositions() {
+  var plotHeight = setting.layout.height;
+  var columns = {};
+  nodes.forEach(function (n) {
+    var key = String(n.depth);
+    if (!columns[key]) columns[key] = [];
+    columns[key].push(n);
+  });
+
+  // 统一计算桑基图节点高度比例，确保每一层的流量宽度口径一致。
+  var scale = Infinity;
+  Object.keys(columns).forEach(function (key) {
+    var column = columns[key];
+    var total = column.reduce(function (s, n) { return s + n.value; }, 0);
+    var available = plotHeight - Math.max(0, column.length - 1) * setting.nodeGap;
+    if (available <= 0 || total <= 0) throw new Error('桑基图绘图区高度或节点数据不合法');
+    scale = Math.min(scale, available / total);
+  });
+
+  // 各层独立垂直居中，节点顺序严格遵循 nodes 数组顺序。
+  Object.keys(columns).forEach(function (key) {
+    var column = columns[key];
+    var usedHeight = column.reduce(function (s, n) { return s + n.value * scale; }, 0)
+      + Math.max(0, column.length - 1) * setting.nodeGap;
+    var cursor = (plotHeight - usedHeight) / 2;
+    column.forEach(function (n) {
+      n.localY = cursor / plotHeight;
+      cursor += n.value * scale + setting.nodeGap;
+    });
+  });
+}
+assignManualNodePositions();
+
+// 中间节点的每层流入、流出必须相等。
+[ID.ca, ID.na, ID.assets, ID.cl, ID.nl, ID.equity].forEach(function (id) {
+  var incoming = links.filter(function (e) { return e.target === id; })
+    .reduce(function (s, e) { return s + e.value; }, 0);
+  var outgoing = links.filter(function (e) { return e.source === id; })
+    .reduce(function (s, e) { return s + e.value; }, 0);
+  if (Math.abs(incoming - outgoing) > 0.00001) {
+    throw new Error('桑基图金额不平：' + nodeIndex[id].displayName);
+  }
+});
+
+// ======================= 5. 标题 / KPI / 来源 =======================
+// ======================= 5. 响应式标题、KPI、来源 =======================
+// 统一使用稳定的 graphic id，画布变化时只调整位置和可见性。
+function responsiveGraphics(widthMode, compactHeight, tooShort, approxWidth) {
+  var small = widthMode !== 'wide';
+  var mini = widthMode === 'mini';
+  var narrow = small || mini;
+  var titleText = mini ? '苹果资产负债结构' :
+    (small ? '苹果总资产 3,833 亿美元，负债占多少？' : setting.title);
+  var subtitleText = narrow ? 'Apple FY2026 Q3 · 资产负债表 · 亿美元' : setting.subtitle;
+  var sourceText = narrow ? '来源：Apple Inc. FY2026 Q3 Form 10-Q（SEC）' : setting.source;
+  var descText = narrow
+    ? '期末存量结构，非现金流；灰色资产、红色负债、绿色权益。'
+    : setting.description;
+  var left = '2.3%';
+  var graphics = [
+    { id: 'r-marker', type: 'rect', left: left, top: 26, silent: true,
+      shape: { width: 20, height: 4 }, style: { fill: C.negative } },
+    { id: 'r-title', type: 'text', left: left, top: 43, silent: true,
+      style: { text: titleText, font: (narrow ? '600 16px' : '600 21px') + ' sans-serif', fill: C.dark } },
+    { id: 'r-subtitle', type: 'text', left: left, top: 78, silent: true,
+      style: { text: subtitleText, font: (narrow ? '10px' : '12px') + ' sans-serif', fill: C.muted } },
+    { id: 'r-divider', type: 'rect', left: left, top: 106, silent: true,
+      invisible: approxWidth < 400,
+      shape: { width: Math.max(0, approxWidth - 35), height: 1 }, style: { fill: C.line } },
+    { id: 'r-source', type: 'text', left: left, bottom: compactHeight ? 27 : 38, silent: true,
+      invisible: tooShort, style: { text: sourceText, font: (narrow ? '9px' : '10px') + ' sans-serif', fill: C.muted } },
+    { id: 'r-description', type: 'text', left: left, bottom: compactHeight ? 12 : 20, silent: true,
+      invisible: tooShort, style: { text: descText, font: (narrow ? '9px' : '10px') + ' sans-serif', fill: C.muted } },
+    { id: 'r-too-short', type: 'text', left: '18%', top: '57%', silent: true,
+      invisible: !tooShort, style: { text: '画布高度不足，请拉高图表查看资产负债结构',
+        font: '12px sans-serif', fill: C.muted } }
+  ];
+  var kpis = [
+    { name: '总资产', value: fmt(totalAsset), color: C.dark },
+    { name: setting.names.currentAsset, value: fmt(ca), color: C.dark },
+    { name: '负债总额', value: fmt(totalLiability), color: C.negative },
+    { name: setting.names.totalEquity, value: fmt(eq), color: C.positive },
+    { name: '资产负债率', value: pct(totalLiability, totalAsset), color: C.negative }
+  ];
+  var widePos = ['2.3%', '21.5%', '40.7%', '59.9%', '79.1%'];
+  var smallPos = ['2.3%', '22%', '42%', '62%', '81%'];
+  var miniPos = ['2.3%', '38%', '74%'];
+  kpis.forEach(function (k, i) {
+    var show = !mini || i === 0 || i === 2 || i === 4;
+    var pos = mini ? (i === 0 ? miniPos[0] : i === 2 ? miniPos[1] : miniPos[2]) :
+      (small ? smallPos[i] : widePos[i]);
+    // 缩窄后用副标题统一声明单位，不再逐项重复“亿美元”。
+    var valueText = narrow ? k.value : k.value + (i === 4 ? '' : ' ' + setting.displayUnit);
+    var nameText = mini ? (i === 0 ? '总资产' : i === 2 ? '总负债' : '负债率') : k.name;
+    graphics.push({ id: 'r-kpi-label-' + i, type: 'text', left: pos, top: 117,
+      silent: true, invisible: !show || !setting.showKpi,
+      style: { text: nameText, font: (narrow ? '9px' : '11px') + ' sans-serif', fill: C.muted } });
+    graphics.push({ id: 'r-kpi-value-' + i, type: 'text', left: pos, top: 135,
+      silent: true, invisible: !show || !setting.showKpi,
+      style: { text: valueText,
+        font: '600 ' + (mini ? 11 : small ? 12 : 16) + 'px sans-serif', fill: k.color } });
+  });
+  return graphics;
+}
+
+function responsiveNode(n, widthMode, chartHeight) {
+  var cloned = Object.assign({}, n);
+  var label = Object.assign({}, n.label);
+  var isLeaf = n.depth === 0 || n.depth === 4;
+  var isSummary = n.depth === 1 || n.depth === 2 || n.depth === 3;
+  var isMajorLeaf = isLeaf && n.value >= 40000;
+  if (widthMode === 'mini') {
+    label.show = n.name === '@total-assets' || n.name === '@current-liabilities' ||
+      n.name === '@equity';
+  } else if (widthMode === 'small') {
+    label.show = isSummary || (isMajorLeaf && chartHeight >= 700);
+  } else if (widthMode === 'medium') {
+    label.show = isSummary || (isLeaf && n.value >= 15000 && chartHeight >= 620);
+  } else if (chartHeight < 600) {
+    label.show = isSummary || isMajorLeaf;
+  } else if (chartHeight < 750) {
+    label.show = isSummary || n.value >= 22000;
+  }
+  label.show = !!setting.showNodeLabels && !!label.show;
+  cloned.label = label;
+  return cloned;
+}
+
+option = {
+  backgroundColor: C.background,
+  animationDuration: 700,
+  animationEasing: 'cubicOut',
+  graphic: responsiveGraphics('wide', false, false, 1200),
+  tooltip: {
+    trigger: 'item',
+    confine: true,
+    backgroundColor: '#FFFFFF',
+    borderColor: C.line,
+    borderWidth: 1,
+    padding: [11, 14],
+    textStyle: { color: C.dark, fontSize: 12 },
+    extraCssText: 'border-radius:5px;box-shadow:0 3px 14px rgba(38,50,56,.09);',
+    formatter: function (p) {
+      var isEdge = p.dataType === 'edge';
+      var d = p.data;
+      var heading = isEdge
+        ? nodeIndex[d.source].displayName + ' → ' + nodeIndex[d.target].displayName
+        : d.displayName;
+      var block = '<div style="font-weight:600;color:' + C.dark + ';margin-bottom:8px;">' + htmlSafe(heading) + '</div>' +
+        '<div style="font-size:19px;font-weight:700;color:' + C.dark + ';">' + fmt(d.value) +
+        ' <span style="font-size:11px;font-weight:400;color:' + C.muted + ';">' + htmlSafe(setting.displayUnit) + '</span></div>' +
+        '<div style="color:' + C.muted + ';font-size:11px;margin-top:6px;">占总资产的 ' + pct(d.value, totalAsset) + '</div>';
+      if (!isEdge && d.detailRows && d.detailRows.length) {
+        block += '<div style="margin-top:10px;padding-top:7px;border-top:1px solid ' + C.line + ';font-size:11px;color:' + C.muted + ';">有符号科目构成（亿美元）</div>';
+        d.detailRows.forEach(function (r) {
+          var vColor = r.value < 0 ? C.negative : C.dark;
+          var valueText = (r.value > 0 ? '+' : '') + fmt(r.value);
+          block += '<div style="display:flex;justify-content:space-between;gap:16px;margin-top:5px;">' +
+            '<span>' + htmlSafe(r.name) + '</span><b style="color:' + vColor + ';">' + htmlSafe(valueText) + '</b></div>';
+        });
+      }
+      if (!isEdge && d.note) {
+        block += '<div style="margin-top:8px;font-size:10px;color:' + C.muted + ';">' + htmlSafe(d.note) + '</div>';
+      }
+      return block;
+    }
+  },
+  series: [{
+    type: 'sankey',
+    left: setting.responsive.left,
+    right: setting.responsive.right,
+    top: setting.responsive.top,
+    bottom: setting.responsive.bottom,
+    nodeAlign: 'left',
+    orient: 'horizontal',
+    nodeWidth: setting.nodeWidth,
+    nodeGap: setting.nodeGap,
+    layoutIterations: setting.layoutIterations,
+    draggable: false,
+    data: nodes,
+    links: links,
+    itemStyle: { borderWidth: 0 },
+    lineStyle: { color: 'gradient', opacity: 0.40, curveness: 0.50 },
+    label: {
+      color: C.dark,
+      fontFamily: 'sans-serif',
+      rich: {
+        nm: { color: C.dark, fontSize: 11, fontWeight: 600, lineHeight: 16 },
+        val: { color: C.muted, fontSize: 10, lineHeight: 15 }
+      }
+    },
+    emphasis: {
+      focus: 'adjacency',
+      itemStyle: { opacity: 1 },
+      lineStyle: { opacity: 0.82 }
+    },
+    blur: {
+      itemStyle: { opacity: 0.55 },
+      lineStyle: { opacity: 0.30 },
+      label: { opacity: 0.70 }
+    }
+  }]
+};
+
+// ======================= 7. 自适应布局：ECharts 原生 media =======================
+// 横向使用百分比，纵向图高 = 实际画布高度 - top - bottom。
+// 原始节点 localY 是按基准绘图区 514px 和 nodeGap=23px 计算的。
+// 因此，图高变化时同步按比例缩放 nodeGap，避免节点高度失配再次造成重叠。
+// 每 50px 建立一个尺寸档；取高度区间上限作为保守 gap。
+// 小画布会隐藏次要明细标签，但不删除数据或流线，可通过 Tooltip 查看金额。
+var responsiveBaseOption = option;
+var responsiveMedia = [];
+var widthBands = [
+  { min: 0, max: 519, mode: 'mini', ref: 300, left: '13%', right: '12%' },
+  { min: 520, max: 759, mode: 'small', ref: 520, left: '16%', right: '14%' },
+  { min: 760, max: 999, mode: 'medium', ref: 760, left: '18.5%', right: '17.5%' },
+  { min: 1000, max: 1199, mode: 'wide', ref: 1000, left: setting.responsive.left, right: setting.responsive.right },
+  { min: 1200, max: 99999, mode: 'wide', ref: 1200, left: setting.responsive.left, right: setting.responsive.right }
+];
+var heightBands = [{ min: 0, max: 350, tooShort: true }];
+for (var startHeight = 351; startHeight <= 2351; startHeight += 50) {
+  heightBands.push({ min: startHeight, max: startHeight + 49 });
+}
+heightBands.push({ min: 2401, max: 99999, effectiveMax: 2800 });
+widthBands.forEach(function (wb) {
+  heightBands.forEach(function (hb) {
+    var refHeight = hb.effectiveMax || hb.max;
+    var compactHeight = refHeight < 700;
+    var shortHeight = refHeight < 480;
+    var top = shortHeight ? setting.responsive.shortTop :
+      compactHeight ? setting.responsive.compactTop : setting.responsive.top;
+    var bottom = shortHeight ? setting.responsive.shortBottom :
+      compactHeight ? setting.responsive.compactBottom : setting.responsive.bottom;
+    var refPlotHeight = Math.max(1, refHeight - top - bottom);
+    var gap = Math.max(0.5, setting.responsive.referenceGap * refPlotHeight /
+      setting.responsive.referenceHeight);
+    var data = nodes.map(function (n) { return responsiveNode(n, wb.mode, refHeight); });
+    var f = responsiveGraphics(wb.mode, compactHeight, !!hb.tooShort, wb.ref);
+    responsiveMedia.push({
+      query: { minWidth: wb.min, maxWidth: wb.max, minHeight: hb.min, maxHeight: hb.max },
+      option: {
+        graphic: f,
+        series: [{
+          left: wb.left,
+          right: wb.right,
+          top: top,
+          bottom: bottom,
+          nodeGap: gap,
+          nodeWidth: wb.mode === 'mini' ? 9 : wb.mode === 'small' ? 11 : setting.nodeWidth,
+          data: hb.tooShort ? [] : data,
+          links: hb.tooShort ? [] : links
+        }]
+      }
+    });
+  });
+});
+
+option = { baseOption: responsiveBaseOption, media: responsiveMedia };

@@ -1,0 +1,669 @@
+﻿// ECharts for Power BI | 现金流量表桑基图（自适应画布版 V7）
+// 示例：Apple Inc. FY2026 Q3 Form 10-Q，九个月累计（截至 2026-06-27）
+// 数据来源：Apple Inc. Form 10-Q，Condensed Consolidated Statements of Cash Flows（第 5 页）
+// https://www.sec.gov/Archives/edgar/data/320193/000032019326000020/aapl-20260627.htm
+// 使用方式：全部复制到 ECharts 官方编辑器 JS 面板，直接运行。
+// 自适应：使用 ECharts 内置 media，根据画布尺寸自动调整布局，无需监听窗口或新增 HTML/DOM。
+// 重要口径：美国上市公司 10-Q 现金流量表通常披露年初至报告期末累计数据；本例为九个月累计，并非单独 Q3。
+
+// ======================= 1. 用户设置（集中修改） =======================
+var setting = {
+  title: '苹果九个月经营活动净现金流入 1,170 亿美元，期末现金增加多少？',
+  subtitle: 'Apple Inc. · FY2026 前九个月（截至 2026-06-27）· 现金流量表桑基图 · 单位：亿美元',
+  source: '数据来源：Apple Inc. FY2026 Q3 Form 10-Q（美国 SEC，第 5 页）',
+  description: '图表说明：九个月累计；经营活动采用间接法，净利润为调节起点，并非独立收款；“现金来源合计”为平衡计算节点，非报表单列项目。流线宽度代表金额绝对值。',
+  inputUnit: '百万美元',
+  displayUnit: '亿美元',
+  divisor: 100,                    // 百万美元 → 亿美元
+  decimals: 1,
+  showKpi: true,
+  showNodeLabels: true,
+  nodeWidth: 13,
+  nodeGap: 23,                  // 节点实际间距；参与 ECharts 内部比例尺计算
+  layoutIterations: 0,              // 由 localY 控制节点顺序，保留原生 Bezier 曲线
+  layout: { left: 205, right: 155, top: 152, height: 580 }, // V6 参考画布 1200×800 时的基准像素布局
+  responsive: {
+    left: '17.0833%',          // 宽度随画布变化，1200px 下约 205px
+    right: '12.9167%',         // 1200px 下约 155px
+    top: 152,                  // 标题与 KPI 保持固定的可读像素高度
+    bottom: 68,                // 底部数据说明保持固定可读像素高度
+    referenceHeight: 580,      // 基准绘图区高度 (800 - 152 - 68)
+    referenceGap: 23,         // 基准节点间距
+    hideMinorLabelsBelowHeight: 730
+  },
+  names: {
+    openingCash: '期初现金及现金等价物',
+    operatingPositive: '经营活动正向项目',
+    operatingNegative: '经营活动负向调整',
+    investingInflow: '投资活动现金流入',
+    investingOutflow: '投资活动现金流出',
+    financingInflow: '筹资活动现金流入',
+    financingOutflow: '筹资活动现金流出',
+    cashSource: '现金来源合计',
+    endingCash: '期末现金及现金等价物'
+  },
+  colors: {
+    positive: '#239263',          // 正向现金流 / 正向调整
+    negative: '#D9544D',          // 负向现金流 / 负向调整
+    normal: '#BFC6CE',            // 普通数据
+    secondary: '#D9DEE3',         // 辅助数据
+    reference: '#AEB7C1',         // 期初余额 / 参考数据
+    dark: '#263238',              // 核心汇总节点
+    muted: '#8493A2',
+    line: '#E5E9ED',
+    background: 'transparent'
+  }
+};
+
+// ======================= 2. 原始数据（每个字段一个独立一维数组） =======================
+// 以下金额均为 Apple 10-Q 原始披露值，单位：百万美元。
+// 同一索引对应同一行；正数表示正向调整/现金流入，负数表示负向调整/现金流出。
+// “期初现金”和“期末现金”是现金余额，不属于经营/投资/筹资活动明细。
+var accountNames = [
+  '期初现金及现金等价物',
+  '净利润（间接法调节起点）', '折旧及摊销', '股份支付费用', '其他（经营活动）',
+  '应收账款变动', '供应商非贸易应收款变动', '存货变动',
+  '其他流动及非流动资产变动', '应付账款变动', '其他流动及非流动负债变动',
+  '购买有价证券', '有价证券到期收回', '出售有价证券', '购置不动产、厂房及设备', '其他（投资活动）',
+  '股份奖励净额结算相关税款', '支付股息及股息等价物', '回购普通股',
+  '发行定期债务所得', '偿还定期债务', '偿还商业票据净额', '其他（筹资活动）',
+  '期末现金及现金等价物'
+];
+var activityTypes = [
+  '期初现金',
+  '经营活动', '经营活动', '经营活动', '经营活动',
+  '经营活动', '经营活动', '经营活动', '经营活动', '经营活动', '经营活动',
+  '投资活动', '投资活动', '投资活动', '投资活动', '投资活动',
+  '筹资活动', '筹资活动', '筹资活动', '筹资活动', '筹资活动', '筹资活动', '筹资活动',
+  '期末现金'
+];
+var cashFlowValues = [
+  35934,
+  101464, 9973, 10523, -2037,
+  8316, 5671, -5461, -16266, -5203, 10016,
+  -48752, 26504, 12016, -6799, -1780,
+  -6462, -11778, -62094,
+  0, -8146, -5911, -184,
+  39544
+];
+
+// ======================= 3. 数据校验与现金流计算 =======================
+var C = setting.colors;
+var groups = { '经营活动': [], '投资活动': [], '筹资活动': [] };
+var openingCash = null;
+var reportedEndingCash = null;
+if (accountNames.length !== activityTypes.length || activityTypes.length !== cashFlowValues.length) {
+  throw new Error('accountNames、activityTypes、cashFlowValues 三个数组长度必须一致');
+}
+accountNames.forEach(function (name, i) {
+  var type = activityTypes[i];
+  var value = Number(cashFlowValues[i]);
+  if (!Number.isFinite(value) || String(name).trim() === '') {
+    throw new Error('第 ' + (i + 1) + ' 行名称或金额不合法');
+  }
+  if (type === '期初现金') openingCash = value;
+  else if (type === '期末现金') reportedEndingCash = value;
+  else if (groups[type]) groups[type].push({ name: String(name), value: value, index: i });
+  else throw new Error('未知活动类型：' + type);
+});
+if (openingCash === null || reportedEndingCash === null) {
+  throw new Error('必须提供期初现金及期末现金余额');
+}
+function sumRows(rows) {
+  return rows.reduce(function (total, row) { return total + row.value; }, 0);
+}
+function positiveRows(rows) { return rows.filter(function (row) { return row.value > 0; }); }
+function negativeRows(rows) { return rows.filter(function (row) { return row.value < 0; }); }
+function sortRowsDesc(rows) {
+  return rows.slice().sort(function (a, b) {
+    return Math.abs(b.value) - Math.abs(a.value) || b.value - a.value || a.index - b.index;
+  });
+}
+function positiveTotal(rows) { return positiveRows(rows).reduce(function (s, row) { return s + row.value; }, 0); }
+function negativeAbsTotal(rows) { return negativeRows(rows).reduce(function (s, row) { return s + Math.abs(row.value); }, 0); }
+function fmt(n, showPlus) {
+  var factor = Math.pow(10, setting.decimals);
+  var scaled = Math.abs(Number(n)) / setting.divisor * factor;
+  var rounded = Math.round(scaled + 1e-9) / factor;
+  var text = rounded.toLocaleString('en-US', {
+    minimumFractionDigits: setting.decimals,
+    maximumFractionDigits: setting.decimals
+  });
+  if (n < 0) return '-' + text;
+  if (showPlus && n > 0) return '+' + text;
+  return text;
+}
+function pct(n, d) { return d ? (Math.abs(n) / d * 100).toFixed(1) + '%' : '—'; }
+function htmlSafe(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+var opPositive = sortRowsDesc(positiveRows(groups['经营活动']));
+var opNegative = sortRowsDesc(negativeRows(groups['经营活动']));
+var invPositive = sortRowsDesc(positiveRows(groups['投资活动']));
+var invNegative = sortRowsDesc(negativeRows(groups['投资活动']));
+var finPositive = sortRowsDesc(positiveRows(groups['筹资活动']));
+var finNegative = sortRowsDesc(negativeRows(groups['筹资活动']));
+var opPositiveTotal = positiveTotal(groups['经营活动']);
+var opNegativeTotal = negativeAbsTotal(groups['经营活动']);
+var invPositiveTotal = positiveTotal(groups['投资活动']);
+var invNegativeTotal = negativeAbsTotal(groups['投资活动']);
+var finPositiveTotal = positiveTotal(groups['筹资活动']);
+var finNegativeTotal = negativeAbsTotal(groups['筹资活动']);
+var operatingCashFlow = opPositiveTotal - opNegativeTotal;
+var investingCashFlow = invPositiveTotal - invNegativeTotal;
+var financingCashFlow = finPositiveTotal - finNegativeTotal;
+var netCashIncrease = operatingCashFlow + investingCashFlow + financingCashFlow;
+var calculatedEndingCash = openingCash + netCashIncrease;
+
+// 现金来源合计：期初现金 + 经营活动净现金流 + 投资/筹资活动正向现金流。
+// 这是为了展示现金收支平衡而计算的中间节点，并非报表单列科目。
+var cashSourceTotal = openingCash + operatingCashFlow + invPositiveTotal + finPositiveTotal;
+var cashUsesTotal = invNegativeTotal + finNegativeTotal + reportedEndingCash;
+if (Math.abs(calculatedEndingCash - reportedEndingCash) > 0.00001) {
+  throw new Error('现金余额不平：期初现金 + 现金净增加额 ≠ 报表期末现金');
+}
+if (Math.abs(cashSourceTotal - cashUsesTotal) > 0.00001) {
+  throw new Error('桑基图现金收支不平：现金来源合计 ≠ 现金用途合计');
+}
+if (operatingCashFlow !== 116996 || investingCashFlow !== -18811 || financingCashFlow !== -94575 || netCashIncrease !== 3610) {
+  throw new Error('核心现金流计算结果与本案例官方披露数据不一致，请复核原始数组');
+}
+
+// 筹资活动负向明细合并：保留小额项目原始值，在 Tooltip 中展开，避免标签过密。
+var financingDebtOtherRows = sortRowsDesc(groups['筹资活动'].filter(function (row) {
+  return row.name === '发行定期债务所得' || row.name === '偿还定期债务' ||
+    row.name === '偿还商业票据净额' || row.name === '其他（筹资活动）';
+}));
+
+// ======================= 4. 桑基节点与连线 =======================
+var nodes = [];
+var links = [];
+var nodeIndex = {};
+function addNode(id, label, value, signedValue, color, position, depth, extra) {
+  var n = {
+    name: id,
+    displayName: label,
+    value: value,
+    signedValue: signedValue,
+    depth: depth,
+    itemStyle: { color: color, borderWidth: 0 },
+    label: {
+      show: setting.showNodeLabels,
+      position: position || 'right',
+      distance: 6,
+      align: position === 'left' ? 'right' : 'left',
+      formatter: function (p) {
+        return '{nm|' + p.data.displayName + '}\n{val|' + fmt(p.data.signedValue, false) + '}';
+      }
+    }
+  };
+  if (extra) Object.keys(extra).forEach(function (key) { n[key] = extra[key]; });
+  nodes.push(n);
+  nodeIndex[id] = n;
+}
+function addLink(source, target, value, displayName, signedValue) {
+  if (value > 0) links.push({
+    source: source,
+    target: target,
+    value: value,
+    displayName: displayName || (nodeIndex[source].displayName + ' → ' + nodeIndex[target].displayName),
+    signedValue: signedValue === undefined ? value : signedValue
+  });
+}
+var ID = {
+  opPositive: '@operating-positive',
+  opNegative: '@operating-negative',
+  invPositive: '@investing-positive',
+  invNegative: '@investing-negative',
+  finPositive: '@financing-positive',
+  finNegative: '@financing-negative',
+  cashSource: '@cash-source',
+  endingCash: '@ending-cash'
+};
+
+// 4.1 左侧：期初现金 + 经营活动正向调节项目 + 投资/筹资活动现金流入。
+addNode('@opening-cash', setting.names.openingCash, openingCash, openingCash, C.reference, 'left', 0, {
+  note: '现金流量表披露的期初现金、现金等价物及受限制现金余额。'
+});
+addNode(ID.opPositive, setting.names.operatingPositive, opPositiveTotal, opPositiveTotal, C.positive, 'right', 1, {
+  gapAfter: 20, // depth 1 有空间，区分经营活动与投资活动流入
+  detailRows: opPositive,
+  note: '经营活动间接法调节中的正向项目合计；净利润是调节起点，不代表独立现金收款。'
+});
+opPositive.forEach(function (row, idx) {
+  var id = 'op-in#' + row.index;
+  // 左侧源节点严格按 ECharts 实际 nodeGap=22px 排列，不额外叠加自定义间距。
+  addNode(id, row.name, row.value, row.value, C.positive, 'left', 0);
+  addLink(id, ID.opPositive, row.value, row.name, row.value);
+});
+
+if (invPositiveTotal > 0) {
+  addNode(ID.invPositive, setting.names.investingInflow, invPositiveTotal, invPositiveTotal, C.positive, 'right', 1, {
+    detailRows: invPositive,
+    note: '投资活动现金流入，包括有价证券到期收回及出售所得。'
+  });
+  invPositive.forEach(function (row) {
+    var id = 'inv-in#' + row.index;
+    // 投资活动流入明细与经营活动明细共用同一列，使用统一的实际节点间距。
+    addNode(id, row.name, row.value, row.value, C.positive, 'left', 0);
+    addLink(id, ID.invPositive, row.value, row.name, row.value);
+  });
+}
+if (finPositiveTotal > 0) {
+  addNode(ID.finPositive, setting.names.financingInflow, finPositiveTotal, finPositiveTotal, C.positive, 'right', 1, {
+    detailRows: finPositive,
+    note: '筹资活动现金流入。'
+  });
+  finPositive.forEach(function (row) {
+    var id = 'fin-in#' + row.index;
+    addNode(id, row.name, row.value, row.value, C.positive, 'left', 0);
+    addLink(id, ID.finPositive, row.value, row.name, row.value);
+  });
+}
+
+// 4.2 中间：经营活动正向项目扣除负向调整后，形成经营活动净现金流。
+addNode(ID.opNegative, setting.names.operatingNegative, opNegativeTotal, -opNegativeTotal, C.negative, 'right', 2, {
+  gapAfter: 16, // depth 2 有空间，区分经营调整与现金来源合计
+  detailRows: opNegative,
+  note: '经营活动负向调整项目；节点宽度表示绝对金额，金额标签保留负号。'
+});
+addLink(ID.opPositive, ID.opNegative, opNegativeTotal, '经营活动负向调整项', -opNegativeTotal);
+opNegative.forEach(function (row, idx) {
+  var id = 'op-out#' + row.index;
+  var extraGap = idx === 2 ? 3 : (idx === opNegative.length - 1 ? 6 : 0);
+  addNode(id, row.name, Math.abs(row.value), row.value, C.negative, 'right', 3, { gapAfter: extraGap });
+  addLink(ID.opNegative, id, Math.abs(row.value), row.name, row.value);
+});
+
+// 现金来源合计是一个平衡节点：期初现金 + 经营活动净现金流 + 投资/筹资正向现金流。
+addNode(ID.cashSource, setting.names.cashSource, cashSourceTotal, cashSourceTotal, C.dark, 'right', 2, {
+  note: '计算节点：期初现金 + 经营活动净现金流 + 投资及筹资活动现金流入；并非财报单列项目。'
+});
+addLink('@opening-cash', ID.cashSource, openingCash, '期初现金结转', openingCash);
+addLink(ID.opPositive, ID.cashSource, operatingCashFlow, '经营活动净现金流入', operatingCashFlow);
+if (invPositiveTotal > 0) addLink(ID.invPositive, ID.cashSource, invPositiveTotal, '投资活动现金流入', invPositiveTotal);
+if (finPositiveTotal > 0) addLink(ID.finPositive, ID.cashSource, finPositiveTotal, '筹资活动现金流入', finPositiveTotal);
+
+// 4.3 右侧：现金来源流向投资/筹资活动支出及期末现金余额。
+if (invNegativeTotal > 0) {
+  addNode(ID.invNegative, setting.names.investingOutflow, invNegativeTotal, -invNegativeTotal, C.negative, 'right', 3, {
+    gapAfter: 8,
+    detailRows: invNegative,
+    note: '投资活动现金流出；与投资活动现金流入抵销后，投资活动净现金流为 ' + fmt(investingCashFlow, true) + ' 亿美元。'
+  });
+  addLink(ID.cashSource, ID.invNegative, invNegativeTotal, '投资活动现金流出', -invNegativeTotal);
+  invNegative.forEach(function (row, idx) {
+    var id = 'inv-out#' + row.index;
+    var groupGap = idx === 1 ? 6 : (idx === invNegative.length - 1 ? 18 : 0); // 区分投资明细并与筹资明细分组
+    addNode(id, row.name, Math.abs(row.value), row.value, C.negative, 'right', 4, { gapAfter: groupGap });
+    addLink(ID.invNegative, id, Math.abs(row.value), row.name, row.value);
+  });
+}
+
+if (finNegativeTotal > 0) {
+  var finMainRows = groups['筹资活动'].filter(function (row) {
+    return row.name === '股份奖励净额结算相关税款' || row.name === '支付股息及股息等价物' || row.name === '回购普通股';
+  });
+  var finOutGroups = [
+    { id: 'fin-tax', label: '股份奖励相关税款', rows: finMainRows.filter(function (r) { return r.name === '股份奖励净额结算相关税款'; }) },
+    { id: 'fin-dividend', label: '支付股息及股息等价物', rows: finMainRows.filter(function (r) { return r.name === '支付股息及股息等价物'; }) },
+    { id: 'fin-buyback', label: '回购普通股', rows: finMainRows.filter(function (r) { return r.name === '回购普通股'; }) },
+    { id: 'fin-debt-other', label: '债务偿还及其他', rows: financingDebtOtherRows.filter(function (r) { return r.value < 0; }), tooltipRows: financingDebtOtherRows }
+  ].map(function (g) {
+    g.amount = negativeAbsTotal(g.rows);
+    return g;
+  }).filter(function (g) { return g.amount > 0; }).sort(function (a, b) { return b.amount - a.amount; });
+  addNode(ID.finNegative, setting.names.financingOutflow, finNegativeTotal, -finNegativeTotal, C.negative, 'right', 3, {
+    gapAfter: 8,
+    detailRows: groups['筹资活动'],
+    note: '筹资活动现金流出；本期没有新增定期债务所得。'
+  });
+  addLink(ID.cashSource, ID.finNegative, finNegativeTotal, '筹资活动现金流出', -finNegativeTotal);
+  finOutGroups.forEach(function (g, idx) {
+    var amount = g.amount;
+    var rowsForTooltip = g.tooltipRows || g.rows;
+    var extraGap = g.id === 'fin-buyback' ? 12 : (g.id === 'fin-debt-other' ? 6 : 0);
+    addNode(g.id, g.label, amount, -amount, C.negative, 'right', 4, {
+      gapAfter: extraGap,
+      detailRows: rowsForTooltip,
+      note: g.id === 'fin-debt-other' ? '合并展示债务偿还及其他小额项目，悬停可查看原始披露明细。' : null
+    });
+    addLink(ID.finNegative, g.id, amount, g.label, -amount);
+  });
+}
+
+addNode(ID.endingCash, setting.names.endingCash, reportedEndingCash, reportedEndingCash, C.positive, 'right', 3, {
+  note: '现金流量表披露的期末现金、现金等价物及受限制现金余额。'
+});
+addLink(ID.cashSource, ID.endingCash, reportedEndingCash, '期末现金余额', reportedEndingCash);
+
+var sankeyLayoutScale = 0;
+// 4.4 手动定位：严格复刻 ECharts Sankey 内部的节点高度比例尺。
+// ECharts computeNodeValues 使用 max(节点原始值, 入边总和, 出边总和)。
+// ECharts initializeNodeDepth 使用 min((height-(同列节点数-1)*nodeGap)/同列节点值总和)。
+// 之前的错误是用“标签间距约束”另算了更小的比例尺，但 ECharts 仍按自己的比例尺绘制节点，
+// 导致 localY 预留位置小于实际节点高度，进而出现节点相互覆盖。本版统一使用同一个 ky。
+function assignManualNodePositions() {
+  var plotHeight = setting.layout.height;
+  var columns = {};
+  var layoutValues = {};
+
+  nodes.forEach(function (n) {
+    var incoming = links.reduce(function (sum, e) {
+      return sum + (e.target === n.name ? e.value : 0);
+    }, 0);
+    var outgoing = links.reduce(function (sum, e) {
+      return sum + (e.source === n.name ? e.value : 0);
+    }, 0);
+    // 与 ECharts computeNodeValues 保持一致。
+    layoutValues[n.name] = Math.max(Number(n.value) || 0, incoming, outgoing);
+    var key = String(n.depth);
+    if (!columns[key]) columns[key] = [];
+    columns[key].push(n);
+  });
+
+  // 与 ECharts initializeNodeDepth 完全一致：全图所有深度列共用最小 ky。
+  var minKy = Infinity;
+  Object.keys(columns).forEach(function (key) {
+    var column = columns[key];
+    var total = column.reduce(function (sum, n) { return sum + layoutValues[n.name]; }, 0);
+    var ky = (plotHeight - (column.length - 1) * setting.nodeGap) / total;
+    if (!(ky > 0)) throw new Error('桑基图绘图区高度不足，请降低 nodeGap 或增加 layout.height');
+    minKy = Math.min(minKy, ky);
+  });
+  sankeyLayoutScale = minKy;
+
+  Object.keys(columns).forEach(function (key) {
+    var column = columns[key];
+    var nodeHeightTotal = column.reduce(function (sum, n) {
+      return sum + layoutValues[n.name] * minKy;
+    }, 0);
+    var baseGapTotal = Math.max(0, column.length - 1) * setting.nodeGap;
+    var extraGapTotal = column.reduce(function (sum, n, i) {
+      return sum + (i < column.length - 1 ? (n.gapAfter || 0) : 0);
+    }, 0);
+    var usedHeight = nodeHeightTotal + baseGapTotal + extraGapTotal;
+    if (usedHeight > plotHeight + 0.01) {
+      throw new Error('第 ' + key + ' 层自定义间距超出绘图区，请减少该层 gapAfter');
+    }
+    var cursor = (plotHeight - usedHeight) / 2;
+    column.forEach(function (n, i) {
+      n.localY = cursor / plotHeight;
+      cursor += layoutValues[n.name] * minKy;
+      if (i < column.length - 1) cursor += setting.nodeGap + (n.gapAfter || 0);
+    });
+  });
+}
+assignManualNodePositions();
+
+// 4.5 校验所有中间节点的流入、流出是否平衡。
+[ID.opPositive, ID.opNegative, ID.invPositive, ID.finPositive, ID.invNegative, ID.finNegative, ID.cashSource].forEach(function (id) {
+  if (!nodeIndex[id]) return;
+  var incoming = links.filter(function (e) { return e.target === id; }).reduce(function (s, e) { return s + e.value; }, 0);
+  var outgoing = links.filter(function (e) { return e.source === id; }).reduce(function (s, e) { return s + e.value; }, 0);
+  if (Math.abs(incoming - outgoing) > 0.00001) {
+    throw new Error('桑基图金额不平：' + nodeIndex[id].displayName + '，流入=' + incoming + '，流出=' + outgoing);
+  }
+});
+
+// ======================= 5. 标题、KPI 与来源 =======================
+var graphics = [
+  { type: 'rect', left: 28, top: 26, silent: true,
+    shape: { width: 20, height: 4 }, style: { fill: C.negative } },
+  { type: 'text', left: 28, top: 43, silent: true,
+    style: { text: setting.title, font: '600 21px sans-serif', fill: C.dark } },
+  { type: 'text', left: 28, top: 78, silent: true,
+    style: { text: setting.subtitle, font: '12px sans-serif', fill: C.muted } },
+  { type: 'rect', left: 28, top: 106, silent: true,
+    shape: { width: 1165, height: 1 }, style: { fill: C.line } },
+  { type: 'text', left: 28, bottom: 38, silent: true,
+    style: { text: setting.source, font: '10px sans-serif', fill: C.muted } },
+  { type: 'text', left: 28, bottom: 20, silent: true,
+    style: { text: setting.description, font: '10px sans-serif', fill: C.muted } }
+];
+if (setting.showKpi) {
+  [
+    { x: 28, name: '经营活动净现金流', value: fmt(operatingCashFlow, true) + ' ' + setting.displayUnit, color: C.positive },
+    { x: 260, name: '投资活动净现金流', value: fmt(investingCashFlow, true) + ' ' + setting.displayUnit, color: C.negative },
+    { x: 500, name: '筹资活动净现金流', value: fmt(financingCashFlow, true) + ' ' + setting.displayUnit, color: C.negative },
+    { x: 740, name: '现金净增加额', value: fmt(netCashIncrease, true) + ' ' + setting.displayUnit, color: netCashIncrease >= 0 ? C.positive : C.negative },
+    { x: 980, name: '期末现金余额', value: fmt(reportedEndingCash) + ' ' + setting.displayUnit, color: C.dark }
+  ].forEach(function (d) {
+    graphics.push({ type: 'text', left: d.x, top: 117, silent: true,
+      style: { text: d.name, font: '11px sans-serif', fill: C.muted } });
+    graphics.push({ type: 'text', left: d.x, top: 135, silent: true,
+      style: { text: d.value, font: '600 15px sans-serif', fill: d.color } });
+  });
+}
+
+// ======================= 6. ECharts option =======================
+option = {
+  backgroundColor: C.background,
+  animationDuration: 700,
+  animationEasing: 'cubicOut',
+  graphic: graphics,
+  tooltip: {
+    trigger: 'item',
+    confine: true,
+    backgroundColor: '#FFFFFF',
+    borderColor: C.line,
+    borderWidth: 1,
+    padding: [11, 14],
+    textStyle: { color: C.dark, fontSize: 12 },
+    extraCssText: 'border-radius:5px;box-shadow:0 3px 14px rgba(38,50,56,.09);',
+    formatter: function (p) {
+      var d = p.data;
+      var isEdge = p.dataType === 'edge';
+      var heading = isEdge
+        ? (d.displayName || (nodeIndex[d.source].displayName + ' → ' + nodeIndex[d.target].displayName))
+        : d.displayName;
+      var signedValue = d.signedValue === undefined ? d.value : d.signedValue;
+      var block = '<div style="font-weight:600;color:' + C.dark + ';margin-bottom:8px;">' + htmlSafe(heading) + '</div>' +
+        '<div style="font-size:19px;font-weight:700;color:' + (signedValue < 0 ? C.negative : C.dark) + ';">' + fmt(signedValue, isEdge) +
+        ' <span style="font-size:11px;font-weight:400;color:' + C.muted + ';">' + htmlSafe(setting.displayUnit) + '</span></div>';
+      if (isEdge) {
+        block += '<div style="color:' + C.muted + ';font-size:11px;margin-top:6px;">占现金来源合计 ' + pct(d.value, cashSourceTotal) + '</div>';
+      }
+      if (!isEdge && d.detailRows && d.detailRows.length) {
+        block += '<div style="margin-top:10px;padding-top:7px;border-top:1px solid ' + C.line + ';font-size:11px;color:' + C.muted + ';">原始报表明细（亿美元）</div>';
+        d.detailRows.forEach(function (row) {
+          var vColor = row.value < 0 ? C.negative : (row.value > 0 ? C.positive : C.muted);
+          block += '<div style="display:flex;justify-content:space-between;gap:16px;margin-top:5px;">' +
+            '<span>' + htmlSafe(row.name) + '</span><b style="color:' + vColor + ';">' + fmt(row.value, row.value > 0) + '</b></div>';
+        });
+      }
+      if (!isEdge && d.note) {
+        block += '<div style="margin-top:8px;font-size:10px;color:' + C.muted + ';">' + htmlSafe(d.note) + '</div>';
+      }
+      return block;
+    }
+  },
+  series: [{
+    type: 'sankey',
+    left: setting.responsive.left,
+    right: setting.responsive.right,
+    top: setting.responsive.top,
+    bottom: setting.responsive.bottom,
+    nodeAlign: 'left',
+    orient: 'horizontal',
+    nodeWidth: setting.nodeWidth,
+    nodeGap: setting.nodeGap,
+    layoutIterations: setting.layoutIterations,
+    draggable: false,
+    data: nodes,
+    links: links,
+    itemStyle: { borderWidth: 0 },
+    lineStyle: { color: 'gradient', opacity: 0.40, curveness: 0.50 },
+    label: {
+      color: C.dark,
+      fontFamily: 'sans-serif',
+      rich: {
+        nm: { color: C.dark, fontSize: 10, fontWeight: 600, lineHeight: 14 },
+        val: { color: C.muted, fontSize: 9, lineHeight: 13 }
+      }
+    },
+    emphasis: {
+      focus: 'adjacency',
+      itemStyle: { opacity: 1 },
+      lineStyle: { opacity: 0.82 }
+    },
+    blur: {
+      itemStyle: { opacity: 0.55 },
+      lineStyle: { opacity: 0.30 },
+      label: { opacity: 0.70 }
+    }
+  }]
+};
+
+
+// ======================= 7. 自适应画布：ECharts 原生 media =======================
+// 仅设置 left/right 百分比不够：Sankey 的节点高度按画布高度重新计算，
+// 而 V6 的 localY 已固定为基准布局的比例。若 nodeGap 仍为固定 23px，缩放后
+// 实际节点高度和 localY 的位置比例会失配，导致节点或金额标签重叠。
+//
+// 解决方案：本例所有 localY 都来自基准高度 580px 的严格勾稽计算；
+// 各 media 高度档同步缩放 nodeGap，使节点高度/空白比例和 localY 一起同比缩放。
+// media 是 ECharts 内置机制，图表 resize() 时自动切换档位，不依赖外部监听。
+// 每 50px 一档；取该档上限计算 nodeGap，确保相邻节点不发生矩形碰撞。
+// 说明：文字有最低物理像素尺寸，小画布会有选择地隐藏次要明细标签，
+//       但保留全部流线和悬停 Tooltip，不合并或删改财务数据。
+
+var responsiveBaseOption = option;
+
+function cloneNodeWithLabel(n, widthMode, chartH) {
+  var n2 = Object.assign({}, n);
+  var label2 = Object.assign({}, n.label);
+  var magnitude = Math.abs(n.signedValue);
+  var important = n.name.charAt(0) === '@' ||
+    n.name === 'fin-buyback' || n.name === 'inv-out#11';
+  if (chartH < 630) {
+    // 高度不足时隐藏小额叶节点，仅保留核心汇总与大额流线标签。
+    label2.show = important || magnitude >= 24000;
+  } else if (chartH < 750) {
+    label2.show = important || magnitude >= 9500;
+  }
+  if (widthMode === 'mini') {
+    // 画布非常窄时，只保留五个财务主节点以及期初/期末现金。
+    label2.show = n.name === '@cash-source' || n.name === '@opening-cash' ||
+      n.name === '@ending-cash' || n.name === '@operating-positive' ||
+      n.name === '@investing-negative' || n.name === '@financing-negative';
+  } else if (widthMode === 'small') {
+    label2.show = label2.show && (important || magnitude >= 16000);
+  }
+  // 保持节点完整值与原始名称。标签简化不影响 Tooltip 或财务计算。
+  label2.show = Boolean(setting.showNodeLabels && label2.show);
+  n2.label = label2;
+  return n2;
+}
+
+function responsiveGraphics(widthMode, compactHeight, approxWidth) {
+  var left = '2.3%';
+  var isMini = widthMode === 'mini';
+  var isSmall = widthMode === 'small';
+  var narrow = isMini || isSmall;
+  var titleText = isMini ? '苹果现金流向分析' :
+    isSmall ? '苹果九个月净现金流如何变化？' : setting.title;
+  var subtitleText = narrow ? 'Apple FY2026 前九个月 · 亿美元' : setting.subtitle;
+  var sourceText = narrow ? '来源：Apple FY2026 Q3 Form 10-Q（SEC）' : setting.source;
+  var descText = narrow
+    ? '间接法；“现金来源合计”为计算节点，悬停节点查看明细。'
+    : setting.description;
+  // 采用固定索引的 graphic 元素，媒体模式切换时隐藏项也保留 ID。
+  var result = [
+    { id: 'r-marker', type: 'rect', left: left, top: 26, silent: true,
+      shape: { width: 20, height: 4 }, style: { fill: C.negative } },
+    { id: 'r-title', type: 'text', left: left, top: 43, silent: true,
+      style: { text: titleText, font: (narrow ? '600 16px' : '600 21px') + ' sans-serif', fill: C.dark } },
+    { id: 'r-subtitle', type: 'text', left: left, top: 78, silent: true,
+      style: { text: subtitleText, font: (narrow ? '10px' : '12px') + ' sans-serif', fill: C.muted } },
+    { id: 'r-divider', type: 'rect', left: left, top: 106, silent: true,
+      shape: { width: Math.max(0, approxWidth - 35), height: 1 }, style: { fill: C.line } },
+    { id: 'r-source', type: 'text', left: left, bottom: 38, silent: true,
+      style: { text: sourceText, font: '10px sans-serif', fill: C.muted } },
+    { id: 'r-description', type: 'text', left: left, bottom: 20, silent: true,
+      style: { text: descText, font: (narrow ? '9px' : '10px') + ' sans-serif', fill: C.muted } },
+    { id: 'r-too-small', type: 'text', left: '22%', top: '58%', silent: true,
+      invisible: !compactHeight, style: { text: '画布高度不足，请拉高图表查看明细',
+        font: '12px sans-serif', fill: C.muted } }
+  ];
+  var kpis = [
+    { name: '经营活动净现金流', value: fmt(operatingCashFlow, true), color: C.positive },
+    { name: '投资活动净现金流', value: fmt(investingCashFlow, true), color: C.negative },
+    { name: '筹资活动净现金流', value: fmt(financingCashFlow, true), color: C.negative },
+    { name: '现金净增加额', value: fmt(netCashIncrease, true), color: netCashIncrease >= 0 ? C.positive : C.negative },
+    { name: '期末现金余额', value: fmt(reportedEndingCash), color: C.dark }
+  ];
+  // 宽屏五列显示完整“亿美元”；小屏保留五列数字，单位通过副标题统一交代。
+  var positions = ['2.3%', '21.5%', '40.7%', '59.9%', '79.1%'];
+  kpis.forEach(function (k, i) {
+    var show = !isMini || i === 0 || i === 3 || i === 4;
+    var x = isMini ? (i === 0 ? '2.3%' : i === 3 ? '39%' : '74%') : positions[i];
+    result.push({ id: 'r-kpi-title-' + i, type: 'text', left: x, top: 117,
+      silent: true, invisible: !setting.showKpi || !show,
+      style: { text: isMini ? ['经营净流','投资净流','筹资净流','现金净增','期末现金'][i] : k.name,
+        font: (narrow ? '9px' : '11px') + ' sans-serif', fill: C.muted } });
+    result.push({ id: 'r-kpi-value-' + i, type: 'text', left: x, top: 135,
+      silent: true, invisible: !setting.showKpi || !show,
+      style: { text: narrow ? k.value : k.value + ' ' + setting.displayUnit,
+        font: '600 ' + (narrow ? (isMini ? 10 : 11) : 15) + 'px sans-serif', fill: k.color } });
+  });
+  return result;
+}
+
+// 每一档都有自洽的 nodeGap + 标签显示策略，resize 不需重新执行用户代码。
+// 画布变得很小时，线和明细值仍可通过 Tooltip 查看。
+var responsiveMedia = [];
+var widthBands = [
+  { min: 0, max: 619, mode: 'mini', ref: 570 },
+  { min: 620, max: 859, mode: 'small', ref: 810 },
+  { min: 860, max: 1099, mode: 'medium', ref: 1050 },
+  { min: 1100, max: 1199, mode: 'wide', ref: 1100 },
+  { min: 1200, max: 99999, mode: 'wide', ref: 1200 }
+];
+var heightBands = [{ min: 0, max: 350, tooShort: true }];
+// 每 50px 一个高度档：800px 正好对应 V6 原始 580px 绘图区高度。
+for (var h0 = 351; h0 <= 2351; h0 += 50) {
+  heightBands.push({ min: h0, max: h0 + 49 });
+}
+// 超高画布（>2400px）：用保守节点间距，防止溢出。
+heightBands.push({ min: 2401, max: 99999, effectiveMax: 2800 });
+
+widthBands.forEach(function (wb) {
+  heightBands.forEach(function (hb) {
+    var representativeHeight = hb.tooShort ? 350 : (hb.effectiveMax || hb.max);
+    var plotHeight = representativeHeight - setting.responsive.top - setting.responsive.bottom;
+    var adaptedNodeGap = Math.max(1, setting.responsive.referenceGap *
+      plotHeight / setting.responsive.referenceHeight);
+    var dataVariant = nodes.map(function (n) {
+      return cloneNodeWithLabel(n, wb.mode, representativeHeight);
+    });
+    var currentGraphic = responsiveGraphics(wb.mode, hb.tooShort, wb.ref);
+
+    responsiveMedia.push({
+      query: { minWidth: wb.min, maxWidth: wb.max, minHeight: hb.min, maxHeight: hb.max },
+      option: {
+        graphic: currentGraphic,
+        series: [{
+          left: setting.responsive.left,
+          right: setting.responsive.right,
+          top: setting.responsive.top,
+          bottom: setting.responsive.bottom,
+          nodeGap: adaptedNodeGap,
+          data: hb.tooShort ? [] : dataVariant,
+          links: hb.tooShort ? [] : links,
+          nodeWidth: wb.mode === 'mini' ? 9 : wb.mode === 'small' ? 11 : setting.nodeWidth
+        }]
+      }
+    });
+  });
+});
+
+// baseOption + media 为 ECharts 官方推荐的响应式结构。
+// 容器尺寸改变时由 ECharts 引擎自动选中对应布局，不需要自己调用 setOption()。
+responsiveBaseOption.graphic = responsiveGraphics('wide', false, 1200);
+option = {
+  baseOption: responsiveBaseOption,
+  media: responsiveMedia
+};

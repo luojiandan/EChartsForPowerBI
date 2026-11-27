@@ -1,0 +1,60 @@
+﻿// 输入字段：周期、计划值、实际值（按周期排序）
+const periods = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+const plan = [100,120,130,135,140,150,158,164,150,148,158,164];
+const actual = [112,112,145,128,156,147,166,160,142,164,152,177];
+// Power BI 中可将以上数组分别替换为 dataArr.dataObjects[0/1/2].values
+const setting = {
+  title: '月度计划与实际偏差分析', subtitle: '月度数据 | 偏差面积图', unit: '万元',
+  source: '模拟数据，仅用于案例演示', planName: '计划值', actualName: '实际值',
+  positiveName: '高于计划', negativeName: '低于计划',
+  showLabels: true, showSymbols: true, showZeroLabels: false,
+  fillOpacity: 0.22, decimals: 0, lineWidth: 2, symbolSize: 6, labelSize: 12,
+  grid: {left: 65, right: 55, top: 135, bottom: 85},
+  colors: {positive:'#239263', negative:'#D9544D', plan:'#AEB7C1', actual:'#263238', text:'#263238', secondary:'#8493A2', grid:'#E5E9ED', background:'transparent', tooltip:'#FFFFFF'}
+};
+const C = setting.colors;
+if (![plan,actual].every(a => a.length === periods.length)) throw new Error('输入数组长度必须一致');
+const valid = v => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+const p = plan.map(v => valid(v) ? Number(v) : null);
+const a = actual.map(v => valid(v) ? Number(v) : null);
+const diff = p.map((v,i) => v === null || a[i] === null ? null : a[i]-v);
+const fmt = v => v == null ? '—' : Number(v.toFixed(setting.decimals)).toLocaleString('en-US',{maximumFractionDigits:setting.decimals});
+const signed = v => v == null ? '—' : (v>0?'+':v<0?'−':'')+fmt(Math.abs(v));
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+// 每个相邻周期形成一个四边形；如果偏差变号，在线性插值交点拆成两个三角形。
+const positive = [], negative = [];
+function add(i,t0,t1,sign){
+  if (!sign || t1<=t0) return;
+  const lerp = (v,w,t)=>v+(w-v)*t;
+  (sign>0?positive:negative).push([i+t0,i+t1,lerp(p[i],p[i+1],t0),lerp(p[i],p[i+1],t1),lerp(a[i],a[i+1],t0),lerp(a[i],a[i+1],t1)]);
+}
+for(let i=0;i<periods.length-1;i++){
+  const d0=diff[i],d1=diff[i+1];
+  if(d0===null||d1===null) continue;
+  if(d0*d1<0){const t=d0/(d0-d1);add(i,0,t,Math.sign(d0));add(i,t,1,Math.sign(d1));}
+  else add(i,0,1,Math.sign(d0||d1));
+}
+// 使用类别轴两端的像素坐标插值，保证交点位于正确的月份之间。
+function area(name,data,color){return {name,type:'custom',coordinateSystem:'cartesian2d',silent:true,z:1,data:data.map(v=>[Math.floor(v[0]),Math.ceil(v[1]),...v]),dimensions:['leftIndex','rightIndex','x0','x1','p0','p1','a0','a1'],encode:{x:[0,1],y:[4,5,6,7],tooltip:[]},itemStyle:{color},renderItem(params,api){
+  function point(x,y){const l=Math.floor(x),r=Math.min(l+1,periods.length-1),t=x-l;const u=api.coord([l,y]),v=api.coord([r,y]);return [u[0]+(v[0]-u[0])*t,u[1]];}
+  const pts=[point(api.value(2),api.value(4)),point(api.value(3),api.value(5)),point(api.value(3),api.value(7)),point(api.value(2),api.value(6))];
+  return {type:'polygon',shape:{points:pts},style:{fill:color,opacity:setting.fillOpacity}};
+}};}
+function line(name,data,color,dashed){return {name,type:'line',data,z:3,smooth:false,connectNulls:false,showSymbol:setting.showSymbols,symbol:'circle',symbolSize:setting.symbolSize,lineStyle:{color,width:setting.lineWidth,type:dashed?'dashed':'solid'},itemStyle:{color:dashed?'#FFFFFF':color,borderColor:color,borderWidth:1.5}};}
+const labels = {name:'偏差标注',type:'custom',silent:true,z:5,data:diff.flatMap((d,i)=>d===null||(!setting.showZeroLabels&&d===0)?[]:[[i,p[i],a[i],d]]),encode:{x:0,y:[1,2],tooltip:[]},renderItem(params,api){
+  const pp=api.coord([api.value(0),api.value(1)]),aa=api.coord([api.value(0),api.value(2)]),d=api.value(3);
+  const gap=Math.abs(pp[1]-aa[1]);const inside=gap>=setting.labelSize+8;
+  const y=inside?(pp[1]+aa[1])/2:aa[1]+(d>=0?-12:12);
+  return {type:'text',style:{x:aa[0],y,text:signed(d),fill:d>0?C.positive:d<0?C.negative:C.secondary,fontSize:setting.labelSize,fontWeight:600,align:'center',verticalAlign:'middle',stroke:'#FFFFFF',lineWidth:2}};
+}};
+option = {
+  backgroundColor:C.background, animation:false,
+  title:[{text:setting.title,subtext:setting.subtitle+' | 单位：'+setting.unit,left:20,top:23,textStyle:{fontSize:20,fontWeight:700,color:C.text},subtextStyle:{fontSize:12,color:C.secondary},itemGap:7}],
+  graphic:[{type:'rect',left:25,top:14,shape:{width:20,height:4},style:{fill:C.negative}},{type:'text',left:25,bottom:12,style:{text:'数据来源：'+setting.source+'\n图表说明：偏差＝实际值－计划值；绿色表示高于计划，红色表示低于计划。',fill:C.secondary,fontSize:11,lineHeight:17}}],
+  legend:{top:84,left:20,itemWidth:22,itemHeight:10,selectedMode:false,textStyle:{color:C.secondary,fontSize:12},data:[setting.planName,setting.actualName,{name:setting.positiveName,icon:'rect'},{name:setting.negativeName,icon:'rect'}]},
+  grid:setting.grid,
+  xAxis:{type:'category',data:periods,boundaryGap:false,axisLine:{lineStyle:{color:C.grid}},axisTick:{show:false},axisLabel:{color:C.secondary}},
+  yAxis:{type:'value',name:setting.unit,nameTextStyle:{color:C.secondary},axisLabel:{color:C.secondary},splitLine:{lineStyle:{color:C.grid}},axisTick:{show:false},axisLine:{show:false}},
+  tooltip:{trigger:'axis',backgroundColor:C.tooltip,borderColor:C.grid,borderWidth:1,textStyle:{color:C.text},confine:true,axisPointer:{type:'line',lineStyle:{color:C.plan,type:'dashed'}},formatter(items){const hit=items.find(v=>v.seriesName===setting.planName||v.seriesName===setting.actualName);if(!hit)return '';const i=hit.dataIndex,d=diff[i],rate=d===null||p[i]===0?null:d/Math.abs(p[i])*100;const color=d>0?C.positive:d<0?C.negative:C.secondary;return `<div style="min-width:180px;line-height:1.9"><b>${esc(periods[i])}</b><hr style="border:0;border-top:1px solid ${C.grid}">${esc(setting.planName)}：<b>${fmt(p[i])}</b> ${esc(setting.unit)}<br>${esc(setting.actualName)}：<b>${fmt(a[i])}</b> ${esc(setting.unit)}<br>偏差额：<b style="color:${color}">${signed(d)}</b> ${esc(setting.unit)}<br>偏差率：<b style="color:${color}">${rate===null?'—':(rate>0?'+':'')+rate.toFixed(1)+'%'}</b></div>`;}},
+  series:[area(setting.positiveName,positive,C.positive),area(setting.negativeName,negative,C.negative),line(setting.planName,p,C.plan,true),line(setting.actualName,a,C.actual,false),...(setting.showLabels?[labels]:[])]
+};
